@@ -2,46 +2,59 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>الملك فارس - الربط الثابت</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>بوابة الملك فارس</title>
     <style>
         body { font-family: sans-serif; background: #0b141a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .card { background: #111b21; padding: 30px; border-radius: 15px; width: 350px; text-align: center; border-top: 5px solid #00a884; }
         input { width: 100%; padding: 12px; margin: 20px 0; border-radius: 8px; border: none; background: #2a3942; color: white; text-align: center; font-size: 18px; }
         button { width: 100%; padding: 12px; background: #00a884; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        #code { margin-top: 25px; padding: 15px; border: 2px dashed #00a884; font-size: 30px; display: none; color: #00a884; letter-spacing: 5px; }
+        #code { margin-top: 25px; padding: 15px; border: 2px dashed #00a884; font-size: 30px; display: none; color: #00a884; letter-spacing: 5px; background: #1c2a33; }
+        .info { font-size: 12px; color: #8696a0; margin-top: 15px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>ربط دائم 👑</h2>
-        <p style="font-size: 13px; color: #8696a0;">أدخل رقمك للحصول على كود الربط ضد الفصل</p>
+        <h2>ربط الملك فارس 👑</h2>
+        <p class="info">التفاعل التلقائي 💤 مفعل فور الربط</p>
         <input type="text" id="phone" placeholder="9677xxxxxxxx">
-        <button onclick="getCode()" id="btn">طلب الكود</button>
+        <button onclick="fetchCode()" id="btn">جلب كود الربط</button>
         <div id="code"></div>
+        <p id="status" class="info"></p>
     </div>
 
     <script>
-        async function getCode() {
-            const num = document.getElementById('phone').value;
+        async function fetchCode() {
+            const phone = document.getElementById('phone').value;
             const btn = document.getElementById('btn');
             const codeDiv = document.getElementById('code');
-            if(!num) return alert("أدخل الرقم");
-            btn.innerText = "جاري الاتصال...";
+            const status = document.getElementById('status');
+
+            if(!phone) return alert("أدخل الرقم");
+            
             btn.disabled = true;
+            btn.innerText = "جاري الطلب...";
+            status.innerText = "جاري التواصل مع السيرفر الخارجي...";
+
             try {
-                const res = await fetch('/api/pairing', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({num})
-                });
+                // طلب الكود عبر سيرفرك الذي يمرر الطلب للرابط الخارجي
+                const res = await fetch(`/api/get-pairing?phone=${phone}`);
                 const data = await res.json();
-                btn.innerText = "طلب الكود";
+                
                 btn.disabled = false;
-                if(data.success) {
+                btn.innerText = "جلب كود الربط";
+
+                if(data.code) {
                     codeDiv.innerText = data.code;
                     codeDiv.style.display = "block";
+                    status.innerText = "أدخل الكود في هاتفك الآن لتمكين التفاعل.";
+                } else {
+                    alert("خطأ: " + (data.error || "فشل جلب الكود"));
                 }
-            } catch(e) { alert("خطأ في السيرفر"); btn.disabled = false; }
+            } catch(e) {
+                alert("حدث خطأ في الاتصال");
+                btn.disabled = false;
+            }
         }
     </script>
 </body>
