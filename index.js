@@ -20,6 +20,7 @@ app.get('/api/get-code', async (req, res) => {
     const phoneNumber = phone.replace(/[^0-9]/g, '');
     const sessionPath = `./auth/${phoneNumber}`;
 
+    // حذف الجلسة القديمة لضمان طلب "فرش" يولد إشعاراً
     if (fs.existsSync(sessionPath)) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
     }
@@ -33,35 +34,29 @@ app.get('/api/get-code', async (req, res) => {
             auth: state,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            // تعديل المتصفح ليكون أكثر استقراراً
-            browser: Browsers.macOS("Desktop"), 
-            syncFullHistory: false,
-            // إعدادات البقاء حياً لمنع التوقف على Render
-            keepAliveIntervalMs: 30000,
-            defaultQueryTimeoutMs: undefined
+            // تغيير الهوية إلى متصفح Chrome على Windows (الأفضل لاستقبال الإشعارات)
+            browser: ["Windows", "Chrome", "122.0.6261.112"]
         });
 
         if (!sock.authState.creds.registered) {
-            await delay(5000); 
+            // انتظار 6 ثوانٍ قبل طلب الكود لمحاكاة سلوك حقيقي
+            await delay(6000); 
             const code = await sock.requestPairingCode(phoneNumber);
             res.json({ status: true, code: code });
         }
 
         sock.ev.on('creds.update', saveCreds);
 
-        // مراقبة الاتصال لضمان إتمام عملية تسجيل الدخول
         sock.ev.on('connection.update', (update) => {
             const { connection } = update;
-            if (connection === 'open') {
-                console.log(`تم الربط بنجاح للرقم: ${phoneNumber}`);
-            }
+            if (connection === 'open') console.log(`Connected: ${phoneNumber}`);
         });
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "حدث خطأ أثناء الاتصال" });
+        res.status(500).json({ error: "فشل السيرفر في جلب الكود" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+app.listen(PORT, () => console.log(`Server on port ${PORT}`));
