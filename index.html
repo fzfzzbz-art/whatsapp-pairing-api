@@ -3,62 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Link</title>
+    <title>بوابة ربط بوت الملك فارس</title>
     <style>
-        body { font-family: sans-serif; background: #f8f9fa; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 340px; }
-        input { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; }
-        button { width: 100%; padding: 12px; background: #075e54; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        #code-box { margin-top: 20px; font-size: 30px; font-weight: bold; color: #25d366; display: none; border: 2px dashed #075e54; padding: 10px; background: #f0fff0; letter-spacing: 5px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        h1 { color: #075e54; margin-bottom: 10px; font-size: 24px; }
+        p { color: #666; margin-bottom: 25px; }
+        input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: center; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background-color: #25d366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { background-color: #128c7e; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #result { margin-top: 20px; padding: 15px; border: 2px dashed #25d366; border-radius: 8px; font-size: 24px; font-weight: bold; color: #075e54; display: none; background: #e7fce3; letter-spacing: 5px; }
+        .loader { display: none; margin-top: 15px; border: 4px solid #f3f3f3; border-top: 4px solid #25d366; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin-left: auto; margin-right: auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h2>ربط الأجهزة</h2>
-        <input type="text" id="phone" placeholder="9677xxxxxxxx">
-        <button onclick="startPairing()">طلب كود الربط</button>
-        <div id="loading" style="display:none; margin-top:10px; color:#666;">جاري التواصل مع واتساب...</div>
-        <div id="code-box"></div>
-        <p id="status-msg" style="font-size:12px; color:#999; margin-top:10px;"></p>
-    </div>
 
-    <script>
-        function keepAlive() {
-            // وظيفة وهمية تبقي السيرفر مستيقظاً
-            fetch('/').catch(() => {});
-        }
+<div class="container">
+    <h1>👑 بوت الملك فارس</h1>
+    <p>أدخل رقمك مع رمز الدولة للحصول على كود الربط</p>
+    
+    <input type="text" id="phoneNumber" placeholder="مثال: 9677xxxxxxxx">
+    <button id="submitBtn" onclick="getPairingCode()">استخراج كود الربط</button>
+    
+    <div id="loader" class="loader"></div>
+    <div id="result"></div>
+    
+    <p style="font-size: 12px; color: #999; margin-top: 20px;">ملاحظة: بمجرد ظهور الكود، افتح واتساب > الأجهزة المرتبطة > ربط جهاز > الربط برقم الهاتف.</p>
+</div>
 
-        async function startPairing() {
-            const phone = document.getElementById('phone').value;
-            const codeBox = document.getElementById('code-box');
-            const loading = document.getElementById('loading');
-            const msg = document.getElementById('status-msg');
+<script>
+    async function getPairingCode() {
+        const number = document.getElementById('phoneNumber').value;
+        const btn = document.getElementById('submitBtn');
+        const loader = document.getElementById('loader');
+        const resultDiv = document.getElementById('result');
 
-            if(!phone) return alert("أدخل الرقم");
-            
-            codeBox.style.display = "none";
-            loading.style.display = "block";
-            msg.innerText = "";
+        if (!number) return alert("يرجى إدخال الرقم أولاً");
 
-            try {
-                const res = await fetch(`/api/get-code?phone=${phone}`);
-                const data = await res.json();
-                
-                loading.style.display = "none";
-                if(data.status) {
-                    codeBox.innerText = data.code;
-                    codeBox.style.display = "block";
-                    msg.innerText = "أدخل الكود في هاتفك الآن وابقَ هنا..";
-                    
-                    // ابدأ "النبض" لإبقاء Render نشطاً لمدة دقيقتين
-                    const interval = setInterval(keepAlive, 5000);
-                    setTimeout(() => clearInterval(interval), 120000);
-                }
-            } catch (e) {
-                loading.style.display = "none";
-                alert("حدث خطأ، حاول مجدداً");
+        // إعداد الواجهة للتحميل
+        btn.disabled = true;
+        loader.style.display = "block";
+        resultDiv.style.display = "none";
+
+        try {
+            const response = await fetch('/api/pairing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ num: number })
+            });
+
+            const data = await response.json();
+
+            loader.style.display = "none";
+            btn.disabled = false;
+
+            if (data.success) {
+                resultDiv.innerText = data.code;
+                resultDiv.style.display = "block";
+            } else {
+                alert("خطأ: " + data.error);
             }
+        } catch (error) {
+            loader.style.display = "none";
+            btn.disabled = false;
+            alert("فشل الاتصال بالسيرفر، تأكد من تشغيل البوت");
         }
-    </script>
+    }
+</script>
+
 </body>
 </html>
