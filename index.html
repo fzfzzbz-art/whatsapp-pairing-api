@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhatsApp Pairing - Golden Queen</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
         .card { background: white; padding: 35px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
         h2 { color: #075e54; margin-bottom: 20px; }
         input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; box-sizing: border-box; }
@@ -48,8 +48,9 @@
         btn.disabled = true;
 
         try {
-            // هنا تم وضع رابط مشروعك الفعلي على Render
-            const response = await fetch('https://whatsapp-pairing-api.onrender.com/api/pairing', {
+            // الرابط الذي طلبته مع المسار البرمجي
+            const baseUrl = 'https://whatsapp-pairing-api.onrender.com';
+            const response = await fetch(`${baseUrl}/api/pairing`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ phone: phone })
@@ -63,12 +64,12 @@
                 resultDiv.innerText = data.pairing_code;
                 resultDiv.style.display = "block";
             } else {
-                alert("خطأ من السيرفر: " + (data.message || "فشل توليد الكود"));
+                alert("خطأ: " + (data.message || "فشل توليد الكود"));
             }
         } catch (error) {
             loader.style.display = "none";
             btn.disabled = false;
-            alert("حدث خطأ في الاتصال بالسيرفر. تأكد أن السيرفر يعمل (Live) وحاول مجدداً.");
+            alert("حدث خطأ في الاتصال بالسيرفر. تأكد أن السيرفر Live وحاول مجدداً.");
         }
     }
 </script>
