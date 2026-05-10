@@ -3,73 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Pairing - Golden Queen API</title>
+    <title>WhatsApp Pairing - Golden Queen</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 35px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f4f7f6; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; width: 100%; max-width: 400px; }
         h2 { color: #075e54; margin-bottom: 20px; }
-        input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; box-sizing: border-box; }
-        button { width: 100%; padding: 14px; background-color: #25d366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        button:hover { background-color: #128c7e; }
-        button:disabled { background-color: #ccc; }
-        #result { margin-top: 25px; padding: 15px; border: 2px dashed #25d366; border-radius: 8px; font-size: 28px; font-weight: bold; color: #075e54; letter-spacing: 5px; display: none; background: #e7fce3; }
-        .loading { display: none; margin-top: 15px; color: #666; font-weight: bold; }
-        .footer-note { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.5; }
+        input { width: 100%; padding: 15px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 10px; font-size: 18px; text-align: center; box-sizing: border-box; }
+        button { width: 100%; padding: 15px; background: #25d366; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:disabled { background: #ccc; }
+        #result { margin-top: 25px; padding: 20px; border: 3px dashed #25d366; border-radius: 12px; font-size: 30px; font-weight: bold; color: #075e54; display: none; background: #f9fff9; letter-spacing: 3px; }
+        .loader { display: none; margin-top: 15px; color: #25d366; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div class="card">
     <h2>ربط الواتساب</h2>
-    <p style="color: #555;">الربط عبر Golden Queen API</p>
-    <input type="text" id="phoneNumber" placeholder="مثال: 9677xxxxxxxx">
-    <button id="submitBtn" onclick="generatePairingCode()">الحصول على كود الربط</button>
+    <input type="text" id="phone" placeholder="9677xxxxxxxx">
+    <button id="btn" onclick="getCode()">الحصول على كود الربط</button>
     
-    <div id="loader" class="loading">جاري طلب الكود من السيرفر...</div>
+    <div id="loading" class="loader">جاري طلب الكود...</div>
     <div id="result"></div>
-
-    <div class="footer-note">
-        بمجرد ظهور الكود، افتح واتساب > الأجهزة المرتبطة > ربط جهاز > <b>الربط برقم الهاتف بدلاً من ذلك</b>.
-    </div>
 </div>
 
 <script>
-    async function generatePairingCode() {
-        const phone = document.getElementById('phoneNumber').value;
+    async function getCode() {
+        const phone = document.getElementById('phone').value;
         const resultDiv = document.getElementById('result');
-        const loader = document.getElementById('loader');
-        const btn = document.getElementById('submitBtn');
+        const loading = document.getElementById('loading');
+        const btn = document.getElementById('btn');
 
-        if (!phone) return alert("يرجى إدخال الرقم أولاً");
+        if(!phone) return alert("ضع الرقم أولاً");
 
         resultDiv.style.display = "none";
-        loader.style.display = "block";
+        loading.style.display = "block";
         btn.disabled = true;
 
         try {
-            // تم الربط بالرابط الذي طلبته مباشرة
-            const apiUrl = 'https://bot.goldenqueen.store/api/pairing';
+            // نطلب من سيرفرنا الخاص (الوسيط)
+            const res = await fetch(`/api/get-code?phone=${phone}`);
+            const data = await res.json();
             
-            const response = await fetch(`${apiUrl}?phone=${phone}`);
-            const data = await response.json();
-
-            loader.style.display = "none";
+            loading.style.display = "none";
             btn.disabled = false;
 
-            // بناءً على هيكلة الـ API المعتادة لهذا النوع
-            if (data.code) {
-                resultDiv.innerText = data.code;
-                resultDiv.style.display = "block";
-            } else if (data.pairing_code) {
-                resultDiv.innerText = data.pairing_code;
+            if(data.code || data.pairing_code) {
+                resultDiv.innerText = data.code || data.pairing_code;
                 resultDiv.style.display = "block";
             } else {
-                alert("خطأ: " + (data.message || "فشل توليد الكود"));
+                alert("خطأ: " + (data.error || "لم يتم العثور على كود"));
             }
-        } catch (error) {
-            loader.style.display = "none";
+        } catch (e) {
+            loading.style.display = "none";
             btn.disabled = false;
-            alert("حدث خطأ في الاتصال بـ Golden Queen API. تأكد من صحة الرابط.");
+            alert("حدث خطأ في الاتصال بالسيرفر");
         }
     }
 </script>
