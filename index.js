@@ -19,33 +19,42 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const SESSION_DIR = './session';
+const RENDER_URL = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`; // جلب رابط موقعك تلقائياً
 
-// عرض الواجهة الرئيسية
+let sock;
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// وظيفة البقاء مستيقظاً لمنع توقف سيرفر Render
+// وظيفة البقاء حياً: تمنع السيرفر من النوم
 function keepAlive() {
     setInterval(() => {
-        const url = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
-        if (process.env.RENDER_EXTERNAL_HOSTNAME) {
-            axios.get(url).catch(() => {});
-        }
-    }, 4 * 60 * 1000); 
+        axios.get(RENDER_URL).then(() => {
+            console.log('--- نبض النظام: السيرفر مستيقظ ---');
+        }).catch(() => {
+            console.log('--- تنبيه: فشل النبض الذاتي ---');
+        });
+    }, 5 * 60 * 1000); // كل 5 دقائق
 }
 
-async function startFaresBot() {
+async function startFaresBot(clearSession = false) {
+    if (clearSession && fs.existsSync(SESSION_DIR)) {
+        await fs.emptyDir(SESSION_DIR);
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
-    const sock = makeWASocket({
+    sock = makeWASocket({
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        browser: Browsers.macOS('Safari'), // لضمان استقرار الجلسة كما في الصور الناجحة
-        syncFullHistory: false, // لمنع تعليق "جاري تسجيل الدخول"
+        browser: Browsers.macOS('Safari'), // المتصفح الذي نجح في الربط سابقاً
+        syncFullHistory: false,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -54,43 +63,58 @@ async function startFaresBot() {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startFaresBot();
+            if (shouldReconnect) {
+                console.log('جاري إعادة الاتصال التلقائي...');
+                startFaresBot();
+            }
         }
-        console.log('حالة البوت:', connection);
+        console.log('حالة الاتصال:', connection);
     });
 
-    // التفاعل مع الحالات بالإيموجي 💤
+    // التفاعل مع الحالات والأوامر
     sock.ev.on('messages.upsert', async (chatUpdate) => {
-        const mek = chatUpdate.messages[0];
-        if (!mek.message || mek.key.fromMe) return;
-        if (mek.key.remoteJid === 'status@broadcast') {
-            await sock.sendMessage(mek.key.remoteJid, {
-                react: { text: '💤', key: mek.key }
-            }, { statusJidList: [mek.key.participant] });
+        try {
+            const mek = chatUpdate.messages[0];
+            if (!mek.message || mek.key.fromMe) return;
+
+            const from = mek.key.remoteJid;
+
+            // التفاعل التلقائي مع الحالات بالإيموجي 💤
+            if (from === 'status@broadcast') {
+                const participant = mek.key.participant;
+                await sock.sendMessage(from, {
+                    react: { text: '💤', key: mek.key }
+                }, { statusJidList: [participant] });
+            }
+
+            // أمر الفحص
+            const body = mek.message.conversation || mek.message.extendedTextMessage?.text || "";
+            if (body.toLowerCase() === 'فحص') {
+                await sock.sendMessage(from, { text: '✅ النظام يعمل 24/7 والتفاعل مفعل.' }, { quoted: mek });
+            }
+        } catch (err) {
+            console.log('خطأ في المعالجة:', err);
         }
     });
+
+    return sock;
 }
 
-// المسار الصحيح لجلب الكود من الرابط الخارجي (يحل مشكلة Route not found)
-app.get('/api/pairing', async (req, res) => {
-    const phone = req.query.phone;
-    if (!phone) return res.status(400).json({ error: 'الرقم مطلوب' });
-
+app.post('/api/pairing', async (req, res) => {
+    const num = req.body.num;
+    if (!num) return res.status(400).json({ error: 'الرقم مطلوب' });
     try {
-        // جلب الكود من الرابط الذي حددته
-        const response = await axios.get(`https://bot.goldenqueen.store/api/pairing?phone=${phone}`);
-        
-        // بدء تشغيل محرك البوت محلياً لاستقبال الجلسة
-        startFaresBot();
-        
-        res.json(response.data);
+        await startFaresBot(true);
+        await new Promise(r => setTimeout(r, 5000));
+        const code = await sock.requestPairingCode(num);
+        res.json({ success: true, code });
     } catch (err) {
-        console.error('خطأ في السيرفر الخارجي:', err.message);
-        res.status(500).json({ error: 'فشل السيرفر الخارجي في الاستجابة' });
+        res.status(500).json({ error: 'خطأ في توليد الكود' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`السيرفر مستعد على المنفذ ${PORT}`);
-    keepAlive();
+    console.log(`السيرفر يعمل على المنفذ: ${PORT}`);
+    startFaresBot();
+    keepAlive(); // تشغيل ميزة البقاء مستيقظاً
 });
