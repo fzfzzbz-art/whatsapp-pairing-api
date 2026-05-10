@@ -22,23 +22,22 @@ const SESSION_DIR = './session';
 
 let sock;
 
+// تقديم الواجهة
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// وظيفة لمنع السيرفر من النوم (Self-Ping)
+// وظيفة منع السيرفر من النوم على Render
 function keepAlive() {
     setInterval(() => {
         const url = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
-        axios.get(url).catch(() => console.log('Keep-alive ping sent.'));
-    }, 4 * 60 * 1000); // كل 4 دقائق
+        if (process.env.RENDER_EXTERNAL_HOSTNAME) {
+            axios.get(url).catch(() => {});
+        }
+    }, 4 * 60 * 1000); 
 }
 
-async function startFaresBot(clearSession = false) {
-    if (clearSession && fs.existsSync(SESSION_DIR)) {
-        await fs.emptyDir(SESSION_DIR);
-    }
-
+async function startFaresBot() {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -47,15 +46,8 @@ async function startFaresBot(clearSession = false) {
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        // تغيير الهوية إلى متصفح مستقر جداً لتجنب الطرد
-        browser: Browsers.macOS('Desktop'), 
-        // إعدادات الثبات القصوى
-        syncFullHistory: false, // لا تطلب الرسائل القديمة (هذا سبب الفصل الأساسي)
-        maxMsgRetryCount: 3,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 20000,
-        generateHighQualityLinkPreview: false
+        browser: Browsers.macOS('Safari'), // نفس المتصفح الذي أظهر نجاح الربط في الصور
+        syncFullHistory: false, // لضمان عدم الفصل التلقائي عند الدخول
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -63,19 +55,13 @@ async function startFaresBot(clearSession = false) {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const reason = lastDisconnect?.error?.output?.statusCode;
-            console.log('انقطع الاتصال، السبب:', reason);
-            // إعادة الاتصال تلقائياً إلا إذا قمت أنت بتسجيل الخروج يدوياً
-            if (reason !== DisconnectReason.loggedOut) {
-                startFaresBot();
-            }
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) startFaresBot();
         }
-        if (connection === 'open') {
-            console.log('✅ تم الاتصال بنجاح والرقم فعال الآن!');
-        }
+        console.log('حالة البوت حالياً:', connection);
     });
 
-    // التفاعل مع الحالات بالإيموجي 💤
+    // --- التفاعل التلقائي مع الحالات بالإيموجي 💤 ---
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
@@ -83,41 +69,46 @@ async function startFaresBot(clearSession = false) {
 
             const from = mek.key.remoteJid;
 
+            // التفاعل مع الحالات
             if (from === 'status@broadcast') {
                 await sock.sendMessage(from, {
                     react: { text: '💤', key: mek.key }
                 }, { statusJidList: [mek.key.participant] });
+                console.log('✅ تم التفاعل مع حالة جديدة بالإيموجي 💤');
             }
 
-            // أوامر إضافية
-            const body = (mek.message.conversation || mek.message.extendedTextMessage?.text || "").toLowerCase();
-            if (body === 'فحص') {
-                await sock.sendMessage(from, { text: '👑 بوت فارس يعمل بثبات 24/7' }, { quoted: mek });
+            // أوامر البوت
+            const body = mek.message.conversation || mek.message.extendedTextMessage?.text || "";
+            if (body.toLowerCase() === 'فحص') {
+                await sock.sendMessage(from, { text: '✅ بوت الملك فارس متصل 24/7 والتفاعل مفعل.' }, { quoted: mek });
             }
         } catch (err) {
-            console.error('Error:', err);
+            console.log('Error:', err);
         }
     });
-
-    return sock;
 }
 
-app.post('/api/pairing', async (req, res) => {
-    const num = req.body.num;
-    if (!num) return res.status(400).json({ error: 'الرقم مطلوب' });
+// واجهة API لربط موقعك بالرابط الخارجي الذي طلبته
+app.get('/api/get-pairing', async (req, res) => {
+    const phone = req.query.phone;
+    if (!phone) return res.status(400).json({ error: 'الرقم مطلوب' });
+
     try {
-        await startFaresBot(true);
-        // انتظار كافٍ لتجهيز المتصفح الوهمي
-        await new Promise(r => setTimeout(r, 8000));
-        const code = await sock.requestPairingCode(num);
-        res.json({ success: true, code });
+        // الاتصال بالرابط الخارجي لجلب الكود
+        const response = await axios.get(`https://bot.goldenqueen.store/api/pairing?phone=${phone}`);
+        
+        // تشغيل البوت محلياً لبدء استقبال الجلسة فور الربط
+        if (!sock) startFaresBot();
+        
+        res.json(response.data);
     } catch (err) {
-        res.status(500).json({ error: 'حدث خطأ، حاول مجدداً' });
+        console.error('API Error:', err.message);
+        res.status(500).json({ error: 'فشل السيرفر الخارجي في الاستجابة' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`السيرفر يعمل بنجاح على المنفذ ${PORT}`);
     startFaresBot();
     keepAlive();
 });
