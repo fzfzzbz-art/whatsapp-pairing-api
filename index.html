@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Pairing - Golden Queen</title>
+    <title>WhatsApp Pairing - Golden Queen API</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
         .card { background: white; padding: 35px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
@@ -22,11 +21,11 @@
 
 <div class="card">
     <h2>ربط الواتساب</h2>
-    <p style="color: #555;">أدخل رقم هاتفك مع رمز الدولة</p>
+    <p style="color: #555;">الربط عبر Golden Queen API</p>
     <input type="text" id="phoneNumber" placeholder="مثال: 9677xxxxxxxx">
     <button id="submitBtn" onclick="generatePairingCode()">الحصول على كود الربط</button>
     
-    <div id="loader" class="loading">جاري طلب الكود من سيرفر واتساب...</div>
+    <div id="loader" class="loading">جاري طلب الكود من السيرفر...</div>
     <div id="result"></div>
 
     <div class="footer-note">
@@ -48,19 +47,20 @@
         btn.disabled = true;
 
         try {
-            // الرابط الذي طلبته مع المسار البرمجي
-            const baseUrl = 'https://whatsapp-pairing-api.onrender.com';
-            const response = await fetch(`${baseUrl}/api/pairing`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: phone })
-            });
-
+            // تم الربط بالرابط الذي طلبته مباشرة
+            const apiUrl = 'https://bot.goldenqueen.store/api/pairing';
+            
+            const response = await fetch(`${apiUrl}?phone=${phone}`);
             const data = await response.json();
+
             loader.style.display = "none";
             btn.disabled = false;
 
-            if (data.status) {
+            // بناءً على هيكلة الـ API المعتادة لهذا النوع
+            if (data.code) {
+                resultDiv.innerText = data.code;
+                resultDiv.style.display = "block";
+            } else if (data.pairing_code) {
                 resultDiv.innerText = data.pairing_code;
                 resultDiv.style.display = "block";
             } else {
@@ -69,7 +69,7 @@
         } catch (error) {
             loader.style.display = "none";
             btn.disabled = false;
-            alert("حدث خطأ في الاتصال بالسيرفر. تأكد أن السيرفر Live وحاول مجدداً.");
+            alert("حدث خطأ في الاتصال بـ Golden Queen API. تأكد من صحة الرابط.");
         }
     }
 </script>
