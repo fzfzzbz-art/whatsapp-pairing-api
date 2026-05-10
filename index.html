@@ -2,39 +2,32 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>الملك فارس - ربط دائم</title>
+    <title>الملك فارس - الربط الثابت</title>
     <style>
-        body { font-family: sans-serif; background: #075e54; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .box { background: white; padding: 30px; border-radius: 20px; width: 350px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
-        input { width: 100%; padding: 12px; margin: 15px 0; border: 2px solid #eee; border-radius: 10px; font-size: 18px; text-align: center; }
-        button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 16px; }
-        #code { margin-top: 20px; font-size: 28px; font-weight: bold; color: #075e54; display: none; background: #e8f5e9; padding: 15px; border-radius: 10px; border: 2px dashed #25d366; letter-spacing: 5px; }
+        body { font-family: sans-serif; background: #0b141a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #111b21; padding: 30px; border-radius: 15px; width: 350px; text-align: center; border-top: 5px solid #00a884; }
+        input { width: 100%; padding: 12px; margin: 20px 0; border-radius: 8px; border: none; background: #2a3942; color: white; text-align: center; font-size: 18px; }
+        button { width: 100%; padding: 12px; background: #00a884; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        #code { margin-top: 25px; padding: 15px; border: 2px dashed #00a884; font-size: 30px; display: none; color: #00a884; letter-spacing: 5px; }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>👑 الملك فارس</h2>
-        <p>ربط الواتساب مع تفاعل 💤 تلقائي</p>
+    <div class="card">
+        <h2>ربط دائم 👑</h2>
+        <p style="font-size: 13px; color: #8696a0;">أدخل رقمك للحصول على كود الربط ضد الفصل</p>
         <input type="text" id="phone" placeholder="9677xxxxxxxx">
-        <button onclick="connect()" id="btn">استخراج كود الربط</button>
+        <button onclick="getCode()" id="btn">طلب الكود</button>
         <div id="code"></div>
-        <p id="info" style="font-size: 12px; color: #666; margin-top: 15px;"></p>
     </div>
 
     <script>
-        async function connect() {
+        async function getCode() {
             const num = document.getElementById('phone').value;
             const btn = document.getElementById('btn');
             const codeDiv = document.getElementById('code');
-            const info = document.getElementById('info');
-
-            if(!num) return alert("يرجى إدخال الرقم");
-            
+            if(!num) return alert("أدخل الرقم");
+            btn.innerText = "جاري الاتصال...";
             btn.disabled = true;
-            btn.innerText = "جاري الاتصال بالسيرفر...";
-            info.innerText = "انتظر قليلاً، يتم تجهيز الجلسة المستقرة...";
-
             try {
                 const res = await fetch('/api/pairing', {
                     method: 'POST',
@@ -42,21 +35,13 @@
                     body: JSON.stringify({num})
                 });
                 const data = await res.json();
-                
+                btn.innerText = "طلب الكود";
                 btn.disabled = false;
-                btn.innerText = "استخراج كود الربط";
-
                 if(data.success) {
                     codeDiv.innerText = data.code;
                     codeDiv.style.display = "block";
-                    info.innerText = "أدخل الكود في هاتفك وابقَ في هذه الصفحة.";
-                    // منع نوم السيرفر من جهة العميل أيضاً
-                    setInterval(() => fetch('/'), 30000);
                 }
-            } catch(e) {
-                alert("حدث خطأ في الشبكة");
-                btn.disabled = false;
-            }
+            } catch(e) { alert("خطأ في السيرفر"); btn.disabled = false; }
         }
     </script>
 </body>
