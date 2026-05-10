@@ -3,75 +3,61 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>بوابة ربط بوت الملك فارس</title>
+    <title>الملك فارس - ربط دائم</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .container { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-        h1 { color: #075e54; margin-bottom: 10px; font-size: 24px; }
-        p { color: #666; margin-bottom: 25px; }
-        input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: center; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background-color: #25d366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        button:hover { background-color: #128c7e; }
-        button:disabled { background-color: #ccc; cursor: not-allowed; }
-        #result { margin-top: 20px; padding: 15px; border: 2px dashed #25d366; border-radius: 8px; font-size: 24px; font-weight: bold; color: #075e54; display: none; background: #e7fce3; letter-spacing: 5px; }
-        .loader { display: none; margin-top: 15px; border: 4px solid #f3f3f3; border-top: 4px solid #25d366; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin-left: auto; margin-right: auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        body { font-family: sans-serif; background: #075e54; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .box { background: white; padding: 30px; border-radius: 20px; width: 350px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+        input { width: 100%; padding: 12px; margin: 15px 0; border: 2px solid #eee; border-radius: 10px; font-size: 18px; text-align: center; }
+        button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        #code { margin-top: 20px; font-size: 28px; font-weight: bold; color: #075e54; display: none; background: #e8f5e9; padding: 15px; border-radius: 10px; border: 2px dashed #25d366; letter-spacing: 5px; }
     </style>
 </head>
 <body>
+    <div class="box">
+        <h2>👑 الملك فارس</h2>
+        <p>ربط الواتساب مع تفاعل 💤 تلقائي</p>
+        <input type="text" id="phone" placeholder="9677xxxxxxxx">
+        <button onclick="connect()" id="btn">استخراج كود الربط</button>
+        <div id="code"></div>
+        <p id="info" style="font-size: 12px; color: #666; margin-top: 15px;"></p>
+    </div>
 
-<div class="container">
-    <h1>👑 بوت الملك فارس</h1>
-    <p>أدخل رقمك مع رمز الدولة للحصول على كود الربط</p>
-    
-    <input type="text" id="phoneNumber" placeholder="مثال: 9677xxxxxxxx">
-    <button id="submitBtn" onclick="getPairingCode()">استخراج كود الربط</button>
-    
-    <div id="loader" class="loader"></div>
-    <div id="result"></div>
-    
-    <p style="font-size: 12px; color: #999; margin-top: 20px;">ملاحظة: بمجرد ظهور الكود، افتح واتساب > الأجهزة المرتبطة > ربط جهاز > الربط برقم الهاتف.</p>
-</div>
+    <script>
+        async function connect() {
+            const num = document.getElementById('phone').value;
+            const btn = document.getElementById('btn');
+            const codeDiv = document.getElementById('code');
+            const info = document.getElementById('info');
 
-<script>
-    async function getPairingCode() {
-        const number = document.getElementById('phoneNumber').value;
-        const btn = document.getElementById('submitBtn');
-        const loader = document.getElementById('loader');
-        const resultDiv = document.getElementById('result');
+            if(!num) return alert("يرجى إدخال الرقم");
+            
+            btn.disabled = true;
+            btn.innerText = "جاري الاتصال بالسيرفر...";
+            info.innerText = "انتظر قليلاً، يتم تجهيز الجلسة المستقرة...";
 
-        if (!number) return alert("يرجى إدخال الرقم أولاً");
+            try {
+                const res = await fetch('/api/pairing', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({num})
+                });
+                const data = await res.json();
+                
+                btn.disabled = false;
+                btn.innerText = "استخراج كود الربط";
 
-        // إعداد الواجهة للتحميل
-        btn.disabled = true;
-        loader.style.display = "block";
-        resultDiv.style.display = "none";
-
-        try {
-            const response = await fetch('/api/pairing', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ num: number })
-            });
-
-            const data = await response.json();
-
-            loader.style.display = "none";
-            btn.disabled = false;
-
-            if (data.success) {
-                resultDiv.innerText = data.code;
-                resultDiv.style.display = "block";
-            } else {
-                alert("خطأ: " + data.error);
+                if(data.success) {
+                    codeDiv.innerText = data.code;
+                    codeDiv.style.display = "block";
+                    info.innerText = "أدخل الكود في هاتفك وابقَ في هذه الصفحة.";
+                    // منع نوم السيرفر من جهة العميل أيضاً
+                    setInterval(() => fetch('/'), 30000);
+                }
+            } catch(e) {
+                alert("حدث خطأ في الشبكة");
+                btn.disabled = false;
             }
-        } catch (error) {
-            loader.style.display = "none";
-            btn.disabled = false;
-            alert("فشل الاتصال بالسيرفر، تأكد من تشغيل البوت");
         }
-    }
-</script>
-
+    </script>
 </body>
 </html>
