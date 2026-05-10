@@ -3,29 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Link Pro</title>
+    <title>WhatsApp Link</title>
     <style>
         body { font-family: sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; width: 350px; }
-        input { width: 100%; padding: 15px; margin: 20px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 18px; text-align: center; }
-        button { width: 100%; padding: 15px; background: #25d366; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; }
-        #code { margin-top: 25px; padding: 15px; border: 3px dashed #25d366; border-radius: 10px; font-size: 30px; font-weight: bold; color: #075e54; display: none; background: #f9fff9; letter-spacing: 5px; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); text-align: center; width: 350px; }
+        input { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; }
+        button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        #code { margin-top: 20px; font-size: 28px; font-weight: bold; color: #075e54; display: none; border: 2px dashed #25d366; padding: 10px; background: #f9fff9; }
+        .note { font-size: 12px; color: #666; margin-top: 15px; line-height: 1.4; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>ربط الواتساب</h2>
+        <h3>ربط واتساب</h3>
         <input type="text" id="phone" placeholder="9677xxxxxxxx">
-        <button onclick="getCode()">احصل على الكود</button>
-        <div id="loading" style="display:none; margin-top:15px; color: #666;">انتظر ثواني...</div>
+        <button onclick="getCode()">طلب كود الربط</button>
+        <div id="loading" style="display:none; margin-top:10px;">جاري التواصل مع واتساب...</div>
         <div id="code"></div>
+        <div class="note">
+            إذا لم يصلك إشعار، افتح واتساب > الأجهزة المرتبطة > ربط جهاز > <b>الربط برقم الهاتف</b> وأدخل الكود أعلاه.
+        </div>
     </div>
+
     <script>
         async function getCode() {
             const phone = document.getElementById('phone').value;
             const codeDiv = document.getElementById('code');
             const loading = document.getElementById('loading');
-            if(!phone) return alert("يرجى إدخال الرقم");
+            if(!phone) return alert("أدخل الرقم");
             codeDiv.style.display = "none";
             loading.style.display = "block";
             try {
@@ -40,7 +45,7 @@
                 }
             } catch (e) {
                 loading.style.display = "none";
-                alert("حدث خطأ في الشبكة");
+                alert("حدث خطأ، تأكد من تشغيل السيرفر");
             }
         }
     </script>
