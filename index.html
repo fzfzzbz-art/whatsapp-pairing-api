@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>WhatsApp Pairing Code</title>
+    <style>
+        body { font-family: Arial; text-align: center; padding: 50px; background: #f4f7f6; }
+        input { padding: 10px; width: 250px; border-radius: 5px; border: 1px solid #ddd; }
+        button { padding: 10px 20px; background: #25D366; color: white; border: none; cursor: pointer; }
+        #pairingCode { font-size: 24px; font-weight: bold; color: #075E54; margin-top: 20px; letter-spacing: 5px; }
+    </style>
+</head>
+<body>
+    <h2>ربط واتساب عبر كود الهاتف</h2>
+    <input type="text" id="phone" placeholder="أدخل الرقم مع مفتاح الدولة (مثلاً 9665xxx)">
+    <button onclick="getCode()">الحصول على الكود</button>
+    <div id="pairingCode"></div>
+
+    <script>
+        async function getCode() {
+            const phone = document.getElementById('phone').value;
+            const display = document.getElementById('pairingCode');
+            display.innerText = "جاري طلب الكود...";
+            
+            try {
+                const response = await fetch('http://localhost:3000/api/pairing', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                const data = await response.json();
+                if(data.status) {
+                    display.innerText = data.pairing_code;
+                } else {
+                    display.innerText = "خطأ: " + data.message;
+                }
+            } catch (err) {
+                display.innerText = "فشل الاتصال بالسيرفر";
+            }
+        }
+    </script>
+</body>
+</html>
