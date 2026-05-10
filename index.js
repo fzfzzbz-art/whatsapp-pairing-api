@@ -3,24 +3,36 @@ const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysV
 const pino = require('pino');
 const path = require('path');
 const cors = require('cors');
+const fs = require('fs');
 
 const app = express();
-app.use(cors());
+
+// إعدادات الوصول (CORS)
+app.use(cors({
+    origin: 'https://whatsapp-pairing-api.onrender.com', // رابط مشروعك
+    methods: ['GET', 'POST']
+}));
 app.use(express.json());
 
-// تشغيل الواجهة
+// تشغيل الواجهة الرئيسية
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '/index.html'));
 });
 
 app.post('/api/pairing', async (req, res) => {
     let { phone } = req.body;
-    if (!phone) return res.status(400).json({ error: "يرجى إدخال الرقم" });
+    if (!phone) return res.status(400).json({ error: "الرقم مطلوب" });
 
     const phoneNumber = phone.replace(/[^0-9]/g, '');
+    const sessionPath = `./sessions/${phoneNumber}`;
+
+    // تنظيف الجلسة القديمة لضمان طلب كود جديد تماماً
+    if (fs.existsSync(sessionPath)) {
+        fs.rmSync(sessionPath, { recursive: true, force: true });
+    }
 
     try {
-        const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${phoneNumber}`);
+        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
         const { version } = await fetchLatestBaileysVersion();
 
         const sock = makeWASocket({
@@ -28,37 +40,29 @@ app.post('/api/pairing', async (req, res) => {
             auth: state,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            // التعديل الأهم: تعريف المتصفح لضمان قبول الكود
+            // تعريف المتصفح كـ Chrome على نظام Linux لزيادة موثوقية الإشعار
             browser: ["Chrome (Linux)", "", ""] 
         });
 
         if (!sock.authState.creds.registered) {
-            // انتظار قصير ليتصل السيرفر بواتساب قبل طلب الكود
-            await delay(3000); 
+            await delay(3000); // وقت إضافي لضمان استقرار الاتصال بخوادم واتساب
             const code = await sock.requestPairingCode(phoneNumber);
             
-            res.json({
+            return res.json({
                 status: true,
                 pairing_code: code
             });
         } else {
-            res.json({ status: false, message: "الرقم مرتبط بالفعل" });
+            return res.json({ status: false, message: "هذا الرقم مربوط بالفعل" });
         }
 
         sock.ev.on('creds.update', saveCreds);
 
-        // إنهاء الجلسة إذا لم يتم الربط خلال 3 دقائق لتوفير الموارد
-        setTimeout(() => {
-            sock.logout().catch(() => {});
-        }, 180000);
-
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ status: false, error: "فشل السيرفر في توليد الكود" });
+        console.error("Pairing Error:", error);
+        res.status(500).json({ status: false, error: "فشل في توليد الكود" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server started on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server is Live on port ${PORT}`));
