@@ -1,12 +1,10 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers, disconnectReason } = require("@whiskeysockets/baileys");
 const pino = require('pino');
 const path = require('path');
-const cors = require('cors');
 const fs = require('fs');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -20,7 +18,6 @@ app.get('/api/get-code', async (req, res) => {
     const phoneNumber = phone.replace(/[^0-9]/g, '');
     const sessionPath = `./auth/${phoneNumber}`;
 
-    // حذف الجلسة القديمة لضمان طلب "فرش" يولد إشعاراً
     if (fs.existsSync(sessionPath)) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
     }
@@ -34,29 +31,38 @@ app.get('/api/get-code', async (req, res) => {
             auth: state,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            // تغيير الهوية إلى متصفح Chrome على Windows (الأفضل لاستقبال الإشعارات)
-            browser: ["Windows", "Chrome", "122.0.6261.112"]
+            browser: ["Ubuntu", "Chrome", "20.0.04"],
+            // إضافة إعدادات لمنع قطع الاتصال المفاجئ
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 0,
+            keepAliveIntervalMs: 10000
         });
 
         if (!sock.authState.creds.registered) {
-            // انتظار 6 ثوانٍ قبل طلب الكود لمحاكاة سلوك حقيقي
-            await delay(6000); 
+            await delay(5000); 
             const code = await sock.requestPairingCode(phoneNumber);
             res.json({ status: true, code: code });
         }
 
+        // أهم جزء: حفظ الجلسة فور اكتمالها
         sock.ev.on('creds.update', saveCreds);
 
         sock.ev.on('connection.update', (update) => {
-            const { connection } = update;
-            if (connection === 'open') console.log(`Connected: ${phoneNumber}`);
+            const { connection, lastDisconnect } = update;
+            if (connection === 'open') {
+                console.log('✅ تم تسجيل الدخول بنجاح!');
+            }
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== 401;
+                console.log('❌ انقطع الاتصال، السبب:', lastDisconnect?.error);
+            }
         });
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "فشل السيرفر في جلب الكود" });
+        res.status(500).json({ error: "فشل في تسجيل الدخول" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+app.listen(PORT, () => console.log(`السيرفر يعمل على المنفذ ${PORT}`));
