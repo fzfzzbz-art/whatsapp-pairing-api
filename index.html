@@ -1,32 +1,37 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Pairing Pro</title>
+    <title>WhatsApp Pairing - Golden Queen</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f7f9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-        h2 { color: #075e54; margin-bottom: 10px; }
-        p { color: #666; font-size: 14px; margin-bottom: 25px; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 35px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        h2 { color: #075e54; margin-bottom: 20px; }
         input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; box-sizing: border-box; }
         button { width: 100%; padding: 14px; background-color: #25d366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        button:hover { background-color: #1ebea5; transform: translateY(-2px); }
-        #result { margin-top: 25px; padding: 20px; border: 3px dashed #25d366; border-radius: 10px; font-size: 30px; font-weight: bold; color: #075e54; letter-spacing: 6px; display: none; background: #f0fff4; animation: fadeIn 0.5s; }
-        .loading { display: none; margin-top: 20px; color: #25d366; font-weight: bold; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        button:hover { background-color: #128c7e; }
+        button:disabled { background-color: #ccc; }
+        #result { margin-top: 25px; padding: 15px; border: 2px dashed #25d366; border-radius: 8px; font-size: 28px; font-weight: bold; color: #075e54; letter-spacing: 5px; display: none; background: #e7fce3; }
+        .loading { display: none; margin-top: 15px; color: #666; font-weight: bold; }
+        .footer-note { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.5; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>ربط واتساب</h2>
-    <p>أدخل الرقم مع رمز الدولة (مثال 9677xxxxxxxx)</p>
-    <input type="text" id="phoneNumber" placeholder="9677xxxxxxxx">
-    <button id="btn" onclick="generatePairingCode()">الحصول على الكود</button>
+    <h2>ربط الواتساب</h2>
+    <p style="color: #555;">أدخل رقم هاتفك مع رمز الدولة</p>
+    <input type="text" id="phoneNumber" placeholder="مثال: 9677xxxxxxxx">
+    <button id="submitBtn" onclick="generatePairingCode()">الحصول على كود الربط</button>
     
-    <div id="loader" class="loading">انتظر.. جاري طلب الكود من واتساب</div>
+    <div id="loader" class="loading">جاري طلب الكود من سيرفر واتساب...</div>
     <div id="result"></div>
+
+    <div class="footer-note">
+        بمجرد ظهور الكود، افتح واتساب > الأجهزة المرتبطة > ربط جهاز > <b>الربط برقم الهاتف بدلاً من ذلك</b>.
+    </div>
 </div>
 
 <script>
@@ -34,16 +39,16 @@
         const phone = document.getElementById('phoneNumber').value;
         const resultDiv = document.getElementById('result');
         const loader = document.getElementById('loader');
-        const btn = document.getElementById('btn');
+        const btn = document.getElementById('submitBtn');
 
-        if (!phone) return alert("يرجى إدخال الرقم");
+        if (!phone) return alert("يرجى إدخال الرقم أولاً");
 
         resultDiv.style.display = "none";
         loader.style.display = "block";
         btn.disabled = true;
 
         try {
-            // استبدل هذا الرابط برابط موقعك على Render
+            // هنا تم وضع رابط مشروعك الفعلي على Render
             const response = await fetch('https://whatsapp-pairing-api.onrender.com/api/pairing', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -58,12 +63,12 @@
                 resultDiv.innerText = data.pairing_code;
                 resultDiv.style.display = "block";
             } else {
-                alert("خطأ: " + data.message);
+                alert("خطأ من السيرفر: " + (data.message || "فشل توليد الكود"));
             }
         } catch (error) {
             loader.style.display = "none";
             btn.disabled = false;
-            alert("حدث خطأ في الاتصال بالسيرفر. حاول مرة أخرى");
+            alert("حدث خطأ في الاتصال بالسيرفر. تأكد أن السيرفر يعمل (Live) وحاول مجدداً.");
         }
     }
 </script>
