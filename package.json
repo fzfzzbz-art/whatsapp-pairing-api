@@ -1,6 +1,7 @@
+
 {
-  "name": "whatsapp-pairing-fix",
-  "version": "1.1.0",
+  "name": "whatsapp-pairing-fast",
+  "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
