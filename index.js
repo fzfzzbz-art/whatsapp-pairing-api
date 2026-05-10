@@ -11,6 +11,7 @@ const pino = require('pino');
 const path = require('path');
 const cors = require('cors');
 const fs = require('fs-extra');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
@@ -18,13 +19,24 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const SESSION_DIR = './session';
+const RENDER_URL = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`; // جلب رابط موقعك تلقائياً
 
 let sock;
 
-// عرض واجهة المستخدم index.html
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
+
+// وظيفة البقاء حياً: تمنع السيرفر من النوم
+function keepAlive() {
+    setInterval(() => {
+        axios.get(RENDER_URL).then(() => {
+            console.log('--- نبض النظام: السيرفر مستيقظ ---');
+        }).catch(() => {
+            console.log('--- تنبيه: فشل النبض الذاتي ---');
+        });
+    }, 5 * 60 * 1000); // كل 5 دقائق
+}
 
 async function startFaresBot(clearSession = false) {
     if (clearSession && fs.existsSync(SESSION_DIR)) {
@@ -39,7 +51,10 @@ async function startFaresBot(clearSession = false) {
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome'), 
+        browser: Browsers.macOS('Safari'), // المتصفح الذي نجح في الربط سابقاً
+        syncFullHistory: false,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -48,37 +63,37 @@ async function startFaresBot(clearSession = false) {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startFaresBot();
+            if (shouldReconnect) {
+                console.log('جاري إعادة الاتصال التلقائي...');
+                startFaresBot();
+            }
         }
-        console.log('حالة البوت حالياً:', connection);
+        console.log('حالة الاتصال:', connection);
     });
 
+    // التفاعل مع الحالات والأوامر
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
-            if (!mek.message) return;
-            const from = mek.key.remoteJid;
-            const body = mek.message.conversation || 
-                         mek.message.extendedTextMessage?.text || 
-                         mek.message.imageMessage?.caption || "";
-            const command = body.toLowerCase().trim();
+            if (!mek.message || mek.key.fromMe) return;
 
-            if (command === 'فحص' || command === 'test') {
-                await sock.sendMessage(from, { text: '✅ بوت الملك فارس يعمل بنجاح!' }, { quoted: mek });
+            const from = mek.key.remoteJid;
+
+            // التفاعل التلقائي مع الحالات بالإيموجي 💤
+            if (from === 'status@broadcast') {
+                const participant = mek.key.participant;
+                await sock.sendMessage(from, {
+                    react: { text: '💤', key: mek.key }
+                }, { statusJidList: [participant] });
             }
-            if (command === 'فارس') {
-                await sock.sendMessage(from, { text: '👑 نعم يا ملك، أنا في الخدمة. اطلب ما تشاء!' }, { quoted: mek });
-            }
-            if (command === 'الاوامر' || command === 'الأوامر') {
-                const menu = `👑 *قائمة أوامر بوت الملك فارس* 👑\n\n` +
-                             `• *فارس*: للترحيب.\n` +
-                             `• *فحص*: للتأكد من اتصال البوت.\n` +
-                             `• *الوقت*: لمعرفة وقت السيرفر.\n` +
-                             `• *موقعي*: رابط بوابة الربط الخاصة بك.`;
-                await sock.sendMessage(from, { text: menu }, { quoted: mek });
+
+            // أمر الفحص
+            const body = mek.message.conversation || mek.message.extendedTextMessage?.text || "";
+            if (body.toLowerCase() === 'فحص') {
+                await sock.sendMessage(from, { text: '✅ النظام يعمل 24/7 والتفاعل مفعل.' }, { quoted: mek });
             }
         } catch (err) {
-            console.log('Error in messages:', err);
+            console.log('خطأ في المعالجة:', err);
         }
     });
 
@@ -88,19 +103,18 @@ async function startFaresBot(clearSession = false) {
 app.post('/api/pairing', async (req, res) => {
     const num = req.body.num;
     if (!num) return res.status(400).json({ error: 'الرقم مطلوب' });
-
     try {
         await startFaresBot(true);
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(r => setTimeout(r, 5000));
         const code = await sock.requestPairingCode(num);
         res.json({ success: true, code });
     } catch (err) {
-        console.error('Pairing Error:', err);
-        res.status(500).json({ error: 'حدث خطأ في استخراج الكود' });
+        res.status(500).json({ error: 'خطأ في توليد الكود' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`السيرفر يعمل بنجاح على المنفذ ${PORT}`);
+    console.log(`السيرفر يعمل على المنفذ: ${PORT}`);
     startFaresBot();
+    keepAlive(); // تشغيل ميزة البقاء مستيقظاً
 });
