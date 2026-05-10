@@ -20,14 +20,12 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const SESSION_DIR = './session';
 
-let sock;
-
-// تقديم الواجهة
+// عرض الواجهة الرئيسية
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// وظيفة منع السيرفر من النوم على Render
+// وظيفة البقاء مستيقظاً لمنع توقف سيرفر Render
 function keepAlive() {
     setInterval(() => {
         const url = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
@@ -41,13 +39,13 @@ async function startFaresBot() {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
-    sock = makeWASocket({
+    const sock = makeWASocket({
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        browser: Browsers.macOS('Safari'), // نفس المتصفح الذي أظهر نجاح الربط في الصور
-        syncFullHistory: false, // لضمان عدم الفصل التلقائي عند الدخول
+        browser: Browsers.macOS('Safari'), // لضمان استقرار الجلسة كما في الصور الناجحة
+        syncFullHistory: false, // لمنع تعليق "جاري تسجيل الدخول"
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -58,57 +56,41 @@ async function startFaresBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startFaresBot();
         }
-        console.log('حالة البوت حالياً:', connection);
+        console.log('حالة البوت:', connection);
     });
 
-    // --- التفاعل التلقائي مع الحالات بالإيموجي 💤 ---
+    // التفاعل مع الحالات بالإيموجي 💤
     sock.ev.on('messages.upsert', async (chatUpdate) => {
-        try {
-            const mek = chatUpdate.messages[0];
-            if (!mek.message || mek.key.fromMe) return;
-
-            const from = mek.key.remoteJid;
-
-            // التفاعل مع الحالات
-            if (from === 'status@broadcast') {
-                await sock.sendMessage(from, {
-                    react: { text: '💤', key: mek.key }
-                }, { statusJidList: [mek.key.participant] });
-                console.log('✅ تم التفاعل مع حالة جديدة بالإيموجي 💤');
-            }
-
-            // أوامر البوت
-            const body = mek.message.conversation || mek.message.extendedTextMessage?.text || "";
-            if (body.toLowerCase() === 'فحص') {
-                await sock.sendMessage(from, { text: '✅ بوت الملك فارس متصل 24/7 والتفاعل مفعل.' }, { quoted: mek });
-            }
-        } catch (err) {
-            console.log('Error:', err);
+        const mek = chatUpdate.messages[0];
+        if (!mek.message || mek.key.fromMe) return;
+        if (mek.key.remoteJid === 'status@broadcast') {
+            await sock.sendMessage(mek.key.remoteJid, {
+                react: { text: '💤', key: mek.key }
+            }, { statusJidList: [mek.key.participant] });
         }
     });
 }
 
-// واجهة API لربط موقعك بالرابط الخارجي الذي طلبته
-app.get('/api/get-pairing', async (req, res) => {
+// المسار الصحيح لجلب الكود من الرابط الخارجي (يحل مشكلة Route not found)
+app.get('/api/pairing', async (req, res) => {
     const phone = req.query.phone;
     if (!phone) return res.status(400).json({ error: 'الرقم مطلوب' });
 
     try {
-        // الاتصال بالرابط الخارجي لجلب الكود
+        // جلب الكود من الرابط الذي حددته
         const response = await axios.get(`https://bot.goldenqueen.store/api/pairing?phone=${phone}`);
         
-        // تشغيل البوت محلياً لبدء استقبال الجلسة فور الربط
-        if (!sock) startFaresBot();
+        // بدء تشغيل محرك البوت محلياً لاستقبال الجلسة
+        startFaresBot();
         
         res.json(response.data);
     } catch (err) {
-        console.error('API Error:', err.message);
+        console.error('خطأ في السيرفر الخارجي:', err.message);
         res.status(500).json({ error: 'فشل السيرفر الخارجي في الاستجابة' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`السيرفر يعمل بنجاح على المنفذ ${PORT}`);
-    startFaresBot();
+    console.log(`السيرفر مستعد على المنفذ ${PORT}`);
     keepAlive();
 });
