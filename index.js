@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers, disconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers } = require("@whiskeysockets/baileys");
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
@@ -31,11 +31,12 @@ app.get('/api/get-code', async (req, res) => {
             auth: state,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            browser: ["Ubuntu", "Chrome", "20.0.04"],
-            // إضافة إعدادات لمنع قطع الاتصال المفاجئ
+            browser: Browsers.ubuntu("Chrome"),
+            // إعدادات لتقليل استهلاك الرام وسرعة الدخول
+            syncFullHistory: false, // إيقاف مزامنة التاريخ القديم (هام جداً)
+            markOnlineOnConnect: true,
             connectTimeoutMs: 60000,
-            defaultQueryTimeoutMs: 0,
-            keepAliveIntervalMs: 10000
+            defaultQueryTimeoutMs: 0
         });
 
         if (!sock.authState.creds.registered) {
@@ -44,25 +45,21 @@ app.get('/api/get-code', async (req, res) => {
             res.json({ status: true, code: code });
         }
 
-        // أهم جزء: حفظ الجلسة فور اكتمالها
+        // حفظ البيانات فوراً
         sock.ev.on('creds.update', saveCreds);
 
         sock.ev.on('connection.update', (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection } = update;
             if (connection === 'open') {
-                console.log('✅ تم تسجيل الدخول بنجاح!');
-            }
-            if (connection === 'close') {
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== 401;
-                console.log('❌ انقطع الاتصال، السبب:', lastDisconnect?.error);
+                console.log('✅ Connected successfully!');
             }
         });
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "فشل في تسجيل الدخول" });
+        res.status(500).json({ error: "تعذر الربط، حاول مجدداً" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`السيرفر يعمل على المنفذ ${PORT}`));
+app.listen(PORT, () => console.log(`Server started`));
