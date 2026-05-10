@@ -3,51 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Link</title>
+    <title>WhatsApp Link Pro</title>
     <style>
-        body { font-family: sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); text-align: center; width: 350px; }
-        input { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; }
-        button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        #code { margin-top: 20px; font-size: 28px; font-weight: bold; color: #075e54; display: none; border: 2px dashed #25d366; padding: 10px; background: #f9fff9; }
-        .note { font-size: 12px; color: #666; margin-top: 15px; line-height: 1.4; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); text-align: center; width: 350px; }
+        h2 { color: #075e54; margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        #code-box { margin-top: 20px; padding: 15px; border: 2px dashed #25d366; border-radius: 10px; font-size: 28px; font-weight: bold; color: #075e54; display: none; background: #f9fff9; letter-spacing: 4px; }
+        .loading { display: none; margin-top: 10px; color: #666; font-size: 14px; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>ربط واتساب</h3>
-        <input type="text" id="phone" placeholder="9677xxxxxxxx">
-        <button onclick="getCode()">طلب كود الربط</button>
-        <div id="loading" style="display:none; margin-top:10px;">جاري التواصل مع واتساب...</div>
-        <div id="code"></div>
-        <div class="note">
-            إذا لم يصلك إشعار، افتح واتساب > الأجهزة المرتبطة > ربط جهاز > <b>الربط برقم الهاتف</b> وأدخل الكود أعلاه.
-        </div>
-    </div>
 
-    <script>
-        async function getCode() {
-            const phone = document.getElementById('phone').value;
-            const codeDiv = document.getElementById('code');
-            const loading = document.getElementById('loading');
-            if(!phone) return alert("أدخل الرقم");
-            codeDiv.style.display = "none";
-            loading.style.display = "block";
-            try {
-                const res = await fetch(`/api/get-code?phone=${phone}`);
-                const data = await res.json();
-                loading.style.display = "none";
-                if(data.status) {
-                    codeDiv.innerText = data.code;
-                    codeDiv.style.display = "block";
-                } else {
-                    alert("خطأ: " + data.error);
-                }
-            } catch (e) {
-                loading.style.display = "none";
-                alert("حدث خطأ، تأكد من تشغيل السيرفر");
+<div class="card">
+    <h2>ربط الواتساب</h2>
+    <input type="text" id="phone" placeholder="9677xxxxxxxx">
+    <button id="btn" onclick="getCode()">الحصول على الكود</button>
+    <div id="loader" class="loading">جاري معالجة الطلب...</div>
+    <div id="code-box"></div>
+    <p style="font-size: 11px; color: #888; margin-top: 15px;">بمجرد ظهور الكود، أدخله في الواتساب وابقَ في هذه الصفحة حتى يكتمل الربط.</p>
+</div>
+
+<script>
+    async function getCode() {
+        const phone = document.getElementById('phone').value;
+        const codeBox = document.getElementById('code-box');
+        const loader = document.getElementById('loader');
+        const btn = document.getElementById('btn');
+
+        if(!phone) return alert("يرجى كتابة الرقم");
+
+        codeBox.style.display = "none";
+        loader.style.display = "block";
+        btn.disabled = true;
+
+        try {
+            // الاتصال بمسار الـ API الخاص بسيرفرك
+            const res = await fetch(`/api/get-code?phone=${phone}`);
+            const data = await res.json();
+            
+            loader.style.display = "none";
+            btn.disabled = false;
+
+            if(data.status) {
+                codeBox.innerText = data.code;
+                codeBox.style.display = "block";
+            } else {
+                alert("خطأ: " + (data.error || "فشل جلب الكود"));
             }
+        } catch (e) {
+            loader.style.display = "none";
+            btn.disabled = false;
+            alert("حدث خطأ في الاتصال بالسيرفر");
         }
-    </script>
+    }
+</script>
+
 </body>
 </html>
