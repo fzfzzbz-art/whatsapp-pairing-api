@@ -2,25 +2,21 @@ const express = require('express');
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
-    delay, 
     fetchLatestBaileysVersion, 
-    Browsers 
+    Browsers,
+    delay
 } = require("@whiskeysockets/baileys");
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-// تقديم واجهة المستخدم
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '/index.html'));
 });
 
-// مسار طلب كود الربط
 app.get('/api/get-code', async (req, res) => {
     let phone = req.query.phone;
     if (!phone) return res.status(400).json({ error: "الرقم مطلوب" });
@@ -28,7 +24,6 @@ app.get('/api/get-code', async (req, res) => {
     const phoneNumber = phone.replace(/[^0-9]/g, '');
     const sessionPath = `./auth/${phoneNumber}`;
 
-    // تنظيف الجلسات القديمة لضمان بداية نظيفة
     if (fs.existsSync(sessionPath)) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
     }
@@ -41,38 +36,38 @@ app.get('/api/get-code', async (req, res) => {
             version,
             auth: state,
             logger: pino({ level: 'silent' }),
-            printQRInTerminal: false,
-            // تعريف المتصفح كـ Chrome على Windows لضمان قبول الربط
-            browser: ["Windows", "Chrome", "122.0.6261.112"], 
-            // إيقاف مزامنة الرسائل القديمة لتسريع تسجيل الدخول وتجنب التعليق
-            syncFullHistory: false, 
-            markOnlineOnConnect: true,
+            // محاكاة نفس المتصفح الذي نجح معك (Safari على Mac)
+            browser: Browsers.macOS("Safari"),
+            syncFullHistory: false, // مهم جداً لتجنب التعليق
+            qrTimeout: 40000,
             connectTimeoutMs: 60000,
-            defaultQueryTimeoutMs: 0,
-            keepAliveIntervalMs: 10000
+            defaultQueryTimeoutMs: 0
         });
 
         if (!sock.authState.creds.registered) {
-            await delay(6000); // تأخير بسيط لمحاكاة سلوك بشري
+            await delay(3000); 
             const code = await sock.requestPairingCode(phoneNumber);
+            // إرسال الكود فوراً للمتصفح دون انتظار انتهاء الربط
             res.json({ status: true, code: code });
         }
 
-        // حفظ بيانات تسجيل الدخول فور تحديثها
+        // معالجة تسجيل الدخول في الخلفية لضمان عدم تعليق السيرفر
         sock.ev.on('creds.update', saveCreds);
-
+        
         sock.ev.on('connection.update', (update) => {
             const { connection } = update;
             if (connection === 'open') {
-                console.log(`✅ تم الربط بنجاح للرقم: ${phoneNumber}`);
+                console.log(`Successfully linked: ${phoneNumber}`);
             }
         });
 
     } catch (error) {
-        console.error("Pairing Error:", error);
-        res.status(500).json({ error: "فشل في التواصل مع واتساب" });
+        console.error(error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: "فشل في النظام" });
+        }
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`السيرفر يعمل الآن على المنفذ ${PORT}`));
+app.listen(PORT, () => console.log(`Server live on ${PORT}`));
