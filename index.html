@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Pairing - Final</title>
+    <title>WhatsApp Link Pro</title>
     <style>
         body { font-family: sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
         .card { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; width: 350px; }
@@ -17,16 +17,15 @@
         <h2>ربط الواتساب</h2>
         <input type="text" id="phone" placeholder="9677xxxxxxxx">
         <button onclick="getCode()">احصل على الكود</button>
-        <div id="loading" style="display:none; margin-top:15px;">جاري الطلب من سيرفر واتساب...</div>
+        <div id="loading" style="display:none; margin-top:15px; color: #666;">انتظر ثواني...</div>
         <div id="code"></div>
     </div>
-
     <script>
         async function getCode() {
             const phone = document.getElementById('phone').value;
             const codeDiv = document.getElementById('code');
             const loading = document.getElementById('loading');
-            if(!phone) return alert("ضع الرقم");
+            if(!phone) return alert("يرجى إدخال الرقم");
             codeDiv.style.display = "none";
             loading.style.display = "block";
             try {
@@ -41,7 +40,7 @@
                 }
             } catch (e) {
                 loading.style.display = "none";
-                alert("السيرفر مشغول، حاول مجدداً");
+                alert("حدث خطأ في الشبكة");
             }
         }
     </script>
