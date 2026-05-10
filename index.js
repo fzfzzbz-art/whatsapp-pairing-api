@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, delay, fetchLatestBaileysVersion, Browsers } = require("@whiskeysockets/baileys");
 const pino = require('pino');
 const path = require('path');
 const cors = require('cors');
@@ -20,7 +20,6 @@ app.get('/api/get-code', async (req, res) => {
     const phoneNumber = phone.replace(/[^0-9]/g, '');
     const sessionPath = `./auth/${phoneNumber}`;
 
-    // تنظيف الجلسات القديمة لضمان طلب كود جديد
     if (fs.existsSync(sessionPath)) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
     }
@@ -34,24 +33,35 @@ app.get('/api/get-code', async (req, res) => {
             auth: state,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            // تعريف متصفح Mac لضمان وصول الإشعار فوراً
-            browser: ["Mac OS", "Chrome", "124.0.6367.118"] 
+            // تعديل المتصفح ليكون أكثر استقراراً
+            browser: Browsers.macOS("Desktop"), 
+            syncFullHistory: false,
+            // إعدادات البقاء حياً لمنع التوقف على Render
+            keepAliveIntervalMs: 30000,
+            defaultQueryTimeoutMs: undefined
         });
 
         if (!sock.authState.creds.registered) {
-            await delay(3000); 
+            await delay(5000); 
             const code = await sock.requestPairingCode(phoneNumber);
-            
             res.json({ status: true, code: code });
         }
 
         sock.ev.on('creds.update', saveCreds);
 
+        // مراقبة الاتصال لضمان إتمام عملية تسجيل الدخول
+        sock.ev.on('connection.update', (update) => {
+            const { connection } = update;
+            if (connection === 'open') {
+                console.log(`تم الربط بنجاح للرقم: ${phoneNumber}`);
+            }
+        });
+
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "فشل في توليد الكود" });
+        res.status(500).json({ error: "حدث خطأ أثناء الاتصال" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server started on ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on ${PORT}`));
