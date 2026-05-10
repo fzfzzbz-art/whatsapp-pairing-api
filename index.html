@@ -3,62 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Link Pro</title>
+    <title>WhatsApp Link</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); text-align: center; width: 350px; }
-        h2 { color: #075e54; margin-bottom: 20px; }
-        input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; }
-        #code-box { margin-top: 20px; padding: 15px; border: 2px dashed #25d366; border-radius: 10px; font-size: 28px; font-weight: bold; color: #075e54; display: none; background: #f9fff9; letter-spacing: 4px; }
-        .loading { display: none; margin-top: 10px; color: #666; font-size: 14px; }
+        body { font-family: sans-serif; background: #f8f9fa; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 340px; }
+        input { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 18px; text-align: center; }
+        button { width: 100%; padding: 12px; background: #075e54; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        #code-box { margin-top: 20px; font-size: 30px; font-weight: bold; color: #25d366; display: none; border: 2px dashed #075e54; padding: 10px; background: #f0fff0; letter-spacing: 5px; }
     </style>
 </head>
 <body>
+    <div class="card">
+        <h2>ربط الأجهزة</h2>
+        <input type="text" id="phone" placeholder="9677xxxxxxxx">
+        <button onclick="startPairing()">طلب كود الربط</button>
+        <div id="loading" style="display:none; margin-top:10px; color:#666;">جاري التواصل مع واتساب...</div>
+        <div id="code-box"></div>
+        <p id="status-msg" style="font-size:12px; color:#999; margin-top:10px;"></p>
+    </div>
 
-<div class="card">
-    <h2>ربط الواتساب</h2>
-    <input type="text" id="phone" placeholder="9677xxxxxxxx">
-    <button id="btn" onclick="getCode()">الحصول على الكود</button>
-    <div id="loader" class="loading">جاري معالجة الطلب...</div>
-    <div id="code-box"></div>
-    <p style="font-size: 11px; color: #888; margin-top: 15px;">بمجرد ظهور الكود، أدخله في الواتساب وابقَ في هذه الصفحة حتى يكتمل الربط.</p>
-</div>
-
-<script>
-    async function getCode() {
-        const phone = document.getElementById('phone').value;
-        const codeBox = document.getElementById('code-box');
-        const loader = document.getElementById('loader');
-        const btn = document.getElementById('btn');
-
-        if(!phone) return alert("يرجى كتابة الرقم");
-
-        codeBox.style.display = "none";
-        loader.style.display = "block";
-        btn.disabled = true;
-
-        try {
-            // الاتصال بمسار الـ API الخاص بسيرفرك
-            const res = await fetch(`/api/get-code?phone=${phone}`);
-            const data = await res.json();
-            
-            loader.style.display = "none";
-            btn.disabled = false;
-
-            if(data.status) {
-                codeBox.innerText = data.code;
-                codeBox.style.display = "block";
-            } else {
-                alert("خطأ: " + (data.error || "فشل جلب الكود"));
-            }
-        } catch (e) {
-            loader.style.display = "none";
-            btn.disabled = false;
-            alert("حدث خطأ في الاتصال بالسيرفر");
+    <script>
+        function keepAlive() {
+            // وظيفة وهمية تبقي السيرفر مستيقظاً
+            fetch('/').catch(() => {});
         }
-    }
-</script>
 
+        async function startPairing() {
+            const phone = document.getElementById('phone').value;
+            const codeBox = document.getElementById('code-box');
+            const loading = document.getElementById('loading');
+            const msg = document.getElementById('status-msg');
+
+            if(!phone) return alert("أدخل الرقم");
+            
+            codeBox.style.display = "none";
+            loading.style.display = "block";
+            msg.innerText = "";
+
+            try {
+                const res = await fetch(`/api/get-code?phone=${phone}`);
+                const data = await res.json();
+                
+                loading.style.display = "none";
+                if(data.status) {
+                    codeBox.innerText = data.code;
+                    codeBox.style.display = "block";
+                    msg.innerText = "أدخل الكود في هاتفك الآن وابقَ هنا..";
+                    
+                    // ابدأ "النبض" لإبقاء Render نشطاً لمدة دقيقتين
+                    const interval = setInterval(keepAlive, 5000);
+                    setTimeout(() => clearInterval(interval), 120000);
+                }
+            } catch (e) {
+                loading.style.display = "none";
+                alert("حدث خطأ، حاول مجدداً");
+            }
+        }
+    </script>
 </body>
 </html>
