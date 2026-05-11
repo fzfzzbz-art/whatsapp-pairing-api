@@ -1,9 +1,7 @@
 {
-  "name": "golden-queen-portal",
+  "name": "golden-queen-bot",
   "version": "1.0.0",
-  "description": "WhatsApp Multi-Device Linking Portal",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
