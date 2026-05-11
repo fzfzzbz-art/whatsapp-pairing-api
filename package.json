@@ -1,17 +1,26 @@
 {
-  "name": "fares-bot-official",
+  "name": "fares-bot-ultimate",
   "version": "1.0.0",
-  "description": "WhatsApp Bot for King Fares",
+  "description": "نظام الملك فارس الموحد للربط التلقائي وتفاعل الحالات",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.18",
+    "@whiskeysockets/baileys": "^6.7.5",
+    "node-telegram-bot-api": "^0.66.0",
     "express": "^4.19.2",
-    "pino": "^9.3.2",
-    "cors": "^2.8.5",
+    "pino": "^9.1.0",
+    "fs-extra": "^11.2.0",
+    "axios": "^1.7.2",
     "dotenv": "^16.4.5",
-    "fs-extra": "^11.2.0"
-  }
+    "cors": "^2.8.5",
+    "qrcode-terminal": "^0.12.0",
+    "link-preview-js": "^3.0.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "author": "Fares",
+  "license": "ISC"
 }
