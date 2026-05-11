@@ -1,6 +1,7 @@
 {
-  "name": "golden-queen-bot",
+  "name": "golden-queen-v3",
   "version": "1.0.0",
+  "description": "WhatsApp Status Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
