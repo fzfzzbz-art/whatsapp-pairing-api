@@ -17,6 +17,8 @@ const fs = require('fs-extra');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// تشغيل واجهة الموقع من مجلد public
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
@@ -37,13 +39,13 @@ async function startFaresBot(num = null) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
         logger: pino({ level: 'silent' }),
-        // تحديث المتصفح إلى macOS لضمان وصول إشعار الربط فوراً
-        browser: Browsers.macOS('Desktop'), 
+        browser: Browsers.ubuntu('Chrome'), // لضمان استقرار الربط
         printQRInTerminal: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: true, // يظهر رقمك "متصل" دائماً
         syncFullHistory: false
     });
 
+    // حفظ بيانات الجلسة فوراً
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
@@ -52,14 +54,16 @@ async function startFaresBot(num = null) {
         
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('انقطع الاتصال، جاري إعادة المحاولة:', shouldReconnect);
             if (shouldReconnect) setTimeout(() => startFaresBot(), 5000);
         }
+        
         if (connection === 'open') {
-            console.log('✅ السيرفر متصل والجلسة مفعلة');
+            console.log('✅ تم فتح الاتصال بنجاح! الجلسة نشطة الآن.');
         }
     });
 
-    // ⚡ التفاعل التلقائي (المشاهدة + الإعجاب 👑) ⚡
+    // ⚡ كود التفاعلات التلقائية (مشاهدة وتفاعل مع الحالات) ⚡
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
@@ -67,40 +71,33 @@ async function startFaresBot(num = null) {
             
             const sender = mek.key.participant || mek.key.remoteJid;
 
-            // 1. قراءة الحالة
+            // 1. مشاهدة الحالة تلقائياً
             await sock.readMessages([mek.key]);
+            
+            // 2. التفاعل بالإيموجي (👑)
+            await sock.sendMessage(mek.key.remoteJid, { 
+                react: { text: '👑', key: mek.key } 
+            }, { statusJidList: [sender] });
 
-            // 2. إرسال الإعجاب (تأكد من وجود sender في المصفوفة لضمان وصوله)
-            await sock.sendMessage(
-                'status@broadcast', 
-                { react: { text: '👑', key: mek.key } }, 
-                { statusJidList: [sender] } 
-            );
+            console.log(`✨ تم التفاعل مع حالة: ${sender}`);
         } catch (e) {
             console.error('خطأ في التفاعل:', e);
         }
     });
 
-    // معالجة طلب الكود
+    // معالجة طلب كود الربط
     if (num) {
-        // ننتظر قليلاً لضمان استقرار الاتصال قبل طلب الكود
-        await new Promise(r => setTimeout(r, 6000));
-        try {
-            let code = await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
-            return code;
-        } catch (err) {
-            console.error('فشل طلب الكود:', err);
-            return null;
-        }
+        await new Promise(r => setTimeout(r, 5000));
+        return await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
     }
 }
 
-// APIs
+// APIs الموقع
 app.post('/api/pairing', async (req, res) => {
     try {
         const code = await startFaresBot(req.body.num);
         if (code) res.json({ success: true, code });
-        else res.status(500).json({ success: false, error: 'تعذر طلب الكود' });
+        else res.status(500).json({ success: false });
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
@@ -112,11 +109,12 @@ app.get('/api/qr', async (req, res) => {
     } else { res.status(404).send('QR Not Ready'); }
 });
 
+// توجيه كافة الطلبات لفتح الواجهة الرئيسية
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
-    console.log(`Server started on port ${PORT}`);
+    console.log(`السيرفر يعمل الآن على المنفذ: ${PORT}`);
     startFaresBot();
 });
