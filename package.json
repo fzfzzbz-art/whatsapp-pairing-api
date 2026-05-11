@@ -1,8 +1,9 @@
 {
-  "name": "golden-queen-fares",
+  "name": "golden-queen-portal",
   "version": "1.0.0",
-  "description": "WhatsApp & Telegram Linker Bot",
+  "description": "WhatsApp Multi-Device Linking Portal",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
@@ -16,8 +17,5 @@
     "cors": "^2.8.5",
     "qrcode": "^1.5.3",
     "dotenv": "^16.4.5"
-  },
-  "engines": {
-    "node": ">=16.0.0"
   }
 }
