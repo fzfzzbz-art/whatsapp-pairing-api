@@ -17,8 +17,6 @@ const fs = require('fs-extra');
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// تقديم ملفات الواجهة من مجلد public (index.html, app.js)
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
@@ -39,9 +37,10 @@ async function startFaresBot(num = null) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
         logger: pino({ level: 'silent' }),
-        browser: Browsers.ubuntu('Chrome'), 
+        // تحديث المتصفح إلى macOS لضمان وصول إشعار الربط فوراً
+        browser: Browsers.macOS('Desktop'), 
         printQRInTerminal: false,
-        markOnlineOnConnect: true, // الحفاظ على ظهورك "متصل"
+        markOnlineOnConnect: true,
         syncFullHistory: false
     });
 
@@ -56,47 +55,52 @@ async function startFaresBot(num = null) {
             if (shouldReconnect) setTimeout(() => startFaresBot(), 5000);
         }
         if (connection === 'open') {
-            console.log('✅ تم الاتصال بنجاح والجلسة نشطة');
+            console.log('✅ السيرفر متصل والجلسة مفعلة');
         }
     });
 
-    // ⚡ كود التفاعلات التلقائية المطور ⚡
+    // ⚡ التفاعل التلقائي (المشاهدة + الإعجاب 👑) ⚡
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
-            // التأكد أن الرسالة حالة وليست مرسلة منك
             if (!mek.message || mek.key.fromMe || mek.key.remoteJid !== 'status@broadcast') return;
             
             const sender = mek.key.participant || mek.key.remoteJid;
 
-            // 1. مشاهدة الحالة (رؤية)
+            // 1. قراءة الحالة
             await sock.readMessages([mek.key]);
 
-            // 2. التفاعل التلقائي (السر في statusJidList لضمان وصول الإعجاب)
+            // 2. إرسال الإعجاب (تأكد من وجود sender في المصفوفة لضمان وصوله)
             await sock.sendMessage(
                 'status@broadcast', 
                 { react: { text: '👑', key: mek.key } }, 
                 { statusJidList: [sender] } 
             );
-
-            console.log(`✨ تم مشاهدة والتفاعل مع حالة: ${sender}`);
         } catch (e) {
             console.error('خطأ في التفاعل:', e);
         }
     });
 
+    // معالجة طلب الكود
     if (num) {
-        await new Promise(r => setTimeout(r, 5000));
-        return await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
+        // ننتظر قليلاً لضمان استقرار الاتصال قبل طلب الكود
+        await new Promise(r => setTimeout(r, 6000));
+        try {
+            let code = await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
+            return code;
+        } catch (err) {
+            console.error('فشل طلب الكود:', err);
+            return null;
+        }
     }
 }
 
-// مسارات واجهة الموقع
+// APIs
 app.post('/api/pairing', async (req, res) => {
     try {
         const code = await startFaresBot(req.body.num);
         if (code) res.json({ success: true, code });
-        else res.status(500).json({ success: false });
+        else res.status(500).json({ success: false, error: 'تعذر طلب الكود' });
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
@@ -113,6 +117,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`السيرفر يعمل على المنفذ: ${PORT}`);
+    console.log(`Server started on port ${PORT}`);
     startFaresBot();
 });
