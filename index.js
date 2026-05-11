@@ -10,102 +10,76 @@ const {
 const express = require('express');
 const path = require('path');
 const pino = require('pino');
-const cors = require('cors');
-const QRCode = require('qrcode');
-const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs-extra');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
 const PORT = process.env.PORT || 3000;
-const TELEGRAM_TOKEN = '8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I';
-const tBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-let sock;
-let lastQr = null;
-
-async function startFaresBot(num = null, chatId = null) {
+async function startFaresBot() {
     const sessionPath = './session';
     if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath);
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
 
-    sock = makeWASocket({
+    const sock = makeWASocket({
         version,
         auth: {
             creds: state.creds,
+            // استخدام مخزن مفاتيح قابل للتخزين المؤقت لسرعة استعادة الجلسة
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
         logger: pino({ level: 'silent' }),
-        browser: Browsers.macOS('Desktop'),
+        browser: Browsers.ubuntu('Chrome'), 
         printQRInTerminal: false,
         syncFullHistory: false,
-        markOnlineOnConnect: true 
+        // جعل الحساب يظهر "متصل الآن" دائماً للحفاظ على نشاط الجلسة
+        markOnlineOnConnect: true,
+        // إعدادات إضافية لتقليل استهلاك الذاكرة ومنع انهيار التطبيق
+        patchMessageBeforeSending: (message) => {
+            const requiresPatch = !!(message.buttonsMessage || message.listMessage);
+            if (requiresPatch) {
+                message = { viewOnceMessage: { message: { messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 }, ...message } } };
+            }
+            return message;
+        }
     });
 
+    // حفظ بيانات الجلسة فور حدوث أي تغيير
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr) lastQr = await QRCode.toDataURL(qr);
+        const { connection, lastDisconnect } = update;
+        
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) setTimeout(() => startFaresBot(), 5000);
-        }
-        if (connection === 'open' && chatId) {
-            tBot.sendMessage(chatId, "✅ تم الربط بنجاح! ميزة مشاهدة الحالات والتفاعل مفعلة.");
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
+            console.log(`انقطع الاتصال. السبب: ${statusCode}. إعادة الاتصال: ${shouldReconnect}`);
+            
+            if (shouldReconnect) {
+                // إعادة تشغيل تلقائية بعد 5 ثوانٍ في حال الانقطاع المفاجئ
+                setTimeout(() => startFaresBot(), 5000);
+            }
+        } else if (connection === 'open') {
+            console.log('✅ الجلسة نشطة الآن والبوت متصل بالكامل');
         }
     });
 
-    // ميزة الحالات
+    // ميزة مشاهدة الحالات والتفاعل (لإبقاء الحساب نشطاً في خوارزميات واتساب)
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
-            if (!mek.message || mek.key.fromMe) return;
-            if (mek.key.remoteJid === 'status@broadcast') {
-                const sender = mek.key.participant || mek.key.remoteJid;
-                await sock.readMessages([mek.key]); // مشاهدة تلقائية
-                await sock.sendMessage(mek.key.remoteJid, { 
-                    react: { text: '👑', key: mek.key } // تفاعل تلقائي
-                }, { statusJidList: [sender] });
-            }
+            if (!mek.message || mek.key.fromMe || mek.key.remoteJid !== 'status@broadcast') return;
+            
+            await sock.readMessages([mek.key]);
+            await sock.sendMessage(mek.key.remoteJid, { react: { text: '👑', key: mek.key } }, { statusJidList: [mek.key.participant] });
         } catch (e) {}
     });
-
-    if (num) {
-        await new Promise(r => setTimeout(r, 7000));
-        return await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
-    }
 }
 
-app.post('/api/pairing', async (req, res) => {
-    try {
-        const code = await startFaresBot(req.body.num);
-        res.json({ success: true, code });
-    } catch (e) { res.status(500).json({ success: false }); }
-});
-
-app.get('/api/qr', async (req, res) => {
-    if (lastQr) {
-        const img = Buffer.from(lastQr.split(',')[1], 'base64');
-        res.writeHead(200, { 'Content-Type': 'image/png' });
-        res.end(img);
-    } else { res.status(404).send('Not Ready'); }
-});
-
-tBot.on('message', async (msg) => {
-    if (msg.text && /^\d+$/.test(msg.text)) {
-        tBot.sendMessage(msg.chat.id, "⏳ جاري الربط...");
-        const code = await startFaresBot(msg.text, msg.chat.id);
-        if (code) tBot.sendMessage(msg.chat.id, `🔐 كودك هو: ${code}`);
-    }
-});
-
+// تشغيل السيرفر
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`سيرفر الحفاظ على الجلسة يعمل على منفذ ${PORT}`);
     startFaresBot();
 });
