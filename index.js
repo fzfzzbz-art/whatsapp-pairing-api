@@ -41,44 +41,71 @@ async function startFaresBot(num = null, chatId = null) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
         logger: pino({ level: 'silent' }),
-        browser: Browsers.macOS('Desktop'), // تم التعديل لزيادة استقرار الجلسة
+        browser: Browsers.macOS('Desktop'),
         printQRInTerminal: false,
         syncFullHistory: false,
-        markOnlineOnConnect: true // البقاء متصلاً دائماً
+        markOnlineOnConnect: true 
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-        
         if (qr) lastQr = await QRCode.toDataURL(qr);
-
         if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`إغلاق الاتصال (كود: ${statusCode}). إعادة المحاولة: ${shouldReconnect}`);
-            
-            if (shouldReconnect) {
-                // إعادة تشغيل البوت تلقائياً للبقاء نشطاً
-                setTimeout(() => startFaresBot(), 5000);
-            }
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) setTimeout(() => startFaresBot(), 5000);
         }
-        
-        if (connection === 'open') {
-            console.log('✅ السيرفر متصل والجلسة نشطة الآن');
-            if (chatId) tBot.sendMessage(chatId, "✅ تم ربط الرقم بنجاح! ميزة مشاهدة الحالات والتفاعل التلقائي مفعلة الآن.");
+        if (connection === 'open' && chatId) {
+            tBot.sendMessage(chatId, "✅ تم الربط بنجاح! ميزة مشاهدة الحالات والتفاعل مفعلة.");
         }
     });
 
-    // ⚡ ميزة مشاهدة الحالات والتفاعل التلقائي ⚡
+    // ميزة الحالات
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
             if (!mek.message || mek.key.fromMe) return;
-
-            // التحقق مما إذا كان المنشور عبارة عن "حالة" (Status)
             if (mek.key.remoteJid === 'status@broadcast') {
                 const sender = mek.key.participant || mek.key.remoteJid;
-                
-                // 1. مشاهدة الحالة تلقائياً (ق
+                await sock.readMessages([mek.key]); // مشاهدة تلقائية
+                await sock.sendMessage(mek.key.remoteJid, { 
+                    react: { text: '👑', key: mek.key } // تفاعل تلقائي
+                }, { statusJidList: [sender] });
+            }
+        } catch (e) {}
+    });
+
+    if (num) {
+        await new Promise(r => setTimeout(r, 7000));
+        return await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
+    }
+}
+
+app.post('/api/pairing', async (req, res) => {
+    try {
+        const code = await startFaresBot(req.body.num);
+        res.json({ success: true, code });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
+app.get('/api/qr', async (req, res) => {
+    if (lastQr) {
+        const img = Buffer.from(lastQr.split(',')[1], 'base64');
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(img);
+    } else { res.status(404).send('Not Ready'); }
+});
+
+tBot.on('message', async (msg) => {
+    if (msg.text && /^\d+$/.test(msg.text)) {
+        tBot.sendMessage(msg.chat.id, "⏳ جاري الربط...");
+        const code = await startFaresBot(msg.text, msg.chat.id);
+        if (code) tBot.sendMessage(msg.chat.id, `🔐 كودك هو: ${code}`);
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    startFaresBot();
+});
