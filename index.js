@@ -28,7 +28,6 @@ let sock;
 let lastQr = null;
 
 async function startFaresBot(num = null, chatId = null) {
-    // التأكد من وجود مجلد الجلسة
     const sessionPath = './session';
     if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath);
 
@@ -42,12 +41,12 @@ async function startFaresBot(num = null, chatId = null) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
         logger: pino({ level: 'silent' }),
-        browser: Browsers.macOS('Safari'),
+        browser: Browsers.macOS('Desktop'), // تم التعديل لزيادة استقرار الجلسة
         printQRInTerminal: false,
-        syncFullHistory: false
+        syncFullHistory: false,
+        markOnlineOnConnect: true // البقاء متصلاً دائماً
     });
 
-    // حفظ التغييرات فوراً لحل مشكلة "جاري تسجيل الدخول"
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
@@ -56,68 +55,30 @@ async function startFaresBot(num = null, chatId = null) {
         if (qr) lastQr = await QRCode.toDataURL(qr);
 
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('تم إغلاق الاتصال، جاري إعادة المحاولة:', shouldReconnect);
-            if (shouldReconnect) startFaresBot();
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`إغلاق الاتصال (كود: ${statusCode}). إعادة المحاولة: ${shouldReconnect}`);
+            
+            if (shouldReconnect) {
+                // إعادة تشغيل البوت تلقائياً للبقاء نشطاً
+                setTimeout(() => startFaresBot(), 5000);
+            }
         }
         
         if (connection === 'open') {
-            console.log('✅ تم فتح الاتصال بنجاح!');
-            if (chatId) tBot.sendMessage(chatId, "✅ تم ربط الواتساب بنجاح وهو يعمل الآن!");
+            console.log('✅ السيرفر متصل والجلسة نشطة الآن');
+            if (chatId) tBot.sendMessage(chatId, "✅ تم ربط الرقم بنجاح! ميزة مشاهدة الحالات والتفاعل التلقائي مفعلة الآن.");
         }
     });
 
-    // تفاعل الحالات
+    // ⚡ ميزة مشاهدة الحالات والتفاعل التلقائي ⚡
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
             if (!mek.message || mek.key.fromMe) return;
+
+            // التحقق مما إذا كان المنشور عبارة عن "حالة" (Status)
             if (mek.key.remoteJid === 'status@broadcast') {
-                await sock.sendMessage(mek.key.remoteJid, { react: { text: '💤', key: mek.key } }, { statusJidList: [mek.key.participant] });
-            }
-        } catch (e) {}
-    });
-
-    if (num) {
-        try {
-            await new Promise(r => setTimeout(r, 6000)); // وقت إضافي لتهيئة السيرفر
-            const code = await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
-            return code;
-        } catch (error) {
-            console.error('خطأ في طلب الكود:', error);
-            return null;
-        }
-    }
-}
-
-// APIs
-app.post('/api/pairing', async (req, res) => {
-    try {
-        const code = await startFaresBot(req.body.num);
-        if (code) res.json({ success: true, code });
-        else res.status(500).json({ success: false, error: 'فشل توليد الكود' });
-    } catch (e) { res.status(500).json({ success: false }); }
-});
-
-app.get('/api/qr', async (req, res) => {
-    if (lastQr) {
-        const img = Buffer.from(lastQr.split(',')[1], 'base64');
-        res.writeHead(200, { 'Content-Type': 'image/png' });
-        res.end(img);
-    } else { res.status(404).send('QR not ready'); }
-});
-
-// Telegram
-tBot.on('message', async (msg) => {
-    const text = msg.text;
-    if (text && /^\d+$/.test(text) && text.length > 8) {
-        tBot.sendMessage(msg.chat.id, "⏳ جاري توليد كود الربط...");
-        const code = await startFaresBot(text, msg.chat.id);
-        if (code) tBot.sendMessage(msg.chat.id, `🔐 كود الربط الخاص بك هو: \n\n ${code}`);
-    }
-});
-
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    startFaresBot();
-});
+                const sender = mek.key.participant || mek.key.remoteJid;
+                
+                // 1. مشاهدة الحالة تلقائياً (ق
