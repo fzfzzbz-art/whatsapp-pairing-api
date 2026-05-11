@@ -10,76 +10,98 @@ const {
 const express = require('express');
 const path = require('path');
 const pino = require('pino');
+const cors = require('cors');
+const QRCode = require('qrcode');
 const fs = require('fs-extra');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json());
 
-async function startFaresBot() {
+// ربط المجلد العام لعرض الواجهة (HTML/JS/CSS)
+app.use(express.static(path.join(__dirname, 'public')));
+
+const PORT = process.env.PORT || 3000;
+let sock;
+let lastQr = null;
+
+async function startFaresBot(num = null) {
     const sessionPath = './session';
     if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath);
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
 
-    const sock = makeWASocket({
+    sock = makeWASocket({
         version,
         auth: {
             creds: state.creds,
-            // استخدام مخزن مفاتيح قابل للتخزين المؤقت لسرعة استعادة الجلسة
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
         logger: pino({ level: 'silent' }),
-        browser: Browsers.ubuntu('Chrome'), 
+        browser: Browsers.ubuntu('Chrome'), // تحسين التوافق لضمان وصول الإشعار
         printQRInTerminal: false,
-        syncFullHistory: false,
-        // جعل الحساب يظهر "متصل الآن" دائماً للحفاظ على نشاط الجلسة
-        markOnlineOnConnect: true,
-        // إعدادات إضافية لتقليل استهلاك الذاكرة ومنع انهيار التطبيق
-        patchMessageBeforeSending: (message) => {
-            const requiresPatch = !!(message.buttonsMessage || message.listMessage);
-            if (requiresPatch) {
-                message = { viewOnceMessage: { message: { messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 }, ...message } } };
-            }
-            return message;
-        }
+        markOnlineOnConnect: true 
     });
 
-    // حفظ بيانات الجلسة فور حدوث أي تغيير
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+        if (qr) lastQr = await QRCode.toDataURL(qr);
         
         if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            
-            console.log(`انقطع الاتصال. السبب: ${statusCode}. إعادة الاتصال: ${shouldReconnect}`);
-            
-            if (shouldReconnect) {
-                // إعادة تشغيل تلقائية بعد 5 ثوانٍ في حال الانقطاع المفاجئ
-                setTimeout(() => startFaresBot(), 5000);
-            }
-        } else if (connection === 'open') {
-            console.log('✅ الجلسة نشطة الآن والبوت متصل بالكامل');
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) setTimeout(() => startFaresBot(), 5000);
+        }
+        if (connection === 'open') {
+            console.log("✅ تم الاتصال بنجاح والجلسة نشطة");
         }
     });
 
-    // ميزة مشاهدة الحالات والتفاعل (لإبقاء الحساب نشطاً في خوارزميات واتساب)
+    // ميزة مشاهدة الحالات والتفاعل التلقائي لإبقاء الجلسة نشطة
     sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
             if (!mek.message || mek.key.fromMe || mek.key.remoteJid !== 'status@broadcast') return;
             
-            await sock.readMessages([mek.key]);
-            await sock.sendMessage(mek.key.remoteJid, { react: { text: '👑', key: mek.key } }, { statusJidList: [mek.key.participant] });
+            await sock.readMessages([mek.key]); // مشاهدة تلقائية
+            await sock.sendMessage(mek.key.remoteJid, { 
+                react: { text: '👑', key: mek.key } 
+            }, { statusJidList: [mek.key.participant] });
         } catch (e) {}
     });
+
+    // معالجة طلب كود الإقران من الواجهة
+    if (num) {
+        await new Promise(r => setTimeout(r, 3000));
+        return await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
+    }
 }
 
-// تشغيل السيرفر
+// مسارات الـ API للواجهة
+app.post('/api/pairing', async (req, res) => {
+    try {
+        const code = await startFaresBot(req.body.num);
+        if (code) res.json({ success: true, code });
+        else res.status(500).json({ success: false });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
+app.get('/api/qr', async (req, res) => {
+    if (lastQr) {
+        const img = Buffer.from(lastQr.split(',')[1], 'base64');
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(img);
+    } else { res.status(404).send('QR Not Ready'); }
+});
+
+// تشغيل السيرفر وعرض الواجهة
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.listen(PORT, () => {
-    console.log(`سيرفر الحفاظ على الجلسة يعمل على منفذ ${PORT}`);
-    startFaresBot();
+    console.log(`سيرفر Golden Queen يعمل على الرابط: http://localhost:${PORT}`);
+    startFaresBot(); // بدء تشغيل البوت عند تشغيل السيرفر
 });
