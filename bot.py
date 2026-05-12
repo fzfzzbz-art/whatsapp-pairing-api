@@ -19,7 +19,7 @@ from telegram.ext import (
 from telegram.error import Conflict
 
 # --- الإعدادات المطلوبة ---
-BOT_TOKEN = "8631941557:AAHJ_97NplwcLMkee0-Zrf2FY5XqmI6E_0I"
+BOT_TOKEN = "8631941557:AAHhHbgJa_BpU9avBYC-n3eKlQhzvuNNUJQ"
 PAIRING_API_URL = "https://bot.goldenqueen.store/api/pairing"
 SITE_PASSWORD = "GQ_ADMIN_2026"  # كلمة السر التي ستصل للمستخدم تلقائياً
 
