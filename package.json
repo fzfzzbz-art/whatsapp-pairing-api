@@ -1,20 +1,10 @@
 {
-  "name": "golden-queen-v3",
-  "version": "1.0.0",
-  "description": "WhatsApp Status Bot",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.5",
-    "node-telegram-bot-api": "^0.66.0",
-    "express": "^4.19.2",
-    "pino": "^9.1.0",
-    "fs-extra": "^11.2.0",
-    "axios": "^1.7.2",
-    "cors": "^2.8.5",
-    "qrcode": "^1.5.3",
-    "dotenv": "^16.4.5"
+    "telegraf": "^4.16.3",
+    "axios": "^1.6.7",
+    "@whiskeysockets/baileys": "^6.6.0",
+    "pino": "^8.19.0",
+    "express": "^4.18.3",
+    "fs-extra": "^11.2.0"
   }
 }
