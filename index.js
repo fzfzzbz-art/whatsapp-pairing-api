@@ -19,7 +19,7 @@ const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
 // --- تشغيل الواتساب (Baileys) ---
-async function startWhatsApp(phoneNumber, telegramCtx) {
+async function startWhatsApp(phoneNumber = null, telegramCtx = null) {
     const { state, saveCreds } = await useMultiFileAuthState('./session');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -28,40 +28,48 @@ async function startWhatsApp(phoneNumber, telegramCtx) {
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         auth: state,
-        browser: Browsers.macOS('Desktop'),
-        syncFullHistory: false
+        // تحديث الهوية لمتصفح Chrome لضمان قبول كود الربط من قبل واتساب
+        browser: Browsers.ubuntu('Chrome'), 
+        syncFullHistory: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000
     });
 
-    // طلب كود الربط إذا كان الرقم موجوداً
+    // طلب كود الربط عند إرسال رقم هاتف جديد
     if (phoneNumber && !sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode(phoneNumber);
-                await telegramCtx.reply(`✅ كود الربط الخاص بك هو:\n\n \`${code}\` \n\n🔐 كلمة سر الموقع: \`${SITE_PASSWORD}\``, { parse_mode: 'Markdown' });
-            } catch (err) {
-                await telegramCtx.reply('❌ فشل طلب الكود، تأكد من الرقم.');
+        // تأخير بسيط لضمان استقرار الجلسة قبل طلب الكود
+        await new Promise(resolve => setTimeout(resolve, 7000));
+        try {
+            let code = await sock.requestPairingCode(phoneNumber);
+            if (telegramCtx) {
+                await telegramCtx.reply(`✅ كود الربط الخاص بك هو:\n\n \`${code}\` \n\n🔐 استخدم هذا الكود الآن في واتساب (الأجهزة المرتبطة).\n⚠️ ملاحظة: استخدم الكود الأخير فقط.`);
             }
-        }, 3000);
+        } catch (err) {
+            console.error('Pairing Error:', err);
+            if (telegramCtx) await telegramCtx.reply('❌ فشل طلب الكود. يرجى المحاولة مرة أخرى بعد دقيقة.');
+        }
     }
 
-    // التفاعل مع الحالات والرسائل (بدون توقف)
+    // إدارة الأحداث (الرسائل والحالات)
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
 
         const from = msg.key.remoteJid;
 
-        // 1. التفاعل التلقائي مع الحالات (Auto View Status)
+        // 1. التفاعل التلقائي مع الحالات (Auto-View Status)
         if (from === 'status@broadcast') {
-            await sock.readMessages([msg.key]); // قراءة الحالة
+            await sock.readMessages([msg.key]); // مشاهدة الحالة
+            // وضع تفاعل "💤" على الحالة
             await sock.sendMessage(from, { react: { text: '💤', key: msg.key } }, { statusJidList: [msg.key.participant] });
             return;
         }
 
-        // 2. الرد التلقائي برابط البوت
+        // 2. رد تلقائي بسيط (اختياري)
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        if (text) {
-            await sock.sendMessage(from, { text: `مرحباً! أنا بوت Golden Queen.\nرابط بوت التليجرام الخاص بي: https://t.me/${bot.botInfo.username}` }, { quoted: msg });
+        if (text && !from.endsWith('@g.us')) { // الرد في الخاص فقط
+             await sock.sendMessage(from, { text: `مرحباً! أنا بوت Golden Queen.\nرابط بوت التليجرام: https://t.me/${bot.botInfo.username}` }, { quoted: msg });
         }
     });
 
@@ -71,9 +79,9 @@ async function startWhatsApp(phoneNumber, telegramCtx) {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startWhatsApp(); // إعادة الاتصال تلقائياً
+            if (shouldReconnect) startWhatsApp(); // إعادة الاتصال التلقائي
         } else if (connection === 'open') {
-            console.log('WhatsApp Connection Opened! ✅');
+            console.log('WhatsApp Connected Successfully! ✅');
         }
     });
 
@@ -91,26 +99,34 @@ bot.on('callback_query', async (ctx) => {
     if (ctx.callbackQuery.data === 'pair_wa') {
         ctx.session = { step: 'wait_phone' };
         await ctx.answerCbQuery();
-        await ctx.reply('📱 أرسل رقمك الآن (مثال: 967771163825):');
+        await ctx.reply('📱 أرسل رقمك الآن مع مفتاح الدولة (مثال: 967771163825):');
     }
 });
 
 bot.on('text', async (ctx) => {
     if (ctx.session?.step === 'wait_phone') {
-        const phone = ctx.message.text.trim();
-        if (!/^\d+$/.test(phone)) return ctx.reply('❌ أرسل أرقاماً فقط.');
+        const phone = ctx.message.text.trim().replace('+', '');
+        if (!/^\d+$/.test(phone)) return ctx.reply('❌ يرجى إرسال أرقام فقط.');
         
-        await ctx.reply('⏳ جاري إنشاء جلسة وطلب الكود من واتساب...');
+        await ctx.reply('⏳ جاري إنشاء الجلسة وطلب الكود، انتظر لحظة...');
         startWhatsApp(phone, ctx);
         ctx.session.step = null;
     }
 });
 
-// --- واجهة الموقع و Health Check ---
-app.get('/', (req, res) => res.send('<h1>Golden Queen System is Online ✅</h1>'));
+// --- واجهة الموقع و Health Check لـ Render ---
+app.get('/', (req, res) => {
+    res.send(`
+        <body style="background:#121212;color:white;text-align:center;padding-top:50px;font-family:sans-serif;">
+            <h1 style="color:#f39c12;">Golden Queen System</h1>
+            <p style="color:#2ecc71;">الحالة: متصل ونشط ✅</p>
+        </body>
+    `);
+});
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    startWhatsApp(); // تشغيل الجلسة المحفوظة عند بدء التشغيل
+    startWhatsApp(); // تشغيل الجلسات المحفوظة عند البدء
     bot.launch();
 });
