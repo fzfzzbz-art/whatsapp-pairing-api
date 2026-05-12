@@ -206,6 +206,17 @@ function savePhoneSettingsDB(db) {
     writeJSON(PHONE_SETTINGS_FILE, db);
 }
 
+function generateSettingsPassword(length = 10) {
+    const size = Math.max(8, Number(length) || 10);
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const bytes = crypto.randomBytes(size);
+    let password = '';
+    for (let index = 0; index < size; index += 1) {
+        password += alphabet[bytes[index] % alphabet.length];
+    }
+    return password;
+}
+
 function extractAppIdFromPassword(pass) {
     const cleanPass = String(pass || '').trim();
     if (cleanPass.length === 6) return cleanPass.slice(-1);
@@ -222,16 +233,56 @@ function ensurePhoneSettingsProfile(phone, appId = 'default') {
     const normalizedPhone = normalizePhone(phone);
     const normalizedAppId = normalizeAppId(appId);
     const db = getPhoneSettingsDB();
-    db.profiles[normalizedPhone] = db.profiles[normalizedPhone] || { activeAppId: normalizedAppId, apps: {} };
+    db.profiles[normalizedPhone] = db.profiles[normalizedPhone] || { activeAppId: normalizedAppId, apps: {}, credentials: {} };
     db.profiles[normalizedPhone].apps = db.profiles[normalizedPhone].apps || {};
+    db.profiles[normalizedPhone].credentials = db.profiles[normalizedPhone].credentials || {};
     if (!db.profiles[normalizedPhone].apps[normalizedAppId]) {
         db.profiles[normalizedPhone].apps[normalizedAppId] = cloneDefaultPhoneSettings();
+    }
+    const currentCredential = db.profiles[normalizedPhone].credentials[normalizedAppId] || {};
+    if (!String(currentCredential.password || '').trim()) {
+        db.profiles[normalizedPhone].credentials[normalizedAppId] = {
+            password: generateSettingsPassword(),
+            createdAt: currentCredential.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
     }
     if (!db.profiles[normalizedPhone].activeAppId) {
         db.profiles[normalizedPhone].activeAppId = normalizedAppId;
     }
     savePhoneSettingsDB(db);
     return db.profiles[normalizedPhone];
+}
+
+function getPhoneSettingsCredential(phone, appId = null) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return null;
+    const profile = ensurePhoneSettingsProfile(normalizedPhone, appId || 'default');
+    const resolvedAppId = normalizeAppId(appId || profile?.activeAppId || 'default');
+    const credential = profile?.credentials?.[resolvedAppId];
+    if (!String(credential?.password || '').trim()) {
+        ensurePhoneSettingsProfile(normalizedPhone, resolvedAppId);
+        return getPhoneSettingsCredential(normalizedPhone, resolvedAppId);
+    }
+    return {
+        phone: normalizedPhone,
+        appId: resolvedAppId,
+        password: String(credential.password).trim()
+    };
+}
+
+function buildPhoneSettingsAccessMessage(phone, appId = null) {
+    const credential = getPhoneSettingsCredential(phone, appId);
+    if (!credential) return '';
+    return [
+        `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
+        '',
+        `🌐 الرابط: ${PUBLIC_BASE_URL}/settings`,
+        `📱 الرقم: ${credential.phone}`,
+        `🗝️ كلمة السر: ${credential.password}`,
+        '',
+        'هذه الكلمة خاصة بهذا الرقم فقط.'
+    ].join('\n');
 }
 
 function getActivePhoneAppId(phone) {
@@ -470,18 +521,31 @@ function authenticateSettingsUser(num, pass) {
     const password = String(pass || '').trim();
     if (!password) return { ok: false, error: 'Password is required' };
 
-    const appId = normalizeAppId(extractAppIdFromPassword(password));
-    const sitePassword = String(SITE_PASSWORD || '').trim();
+    ensurePhoneSettingsProfile(phone, 'default');
+    const db = getPhoneSettingsDB();
+    const profile = db.profiles?.[phone] || {};
+    const credentials = profile.credentials || {};
 
-    if (sitePassword) {
-        const valid = password === sitePassword || password === `${sitePassword}${appId}` || password.startsWith(sitePassword);
-        if (!valid) {
-            return { ok: false, error: 'Wrong User Number Or Password' };
+    for (const [storedAppId, credential] of Object.entries(credentials)) {
+        if (String(credential?.password || '').trim() === password) {
+            const resolvedAppId = normalizeAppId(storedAppId || profile.activeAppId || 'default');
+            ensurePhoneSettingsProfile(phone, resolvedAppId);
+            return { ok: true, phone, appId: resolvedAppId };
         }
     }
 
-    ensurePhoneSettingsProfile(phone, appId);
-    return { ok: true, phone, appId };
+    const fallbackAppId = normalizeAppId(extractAppIdFromPassword(password) || profile.activeAppId || 'default');
+    const sitePassword = String(SITE_PASSWORD || '').trim();
+
+    if (sitePassword) {
+        const valid = password === sitePassword || password === `${sitePassword}${fallbackAppId}` || password.startsWith(sitePassword);
+        if (valid) {
+            ensurePhoneSettingsProfile(phone, fallbackAppId);
+            return { ok: true, phone, appId: fallbackAppId };
+        }
+    }
+
+    return { ok: false, error: 'Wrong User Number Or Password' };
 }
 
 function normalizePhone(phone) {
@@ -612,14 +676,17 @@ async function handleOwnerControlMessage(sock, phoneNumber, msg) {
 
 function buildPhoneSettingsMessage(phone) {
     const replies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
+    const credential = getPhoneSettingsCredential(phone);
     return [
         `⚙️ إعدادات الرقم ${phone}`,
         `🤖 عدد الردود التلقائية: ${replies.length}/${MAX_AUTO_REPLIES}`,
+        credential ? `🗝️ كلمة سر لوحة الإعدادات: ${credential.password}` : '🗝️ كلمة سر لوحة الإعدادات: غير متاحة',
         '',
         'الردود الحالية:',
         formatAutoRepliesList(phone),
         '',
-        `🌐 لوحة الإعدادات: ${PUBLIC_BASE_URL}/settings`
+        `🌐 لوحة الإعدادات: ${PUBLIC_BASE_URL}/settings`,
+        'هذه الكلمة خاصة بهذا الرقم فقط.'
     ].join('\n');
 }
 
@@ -1156,33 +1223,37 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (!hasStatusContent(msg)) return;
 
         const settings = getActivePhoneSettings(phoneNumber);
-        const participant = normalizeWhatsAppJid(msg.key?.participant || msg.participant);
+        const participant = normalizeWhatsAppJid(
+            msg.key?.participant ||
+                msg.participant ||
+                msg.message?.messageContextInfo?.participant ||
+                ''
+        );
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const reactionKey = {
-            ...msg.key,
-            remoteJid: msg.key?.remoteJid || 'status@broadcast',
+            ...(msg.key || {}),
+            remoteJid: 'status@broadcast',
             participant: participant || msg.key?.participant || msg.participant,
             fromMe: false
         };
 
-        if (!reactionKey.id || !participant) return;
+        if (!reactionKey.id) return;
 
         if (settings.autoStatusRead === 'on') {
             await sock.readMessages([reactionKey]);
         }
 
-        if (settings.autoStatusReact === 'on') {
+        if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
             const emoji = pickRandomStatusEmoji(phoneNumber);
-            const statusJidList = Array.from(new Set([participant, ownJid].filter(Boolean)));
             await sock.sendMessage(
-                reactionKey.remoteJid,
+                'status@broadcast',
                 {
                     react: {
                         text: emoji,
                         key: reactionKey
                     }
                 },
-                statusJidList.length ? { statusJidList } : {}
+                { statusJidList: [participant] }
             );
         }
 
@@ -1405,10 +1476,14 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 stoppedPairings.delete(normalizedPhone);
                 await autoJoinWhatsAppChannel(sock, normalizedPhone);
                 await sendLinkedNumberWelcome(sock, normalizedPhone);
+                const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
                 await notifyTelegramUser(
                     finalOwnerId,
                     `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.\nإيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}`
                 );
+                if (settingsAccessMessage) {
+                    await notifyTelegramUser(finalOwnerId, settingsAccessMessage);
+                }
                 clearPairingRequest(normalizedPhone);
             }
         }
