@@ -18,18 +18,21 @@ from telegram.ext import (
 )
 from telegram.error import Conflict
 
-# --- الإعدادات المطلوبة ---
+# --- الإعدادات النهائية ---
+# التوكن الجديد الذي أرسلته
 BOT_TOKEN = "8631941557:AAHhHbgJa_BpU9avBYC-n3eKlQhzvuNNUJQ"
+# رابط السيرفر الجديد
 PAIRING_API_URL = "https://bot.goldenqueen.store/api/pairing"
-SITE_PASSWORD = "GQ_ADMIN_2026"  # كلمة السر التي ستصل للمستخدم تلقائياً
+# كلمة السر لإعدادات الموقع
+SITE_PASSWORD = "GQ_ADMIN_2026"
 
-# مسارات ملفات البيانات
-BASE_DIR = Path(__file__).resolve().parent
-USERS_PATH = BASE_DIR / "bot_users.json"
-
-# إعداد السجلات (Logging)
+# إعداد السجلات
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# مسارات الملفات
+BASE_DIR = Path(__file__).resolve().parent
+USERS_PATH = BASE_DIR / "bot_users.json"
 
 def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
@@ -37,15 +40,13 @@ def save_json(path, data):
 
 def load_json(path):
     if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except:
-            return {}
+        try: return json.loads(path.read_text(encoding="utf-8"))
+        except: return {}
     return {}
 
 USERS = load_json(USERS_PATH)
 
-# --- دالة الترحيب /start ---
+# --- دالة البداية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if user_id not in USERS:
@@ -55,9 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("ربط واتساب 📱", callback_query_data="pair_wa")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "👋 مرحباً بك في بوت Golden Queen المطور.\n\n"
-        "هذا البوت يتيح لك ربط رقمك بالواتساب بسهولة.\n"
-        "اضغط على الزر أدناه للبدء:",
+        "مرحباً بك في بوت Golden Queen.\nلربط رقمك بالواتساب اضغط على الزر أدناه:",
         reply_markup=reply_markup
     )
 
@@ -65,27 +64,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     if query.data == "pair_wa":
-        await query.edit_message_text("📱 من فضلك أرسل رقم هاتفك الآن مع مفتاح الدولة\nمثال: `966500000000`", parse_mode="Markdown")
+        await query.edit_message_text("📱 أرسل رقم هاتفك الآن مع مفتاح الدولة (مثال: 966500000000):")
         context.user_data["step"] = "wait_phone"
 
-# --- معالجة الرسائل النصية والربط ---
+# --- معالجة الرسائل النصية ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data.get("step")
-    user_id = str(update.effective_user.id)
     text = update.message.text.strip()
 
     if step == "wait_phone":
-        # التحقق من أن المدخل أرقام فقط وطولها منطقي
         if not re.match(r"^\d{10,15}$", text):
-            await update.message.reply_text("❌ الرقم غير صحيح! أرسل الرقم كأرقام فقط بدون أصفار دولية أو علامة +")
+            await update.message.reply_text("❌ الرقم غير صحيح! أرسل أرقاماً فقط.")
             return
         
-        await update.message.reply_text("⏳ جاري الاتصال بالسيرفر لطلب كود الربط...")
+        await update.message.reply_text("⏳ جاري طلب كود الربط...")
         
         try:
-            # طلب كود الربط من API
+            # طلب كود الربط من السيرفر
             response = requests.get(f"{PAIRING_API_URL}?phone={text}", timeout=30, verify=False)
             res_data = response.json()
             
@@ -94,75 +90,59 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bot_info = await context.bot.get_me()
                 bot_link = f"https://t.me/{bot_info.username}"
 
-                # 1. إرسال الكود للمستخدم في التليجرام
+                # 1. إرسال الكود للمستخدم
                 await update.message.reply_text(
-                    f"✅ كود الربط الخاص بك هو: `{pair_code}`\n\n"
-                    "خطوات الربط:\n"
-                    "1️⃣ افتح الواتساب في هاتفك.\n"
-                    "2️⃣ اختر (الأجهزة المرتبطة).\n"
-                    "3️⃣ اختر (ربط هاتف برقم الهاتف).\n"
-                    "4️⃣ أدخل الكود المذكور أعلاه.",
+                    f"✅ كود الربط: `{pair_code}`\n\nأدخل الكود في واتساب > الأجهزة المرتبطة.",
                     parse_mode="Markdown"
                 )
                 
-                # 2. إرسال رسالة النجاح التلقائية للمستخدم في التليجرام
-                success_msg = (
-                    "🎉 تم استلام طلب الربط بنجاح!\n\n"
-                    f"🔐 كلمة سر إعدادات الموقع الخاصة بك هي:\n`{SITE_PASSWORD}`\n\n"
-                    "سيتم تفعيل الخدمة على رقمك فور إدخال الكود في الواتساب."
+                # 2. إرسال كلمة السر فوراً
+                await update.message.reply_text(
+                    f"🎉 طلب الربط تم!\n🔐 كلمة سر الموقع: `{SITE_PASSWORD}`",
+                    parse_mode="Markdown"
                 )
-                await update.message.reply_text(success_msg, parse_mode="Markdown")
 
-                # 3. إرسال رابط البوت إلى الرقم المربوط (واتساب)
-                # ملاحظة: هذا الطلب يفترض أن السيرفر يدعم إرسال رسالة ترحيبية للرقم
-                try:
-                    requests.post(f"https://bot.goldenqueen.store/api/send", json={
-                        "phone": text,
-                        "message": f"تم ربط رقمك بنجاح في بوت جولدن كوين\nرابط البوت: {bot_link}"
-                    }, timeout=5)
-                except:
-                    pass # تخطي في حال لم يكن السيرفر مهيأ للإرسال الفوري
+                # 3. إرسال رابط البوت للرقم المربوط تلقائياً
+                requests.post(f"https://bot.goldenqueen.store/api/send", json={
+                    "phone": text,
+                    "message": f"رابط البوت الخاص بك: {bot_link}"
+                }, timeout=5)
                 
             else:
-                await update.message.reply_text("❌ فشل الحصول على الكود. ربما الرقم مربوط مسبقاً أو السيرفر لا يستجيب.")
-        
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            await update.message.reply_text("⚠️ حدث خطأ فني أثناء الاتصال بالسيرفر. حاول مرة أخرى لاحقاً.")
+                await update.message.reply_text("❌ فشل الحصول على الكود من السيرفر.")
+        except:
+            await update.message.reply_text("⚠️ حدث خطأ في الاتصال بالسيرفر.")
         
         context.user_data["step"] = None
 
-# --- سيرفر لفحص الحالة (لمنع توقف البوت في الاستضافات) ---
+# --- سيرفر لتفادي إغلاق Render للبوت (Health Check) ---
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Golden Queen Bot is Running...")
+        self.wfile.write(b"Bot is Live")
 
 def run_health_server():
-    server = ThreadingHTTPServer(("0.0.0.0", 8080), HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", 8080), HealthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+    except: pass
 
-# --- تشغيل البوت الأساسي ---
+# --- التشغيل ---
 def main():
-    # تشغيل سيرفر الـ Health Check
     run_health_server()
-    
-    # بناء تطبيق البوت
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # إضافة المعالجات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    print("--- البوت بدأ العمل الآن بنجاح ---")
-    
+    print("البوت يعمل الآن بالتوكن الجديد...")
     try:
         app.run_polling(drop_pending_updates=True)
     except Conflict:
-        print("❌ خطأ: التوكن يعمل في مكان آخر. تأكد من إغلاق أي نسخة قديمة.")
+        print("خطأ: التوكن مستخدم في مكان آخر!")
 
 if __name__ == "__main__":
     main()
