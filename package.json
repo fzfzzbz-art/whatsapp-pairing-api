@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "description": "WhatsApp pairing + Telegram bot service for Render",
-  "main": "fixed.js",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node fixed.js",
-    "dev": "node fixed.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "engines": {
     "node": ">=20.0.0"
