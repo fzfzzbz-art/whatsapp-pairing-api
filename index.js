@@ -1,94 +1,120 @@
-const { Telegraf, session } = require('telegraf');
-const axios = require('axios');
-const http = require('http');
+require('dotenv').config();
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    fetchLatestBaileysVersion, 
+    Browsers, 
+    DisconnectReason,
+    makeCacheableSignalKeyStore
+} = require('@whiskeysockets/baileys');
+const express = require('express');
+const path = require('path');
+const pino = require('pino');
+const cors = require('cors');
+const QRCode = require('qrcode');
+const fs = require('fs-extra');
 
-// --- الإعدادات ---
-const BOT_TOKEN = '8631941557:AAHhHbgJa_BpU9avBYC-n3eKlQhzvuNNUJQ';
-// تم تحديث الرابط لموقعك الجديد
-const PAIRING_API = 'https://whatsapp-pairing-api.onrender.com/api/pairing';
-const SITE_PASSWORD = 'GQ_ADMIN_2026';
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-const bot = new Telegraf(BOT_TOKEN);
-bot.use(session());
+// تشغيل واجهة الموقع من مجلد public
+app.use(express.static(path.join(__dirname, 'public')));
 
-// --- إضافة واجهة ربط للمتصفح (HTML Interface) ---
-const port = process.env.PORT || 8080;
-http.createServer((req, res) => {
-    if (req.url === '/') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`
-            <!DOCTYPE html>
-            <html lang="ar" dir="rtl">
-            <head>
-                <title>واجهة ربط جولدن كوين</title>
-                <style>
-                    body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding-top: 50px; }
-                    .card { background: #1e1e1e; padding: 20px; border-radius: 15px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-                    h1 { color: #f39c12; }
-                    .status { color: #2ecc71; font-weight: bold; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h1>Golden Queen API</h1>
-                    <p>الحالة: <span class="status">متصل ونشط ✅</span></p>
-                    <p>هذا الرابط مخصص لربط البوت بالسيرفر.</p>
-                    <small>2026 © جميع الحقوق محفوظة لـ فارس التميمي</small>
-                </div>
-            </body>
-            </html>
-        `);
-    } else {
-        res.writeHead(404);
-        res.end();
-    }
-}).listen(port, () => {
-    console.log(`Server & Web Interface running on port ${port}`);
-});
+const PORT = process.env.PORT || 3000;
+let sock;
+let lastQr = null;
 
-// --- أوامر البوت ---
-bot.start((ctx) => {
-    ctx.reply('مرحباً بك في بوت جولدن كوين (Node.js)!\nاضغط على الزر لربط واتساب بموقعك الجديد:', {
-        reply_markup: {
-            inline_keyboard: [[{ text: 'ربط واتساب 📱', callback_data: 'pair_wa' }]]
+async function startFaresBot(num = null) {
+    const sessionPath = './session';
+    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath);
+
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+        },
+        logger: pino({ level: 'silent' }),
+        browser: Browsers.ubuntu('Chrome'), // لضمان استقرار الربط
+        printQRInTerminal: false,
+        markOnlineOnConnect: true, // يظهر رقمك "متصل" دائماً
+        syncFullHistory: false
+    });
+
+    // حفظ بيانات الجلسة فوراً
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        if (qr) lastQr = await QRCode.toDataURL(qr);
+        
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('انقطع الاتصال، جاري إعادة المحاولة:', shouldReconnect);
+            if (shouldReconnect) setTimeout(() => startFaresBot(), 5000);
+        }
+        
+        if (connection === 'open') {
+            console.log('✅ تم فتح الاتصال بنجاح! الجلسة نشطة الآن.');
         }
     });
-});
 
-bot.on('callback_query', async (ctx) => {
-    if (ctx.callbackQuery.data === 'pair_wa') {
-        ctx.session = { step: 'wait_phone' };
-        await ctx.answerCbQuery();
-        await ctx.reply('📱 أرسل رقمك الآن (مثال: 967771163825):');
-    }
-});
-
-bot.on('text', async (ctx) => {
-    const state = ctx.session || {};
-    if (state.step === 'wait_phone') {
-        const phone = ctx.message.text.trim();
-        
-        if (!/^\d+$/.test(phone)) {
-            return ctx.reply('❌ أرسل أرقاماً فقط بدون مسافات.');
-        }
-
-        await ctx.reply('⏳ جاري طلب كود الربط من موقعك الجديد...');
-
+    // ⚡ كود التفاعلات التلقائية (مشاهدة وتفاعل مع الحالات) ⚡
+    sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
-            // طلب الكود من موقعك الجديد مباشرة
-            const response = await axios.get(`${PAIRING_API}?phone=${phone}`, { timeout: 15000 });
+            const mek = chatUpdate.messages[0];
+            if (!mek.message || mek.key.fromMe || mek.key.remoteJid !== 'status@broadcast') return;
             
-            if (response.data && response.data.code) {
-                await ctx.reply(`✅ كود الربط: \`${response.data.code}\`\n🔐 كلمة السر: \`${SITE_PASSWORD}\``, { parse_mode: 'Markdown' });
-            } else {
-                await ctx.reply('⚠️ السيرفر استجاب ولكن لم يرسل كوداً. تأكد من إعدادات الموقع.');
-            }
-        } catch (error) {
-            console.error('API Error:', error.message);
-            await ctx.reply('❌ فشل الاتصال بموقعك الجديد. تأكد أن الموقع يعمل وغير متوقف.');
+            const sender = mek.key.participant || mek.key.remoteJid;
+
+            // 1. مشاهدة الحالة تلقائياً
+            await sock.readMessages([mek.key]);
+            
+            // 2. التفاعل بالإيموجي (👑)
+            await sock.sendMessage(mek.key.remoteJid, { 
+                react: { text: '👑', key: mek.key } 
+            }, { statusJidList: [sender] });
+
+            console.log(`✨ تم التفاعل مع حالة: ${sender}`);
+        } catch (e) {
+            console.error('خطأ في التفاعل:', e);
         }
-        ctx.session.step = null;
+    });
+
+    // معالجة طلب كود الربط
+    if (num) {
+        await new Promise(r => setTimeout(r, 5000));
+        return await sock.requestPairingCode(num.replace(/[^0-9]/g, ''));
     }
+}
+
+// APIs الموقع
+app.post('/api/pairing', async (req, res) => {
+    try {
+        const code = await startFaresBot(req.body.num);
+        if (code) res.json({ success: true, code });
+        else res.status(500).json({ success: false });
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
-bot.launch();
+app.get('/api/qr', async (req, res) => {
+    if (lastQr) {
+        const img = Buffer.from(lastQr.split(',')[1], 'base64');
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(img);
+    } else { res.status(404).send('QR Not Ready'); }
+});
+
+// توجيه كافة الطلبات لفتح الواجهة الرئيسية
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+    console.log(`السيرفر يعمل الآن على المنفذ: ${PORT}`);
+    startFaresBot();
+});
