@@ -20,6 +20,9 @@ const DEFAULT_PUBLIC_BASE_URL = `http://localhost:${APP_PORT}`;
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 const DEFAULT_REACTION_EMOJI = '💤';
+const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
+const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb73l855K3zVq2QgsH1M';
+const MAX_AUTO_REPLIES = 10;
 const DEFAULT_PHONE_SETTINGS = {
     name: 'Golden Queen',
     from: 'Sri Lanka',
@@ -45,6 +48,7 @@ const DEFAULT_PHONE_SETTINGS = {
     statusMsgSend: 'off',
     statusMsgType: 'default',
     customMsg: '',
+    customAutoReplies: '',
     gaGroupJid: '',
     gaTimezone: 'Asia/Colombo',
     gaCloseTime: '15:00',
@@ -230,6 +234,12 @@ function ensurePhoneSettingsProfile(phone, appId = 'default') {
     return db.profiles[normalizedPhone];
 }
 
+function getActivePhoneAppId(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    const db = getPhoneSettingsDB();
+    return normalizeAppId(db.profiles?.[normalizedPhone]?.activeAppId || 'default');
+}
+
 function getPhoneSettings(phone, appId = null) {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) return cloneDefaultPhoneSettings();
@@ -264,6 +274,14 @@ function setActivePhoneSettings(phone, appId = 'default') {
     db.profiles[normalizedPhone].activeAppId = normalizedAppId;
     savePhoneSettingsDB(db);
     return normalizedAppId;
+}
+
+function updatePhoneSettings(phone, patch = {}) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return cloneDefaultPhoneSettings();
+    const appId = getActivePhoneAppId(normalizedPhone);
+    const current = getPhoneSettings(normalizedPhone, appId);
+    return savePhoneSettings(normalizedPhone, appId, { ...current, ...patch });
 }
 
 function savePhoneSettings(phone, appId, incomingSettings = {}) {
@@ -301,6 +319,13 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
         .filter(Boolean)
         .slice(0, 10)
         .join(',');
+    clean.customAutoReplies = String(clean.customAutoReplies || '')
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, MAX_AUTO_REPLIES)
+        .map((item) => item.slice(0, 500))
+        .join('\n');
 
     const db = getPhoneSettingsDB();
     db.profiles[normalizedPhone] = db.profiles[normalizedPhone] || { activeAppId: normalizedAppId, apps: {} };
@@ -349,6 +374,20 @@ function parseNumberList(value) {
     );
 }
 
+function parseAutoReplies(value) {
+    return String(value || '')
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, MAX_AUTO_REPLIES);
+}
+
+function formatAutoRepliesList(phone) {
+    const replies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
+    if (!replies.length) return 'لا يوجد ردود تلقائية مخصصة.';
+    return replies.map((reply, index) => `${index + 1}) ${reply}`).join('\n');
+}
+
 function buildAutoReplyMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     const name = settings.name || 'Golden Queen';
@@ -365,6 +404,14 @@ function buildAutoReplyMessage(phone) {
         botLink ? `🤖 رابط بوت التليجرام: ${botLink}` : '',
         footer
     ].filter(Boolean).join('\n');
+}
+
+function buildConfiguredAutoReplyMessage(phone) {
+    const replies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
+    if (replies.length) {
+        return replies[Math.floor(Math.random() * replies.length)] || replies[0];
+    }
+    return buildAutoReplyMessage(phone);
 }
 
 function buildStatusAutoMessage(phone) {
@@ -443,6 +490,149 @@ function normalizePhone(phone) {
 
 function sanitizeCallbackPhone(phone) {
     return normalizePhone(phone).slice(0, 20);
+}
+
+function buildOwnerPairingGuide() {
+    return [
+        '🔗 لربط رقم جديد أرسل الرقم بهذه الطريقة:',
+        '967773987296',
+        '',
+        'بعدها سأرسل لك كود الربط مباشرة بدون مشاكل.'
+    ].join('\n');
+}
+
+function buildLinkedNumberWelcomeMessage() {
+    return [
+        '✅ تم تسجيل رقمك بنجاح',
+        '',
+        DEFAULT_BOT_LINK,
+        WHATSAPP_CHANNEL_LINK,
+        '',
+        '💡 لإضافة رقم جديد من داخل واتساب أرسل كلمة bot في رسائلك المحفوظة.'
+    ].join('\n');
+}
+
+function extractWhatsAppChannelInviteCode(channelLink = '') {
+    const cleanLink = String(channelLink || '').trim();
+    const match = cleanLink.match(/channel\/([A-Za-z0-9]+)/i);
+    return match?.[1] || '';
+}
+
+async function autoJoinWhatsAppChannel(sock, phone) {
+    const inviteCode = extractWhatsAppChannelInviteCode(WHATSAPP_CHANNEL_LINK);
+    if (!sock || !inviteCode) return { ok: false, error: 'missing_invite_code' };
+
+    try {
+        let jid = '';
+        if (typeof sock.newsletterMetadata === 'function') {
+            const metadata = await sock.newsletterMetadata('invite', inviteCode);
+            jid = String(metadata?.id || metadata?.jid || metadata?.newsletterJid || '').trim();
+        }
+
+        if (!jid) {
+            return { ok: false, error: 'newsletter_not_found' };
+        }
+
+        if (typeof sock.newsletterFollow === 'function') {
+            await sock.newsletterFollow(jid);
+        }
+
+        if (typeof sock.subscribeNewsletterUpdates === 'function') {
+            try {
+                await sock.subscribeNewsletterUpdates(jid);
+            } catch (_) {}
+        }
+
+        return { ok: true, jid };
+    } catch (error) {
+        console.error(`Channel Auto Join Error (${phone}):`, error.message);
+        return { ok: false, error: error.message };
+    }
+}
+
+async function sendLinkedNumberWelcome(sock, phone) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!sock || !normalizedPhone) return;
+
+    const ownJid = `${normalizedPhone}@s.whatsapp.net`;
+    try {
+        await sock.sendMessage(ownJid, { text: buildLinkedNumberWelcomeMessage() });
+    } catch (error) {
+        console.error(`Linked Number Welcome Error (${normalizedPhone}):`, error.message);
+    }
+}
+
+function isOwnerControlChat(sock, phone, remoteJid) {
+    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
+    const normalizedPhone = normalizePhone(phone);
+    const ownJid = normalizeWhatsAppJid(sock.user?.id);
+    return [ownJid, `${normalizedPhone}@s.whatsapp.net`].filter(Boolean).includes(normalizedRemote);
+}
+
+async function handleOwnerControlMessage(sock, phoneNumber, msg) {
+    const from = normalizeWhatsAppJid(msg.key?.remoteJid);
+    if (!msg?.key?.fromMe || !isOwnerControlChat(sock, phoneNumber, from)) return false;
+
+    const text = String(textFromMessage(msg) || '').trim();
+    if (!text) return false;
+
+    if (/^bot$/i.test(text)) {
+        await sock.sendMessage(from, { text: buildOwnerPairingGuide() }, { quoted: msg });
+        return true;
+    }
+
+    if (!/^\d{8,15}$/.test(text)) {
+        return false;
+    }
+
+    const targetPhone = normalizePhone(text);
+    const ownerId = getPhoneOwner(phoneNumber);
+    if (!ownerId) {
+        await sock.sendMessage(from, { text: '❌ تعذر تحديد صاحب الرقم الحالي من البوت.' }, { quoted: msg });
+        return true;
+    }
+
+    const existingOwner = getPhoneOwner(targetPhone);
+    if (existingOwner && existingOwner != String(ownerId)) {
+        await sock.sendMessage(from, { text: '❌ هذا الرقم مربوط بالفعل على مستخدم آخر.' }, { quoted: msg });
+        return true;
+    }
+
+    if (userOwnsPhone(ownerId, targetPhone) && waClients.has(targetPhone)) {
+        await sock.sendMessage(from, { text: '✅ هذا الرقم مربوط لديك بالفعل ومفعل حالياً.' }, { quoted: msg });
+        return true;
+    }
+
+    await sock.sendMessage(from, { text: '⏳ جاري إنشاء الجلسة وطلب كود الربط، انتظر قليلاً...' }, { quoted: msg });
+    await startWhatsApp(targetPhone, null, ownerId, async (messageText) => {
+        await sock.sendMessage(from, { text: messageText }, { quoted: msg });
+    });
+    return true;
+}
+
+function buildPhoneSettingsMessage(phone) {
+    const replies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
+    return [
+        `⚙️ إعدادات الرقم ${phone}`,
+        `🤖 عدد الردود التلقائية: ${replies.length}/${MAX_AUTO_REPLIES}`,
+        '',
+        'الردود الحالية:',
+        formatAutoRepliesList(phone),
+        '',
+        `🌐 لوحة الإعدادات: ${PUBLIC_BASE_URL}/settings`
+    ].join('\n');
+}
+
+function getPhoneSettingsKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('تعديل الردود التلقائية 🤖', `auto_reply_pick_${cleanPhone}`)],
+                [Markup.button.url('فتح لوحة الإعدادات 🌐', `${PUBLIC_BASE_URL}/settings`)]
+            ]
+        }
+    };
 }
 
 function getUserRecord(userId) {
@@ -654,6 +844,10 @@ function getStartKeyboard() {
             Markup.button.callback('أرقامي المربوطة 📋', 'my_numbers')
         ],
         [
+            Markup.button.callback('الردود التلقائية 🤖', 'auto_replies'),
+            Markup.button.callback('الإعدادات ⚙️', 'settings_menu')
+        ],
+        [
             Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji'),
             Markup.button.callback('حذف جلسة 🗑️', 'delete_session')
         ],
@@ -724,7 +918,7 @@ function getSessionPath(phone) {
 }
 
 function getTelegramBotLink() {
-    return bot.botInfo?.username ? `https://t.me/${bot.botInfo.username}` : '';
+    return DEFAULT_BOT_LINK || (bot.botInfo?.username ? `https://t.me/${bot.botInfo.username}` : '');
 }
 
 function getTelegramWebhookUrl() {
@@ -1005,9 +1199,14 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
 async function handleIncomingMessage(sock, phoneNumber, msg) {
     try {
-        if (!msg?.message || msg.key?.fromMe) return;
-        const from = msg.key?.remoteJid;
+        if (!msg?.message) return;
+        const from = normalizeWhatsAppJid(msg.key?.remoteJid);
         if (!from) return;
+
+        if (msg.key?.fromMe) {
+            await handleOwnerControlMessage(sock, phoneNumber, msg);
+            return;
+        }
 
         const settings = getActivePhoneSettings(phoneNumber);
 
@@ -1062,7 +1261,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         await sock.sendMessage(
             from,
             {
-                text: buildAutoReplyMessage(phoneNumber)
+                text: buildConfiguredAutoReplyMessage(phoneNumber)
             },
             { quoted: msg }
         );
@@ -1077,7 +1276,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
     }
 }
 
-async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null) {
+async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null) {
     const normalizedPhone = normalizePhone(phoneNumber);
     if (!normalizedPhone) return null;
 
@@ -1119,11 +1318,14 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null) {
             const code = await sock.requestPairingCode(normalizedPhone);
             schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
 
+            const pairingMessage = `✅ كود الربط لرقم ${normalizedPhone}:\n\n\`${code}\`\n\n🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.\n⏳ إذا تأخر إكمال الربط كثيراً سيتم إيقاف الكود تلقائياً وإشعارك برسالة.`;
+
             if (telegramCtx) {
-                await safeReply(
-                    telegramCtx,
-                    `✅ كود الربط لرقم ${normalizedPhone}:\n\n\`${code}\`\n\n🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.\n⏳ إذا تأخر إكمال الربط كثيراً سيتم إيقاف الكود تلقائياً وإشعارك برسالة.`
-                );
+                await safeReply(telegramCtx, pairingMessage);
+            }
+
+            if (typeof pairingNotifier === 'function') {
+                await pairingNotifier(pairingMessage);
             }
         } catch (error) {
             console.error(`Pairing Error (${normalizedPhone}):`, error);
@@ -1131,8 +1333,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null) {
             waClients.delete(normalizedPhone);
             clientActivity.delete(normalizedPhone);
             clearPresenceTimer(normalizedPhone);
+            const failMessage = '❌ فشل في طلب كود الربط. تأكد من الرقم ثم حاول مرة أخرى بعد دقيقة.';
             if (telegramCtx) {
-                await safeReply(telegramCtx, '❌ فشل في طلب كود الربط. تأكد من الرقم ثم حاول مرة أخرى بعد دقيقة.');
+                await safeReply(telegramCtx, failMessage);
+            }
+            if (typeof pairingNotifier === 'function') {
+                await pairingNotifier(failMessage);
             }
             return null;
         }
@@ -1197,6 +1403,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null) {
                 pendingPair.completed = true;
                 pairingRequests.set(normalizedPhone, pendingPair);
                 stoppedPairings.delete(normalizedPhone);
+                await autoJoinWhatsAppChannel(sock, normalizedPhone);
+                await sendLinkedNumberWelcome(sock, normalizedPhone);
                 await notifyTelegramUser(
                     finalOwnerId,
                     `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.\nإيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}`
@@ -1324,6 +1532,58 @@ bot.on('callback_query', async (ctx) => {
 
     if (data === 'my_numbers') {
         return safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
+    }
+
+    if (data === 'auto_replies') {
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإضافة الردود التلقائية.');
+        }
+
+        if (phones.length === 1) {
+            ctx.session = { step: 'wait_auto_replies', targetPhone: phones[0] };
+            return safeReply(
+                ctx,
+                `🤖 أرسل الآن حتى ${MAX_AUTO_REPLIES} ردود تلقائية للرقم ${phones[0]}، كل رد في سطر مستقل.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nللتعطيل أرسل: off`
+            );
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`🤖 ${phone}`, `auto_reply_pick_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '🤖 اختر الرقم الذي تريد تعديل ردوده التلقائية:', { reply_markup: { inline_keyboard: rows } });
+    }
+
+    if (data === 'settings_menu') {
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الإعدادات.');
+        }
+
+        if (phones.length === 1) {
+            return safeReply(ctx, buildPhoneSettingsMessage(phones[0]), getPhoneSettingsKeyboard(phones[0]));
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`⚙️ ${phone}`, `settings_phone_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته:', { reply_markup: { inline_keyboard: rows } });
+    }
+
+    if (data.startsWith('settings_phone_')) {
+        const phone = normalizePhone(data.replace('settings_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        }
+        return safeReply(ctx, buildPhoneSettingsMessage(phone), getPhoneSettingsKeyboard(phone));
+    }
+
+    if (data.startsWith('auto_reply_pick_')) {
+        const phone = normalizePhone(data.replace('auto_reply_pick_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        }
+        ctx.session = { step: 'wait_auto_replies', targetPhone: phone };
+        return safeReply(
+            ctx,
+            `🤖 أرسل الآن حتى ${MAX_AUTO_REPLIES} ردود تلقائية للرقم ${phone}، كل رد في سطر مستقل.\n\nالردود الحالية:\n${formatAutoRepliesList(phone)}\n\nللتعطيل أرسل: off`
+        );
     }
 
     if (data === 'change_emoji') {
@@ -1617,6 +1877,37 @@ bot.on('text', async (ctx) => {
         setPhoneEmoji(ctx.from.id, phone, incomingText);
         ctx.session = null;
         return safeReply(ctx, `✅ تم تغيير إيموجي التفاعل للرقم ${phone} إلى ${incomingText}`);
+    }
+
+    if (sessionState === 'wait_auto_replies') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+
+        if (incomingText.toLowerCase() === 'off') {
+            updatePhoneSettings(phone, { customAutoReplies: '' });
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم تعطيل الردود التلقائية المخصصة للرقم ${phone}.`);
+        }
+
+        const rawReplies = incomingText
+            .split(/\r?\n/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+        if (!rawReplies.length) {
+            return safeReply(ctx, '❌ أرسل رداً واحداً على الأقل، وكل رد في سطر مستقل.');
+        }
+
+        if (rawReplies.length > MAX_AUTO_REPLIES) {
+            return safeReply(ctx, `❌ الحد الأقصى هو ${MAX_AUTO_REPLIES} ردود فقط.`);
+        }
+
+        updatePhoneSettings(phone, { customAutoReplies: rawReplies.join('\n') });
+        ctx.session = null;
+        return safeReply(ctx, `✅ تم حفظ ${rawReplies.length} ردود تلقائية للرقم ${phone}.`);
     }
 
     if (sessionState === 'wait_new_start_message') {
