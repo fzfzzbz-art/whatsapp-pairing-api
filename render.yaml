@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: golden-queen-system
+    runtime: node
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      
+      # التوكن الخاص ببوت تليجرام
+      - key: BOT_TOKEN
+        value: "8631941557:AAHhHbgJa_BpU9avBYC-n3eKlQhzvuNNUJQ"
+
+      # كلمة سر النظام
+      - key: SITE_PASSWORD
+        value: "GQ_ADMIN_2026"
+
+      # تفعيل نظام الويب هوك
+      - key: USE_TELEGRAM_WEBHOOK
+        value: "true"
+
+      # المسار السري للويب هوك
+      - key: TELEGRAM_WEBHOOK_PATH
+        value: "/telegram/webhook"
+
+      # رابط موقعك الأساسي على ريندر
+      - key: PUBLIC_BASE_URL
+        value: "https://whatsapp-pairing-api.onrender.com"
+
+      # إعدادات إضافية للاستقرار
+      - key: PAIRING_TIMEOUT_MS
+        value: "180000"
+      - key: RECONNECT_DELAY_MS
+        value: "5000"
+      - key: HEALTH_CHECK_INTERVAL_MS
+        value: "60000"
