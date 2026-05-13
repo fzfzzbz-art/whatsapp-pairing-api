@@ -188,18 +188,28 @@ const TELEGRAM_WEBHOOK_PATH = (() => {
     const hookPath = String(process.env.TELEGRAM_WEBHOOK_PATH || '/telegram/webhook').trim() || '/telegram/webhook';
     return hookPath.startsWith('/') ? hookPath : `/${hookPath}`;
 })();
-const USE_TELEGRAM_WEBHOOK = ['1', 'true', 'yes', 'on'].includes(
-    String(process.env.USE_TELEGRAM_WEBHOOK || (process.env.RENDER_EXTERNAL_HOSTNAME ? 'true' : '')).toLowerCase()
+const IS_RENDER_ENV = Boolean(
+    process.env.RENDER ||
+    process.env.RENDER_SERVICE_ID ||
+    process.env.RENDER_EXTERNAL_HOSTNAME ||
+    process.env.RENDER_EXTERNAL_URL
 );
-
-if (!BOT_TOKEN) {
-    throw new Error('BOT_TOKEN is required');
-}
+const USE_TELEGRAM_WEBHOOK = ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.USE_TELEGRAM_WEBHOOK || (IS_RENDER_ENV ? 'true' : '')).toLowerCase()
+);
+const TELEGRAM_ENABLED = Boolean(String(BOT_TOKEN || '').trim());
+const TELEGRAM_PLACEHOLDER_TOKEN = '0000000000:render-disabled-placeholder-token';
 
 const app = express();
 app.set('trust proxy', 1);
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf(TELEGRAM_ENABLED ? BOT_TOKEN : TELEGRAM_PLACEHOLDER_TOKEN);
 bot.use(session());
+bot.catch((error) => {
+    console.error('Telegram Runtime Error:', error);
+});
+if (!TELEGRAM_ENABLED) {
+    console.warn('BOT_TOKEN / TELEGRAM_BOT_TOKEN is missing. Telegram transport is disabled until the token is configured.');
+}
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use((req, res, next) => {
@@ -2747,7 +2757,7 @@ bot.on('text', async (ctx) => {
 // =========================
 // الموقع و Health Check
 // =========================
-if (USE_TELEGRAM_WEBHOOK) {
+if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
     app.use(bot.webhookCallback(TELEGRAM_WEBHOOK_PATH));
 }
 
@@ -3153,19 +3163,39 @@ app.get('/health', (req, res) => {
         sessions: getAllLinkedPhones().length,
         users: getAllUserIds().length,
         uptime: process.uptime(),
-        mode: USE_TELEGRAM_WEBHOOK ? 'webhook' : 'polling',
+        mode: !TELEGRAM_ENABLED ? 'disabled' : USE_TELEGRAM_WEBHOOK ? 'webhook' : 'polling',
         baseUrl: PUBLIC_BASE_URL,
-        webhookPath: USE_TELEGRAM_WEBHOOK ? TELEGRAM_WEBHOOK_PATH : null
+        webhookPath: TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK ? TELEGRAM_WEBHOOK_PATH : null
     });
 });
 
+function isTelegramConflictError(error) {
+    const message = String(error?.description || error?.message || '').toLowerCase();
+    const errorCode = Number(error?.code || error?.response?.error_code || 0);
+    return (
+        errorCode === 409 ||
+        message.includes('409') ||
+        message.includes('conflict') ||
+        message.includes('terminated by other getupdates request')
+    );
+}
+
 async function initTelegramTransport() {
+    if (!TELEGRAM_ENABLED) {
+        return { enabled: false, mode: 'disabled' };
+    }
+
     bot.botInfo = await bot.telegram.getMe();
 
     if (USE_TELEGRAM_WEBHOOK) {
+        try {
+            await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+        } catch (error) {
+            console.error('Webhook Reset Warning:', error.message);
+        }
         await bot.telegram.setWebhook(getTelegramWebhookUrl());
         console.log(`Telegram webhook connected: ${getTelegramWebhookUrl()}`);
-        return;
+        return { enabled: true, mode: 'webhook' };
     }
 
     try {
@@ -3174,22 +3204,41 @@ async function initTelegramTransport() {
         console.error('Webhook Delete Warning:', error.message);
     }
 
-    await bot.launch({ dropPendingUpdates: false });
-    console.log('Telegram polling started successfully');
+    try {
+        await bot.launch({ dropPendingUpdates: false });
+        console.log('Telegram polling started successfully');
+        return { enabled: true, mode: 'polling' };
+    } catch (error) {
+        if (IS_RENDER_ENV && isTelegramConflictError(error)) {
+            console.warn('Telegram polling conflict detected on Render. Switching to webhook mode automatically.');
+            await bot.telegram.setWebhook(getTelegramWebhookUrl());
+            console.log(`Telegram webhook connected (fallback): ${getTelegramWebhookUrl()}`);
+            return { enabled: true, mode: 'webhook-fallback' };
+        }
+        throw error;
+    }
 }
 
 const server = app.listen(APP_PORT, async () => {
     console.log(`Server running on port ${APP_PORT}`);
+
+    let telegramStatus = { enabled: false, mode: 'disabled' };
     try {
-        await initTelegramTransport();
+        telegramStatus = await initTelegramTransport();
+    } catch (error) {
+        console.error('Telegram Startup Warning:', error);
+    }
+
+    try {
         startSessionSupervisor();
         await startAllSavedSessions();
-        console.log(`Service linked successfully to ${PUBLIC_BASE_URL}`);
-        console.log(`Storage root: ${STORAGE_ROOT}`);
     } catch (error) {
-        console.error('Startup Error:', error);
-        process.exit(1);
+        console.error('WhatsApp Session Bootstrap Warning:', error);
     }
+
+    console.log(`Service linked successfully to ${PUBLIC_BASE_URL}`);
+    console.log(`Storage root: ${STORAGE_ROOT}`);
+    console.log(`Telegram transport mode: ${telegramStatus.mode}`);
 });
 
 let shuttingDown = false;
@@ -3212,7 +3261,7 @@ async function gracefulShutdown(signal) {
     pairingRequests.clear();
 
     try {
-        if (!USE_TELEGRAM_WEBHOOK) {
+        if (TELEGRAM_ENABLED && !USE_TELEGRAM_WEBHOOK) {
             bot.stop(signal);
         }
     } catch (error) {
@@ -3239,6 +3288,15 @@ process.once('SIGINT', () => {
 
 process.once('SIGTERM', () => {
     void gracefulShutdown('SIGTERM');
+});
+
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
 });
 
 
