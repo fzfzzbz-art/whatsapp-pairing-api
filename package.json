@@ -1,18 +1,21 @@
 {
-  "name": "telegram-whatsapp-pairing-bot-js",
+  "name": "golden-queen-system",
   "version": "1.0.0",
-  "description": "Telegram bot in Node.js linked to whatsapp-pairing-api.onrender.com",
+  "private": true,
+  "description": "WhatsApp pairing + Telegram bot service for Render",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.0.0"
   },
   "dependencies": {
-    "axios": "^1.9.0",
-    "dotenv": "^16.4.5",
+    "@whiskeysockets/baileys": "^6.7.8",
     "express": "^4.21.2",
-    "node-telegram-bot-api": "^0.66.0"
+    "pino": "^9.6.0",
+    "telegraf": "^4.16.3"
   }
 }
