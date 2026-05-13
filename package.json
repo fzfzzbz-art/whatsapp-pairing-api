@@ -1,21 +1,19 @@
 {
-  "name": "golden-queen-system",
+  "name": "whatsapp-pairing-api-index.js",
   "version": "1.0.0",
   "private": true,
-  "description": "WhatsApp pairing + Telegram bot service for Render",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node index.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=18.18.0"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.8",
-    "express": "^4.21.2",
-    "pino": "^9.6.0",
-    "telegraf": "^4.16.3"
+    "@whiskeysockets/baileys": "6.7.21",
+    "express": "4.22.2",
+    "pino": "10.3.1",
+    "telegraf": "4.16.3"
   }
 }
