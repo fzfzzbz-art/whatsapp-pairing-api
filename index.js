@@ -227,6 +227,8 @@ const presenceTimers = new Map();
 const clientActivity = new Map();
 const stoppedPairings = new Set();
 const ownerReactionFlows = new Map();
+const autoReplyCooldowns = new Map();
+const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
 const PAIRING_API_ROUTE = '/api/pairing';
@@ -724,6 +726,87 @@ function buildStatusAutoMessage(phone) {
         return String(settings.customMsg).trim();
     }
     return `تمت مشاهدة الحالة بواسطة ${settings.name || 'بوت الملك فارس'} ✅`;
+}
+
+function buildAutoReplyCooldownKey(phone, remoteJid) {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
+    if (!normalizedPhone || !normalizedRemote) return '';
+    return `${normalizedPhone}:${normalizedRemote}`;
+}
+
+function canSendLinkedNumberAutoReply(phone, remoteJid, incomingText = '') {
+    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
+    if (!normalizedRemote || normalizedRemote === 'status@broadcast' || normalizedRemote.endsWith('@g.us')) return false;
+    if (!String(incomingText || '').trim()) return false;
+
+    const settings = getActivePhoneSettings(phone);
+    if (!parseAutoReplies(settings.customAutoReplies).length) {
+        return false;
+    }
+
+    const cooldownKey = buildAutoReplyCooldownKey(phone, normalizedRemote);
+    if (!cooldownKey) return false;
+
+    const now = Date.now();
+    const lastSentAt = autoReplyCooldowns.get(cooldownKey) || 0;
+    if (now - lastSentAt < AUTO_REPLY_COOLDOWN_MS) {
+        return false;
+    }
+
+    autoReplyCooldowns.set(cooldownKey, now);
+    return true;
+}
+
+function rollbackLinkedNumberAutoReplyCooldown(phone, remoteJid) {
+    const cooldownKey = buildAutoReplyCooldownKey(phone, remoteJid);
+    if (cooldownKey) {
+        autoReplyCooldowns.delete(cooldownKey);
+    }
+}
+
+function extractStatusParticipant(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    const candidates = [
+        msg?.key?.participant,
+        msg?.participant,
+        msg?.message?.messageContextInfo?.participant,
+        content?.messageContextInfo?.participant,
+        content?.extendedTextMessage?.contextInfo?.participant,
+        content?.imageMessage?.contextInfo?.participant,
+        content?.videoMessage?.contextInfo?.participant,
+        content?.documentMessage?.contextInfo?.participant,
+        content?.reactionMessage?.key?.participant,
+        content?.protocolMessage?.key?.participant,
+        content?.senderKeyDistributionMessage?.groupId
+    ];
+
+    for (const candidate of candidates) {
+        const normalized = normalizeWhatsAppJid(candidate);
+        if (normalized && normalized !== 'status@broadcast') {
+            return normalized;
+        }
+    }
+
+    return '';
+}
+
+async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, incomingText = '') {
+    if (!canSendLinkedNumberAutoReply(phoneNumber, remoteJid, incomingText)) return false;
+
+    const replyText = buildConfiguredAutoReplyMessage(phoneNumber) || getGuaranteedAutoReply(phoneNumber, incomingText);
+    if (!String(replyText || '').trim()) {
+        rollbackLinkedNumberAutoReplyCooldown(phoneNumber, remoteJid);
+        return false;
+    }
+
+    try {
+        await sock.sendMessage(remoteJid, { text: replyText }, { quoted: msg });
+        return true;
+    } catch (error) {
+        rollbackLinkedNumberAutoReplyCooldown(phoneNumber, remoteJid);
+        throw error;
+    }
 }
 
 function isGroupModeAllowed(settings) {
@@ -1870,12 +1953,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (!hasStatusContent(msg)) return;
 
         const settings = getActivePhoneSettings(phoneNumber);
-        const participant = normalizeWhatsAppJid(
-            msg.key?.participant ||
-                msg.participant ||
-                msg.message?.messageContextInfo?.participant ||
-                ''
-        );
+        const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const reactionKey = {
             ...(msg.key || {}),
@@ -1887,21 +1965,67 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (!reactionKey.id) return;
 
         if (settings.autoStatusRead === 'on') {
-            await sock.readMessages([reactionKey]);
+            try {
+                await sock.readMessages([reactionKey]);
+            } catch (_) {
+                try {
+                    if (msg.key) {
+                        await sock.readMessages([{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }]);
+                    }
+                } catch (_) {}
+            }
         }
 
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
             const emoji = pickRandomStatusEmoji(phoneNumber);
-            await sock.sendMessage(
-                'status@broadcast',
+            const reactionAttempts = [
                 {
-                    react: {
-                        text: emoji,
-                        key: reactionKey
-                    }
+                    targetJid: 'status@broadcast',
+                    content: {
+                        react: {
+                            text: emoji,
+                            key: reactionKey
+                        }
+                    },
+                    options: { statusJidList: [participant] }
                 },
-                { statusJidList: [participant] }
-            );
+                {
+                    targetJid: 'status@broadcast',
+                    content: {
+                        react: {
+                            text: emoji,
+                            key: msg.key || reactionKey
+                        }
+                    },
+                    options: { statusJidList: [participant] }
+                },
+                {
+                    targetJid: 'status@broadcast',
+                    content: {
+                        react: {
+                            text: emoji,
+                            key: reactionKey
+                        }
+                    },
+                    options: {}
+                }
+            ];
+
+            let reacted = false;
+            let lastError = null;
+            for (const attempt of reactionAttempts) {
+                try {
+                    await sock.sendMessage(attempt.targetJid, attempt.content, attempt.options);
+                    reacted = true;
+                    break;
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+
+            if (!reacted && lastError) {
+                throw lastError;
+            }
         }
 
         if (settings.statusMsgSend === 'on' && participant && participant !== ownJid) {
@@ -2008,6 +2132,12 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 
         if (!isPrivateModeAllowed(settings)) return;
         if (!text) return;
+
+        try {
+            await sendLinkedNumberAutoReply(sock, phoneNumber, from, msg, text);
+        } catch (error) {
+            console.error(`Linked Auto Reply Error (${phoneNumber}):`, error.message);
+        }
 
         return;
     } catch (error) {
