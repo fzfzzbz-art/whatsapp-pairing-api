@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 require('dotenv').config();
@@ -320,16 +321,18 @@ async function requestPairCode(number) {
 }
 
 const BOT_TOKEN = (process.env.BOT_TOKEN || '').trim();
-if (!BOT_TOKEN) {
-  throw new Error('BOT_TOKEN is required in Environment Variables.');
-}
-
 const ADMIN_ID = Number(process.env.ADMIN_ID || 0);
-if (!Number.isInteger(ADMIN_ID) || ADMIN_ID <= 0) {
-  throw new Error('ADMIN_ID must be a valid Telegram numeric ID in Environment Variables.');
-}
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+let bot = null;
+let BOT_DISABLED_REASON = '';
+
+if (!BOT_TOKEN) {
+  BOT_DISABLED_REASON = 'BOT_TOKEN is required in Environment Variables.';
+} else if (!Number.isInteger(ADMIN_ID) || ADMIN_ID <= 0) {
+  BOT_DISABLED_REASON = 'ADMIN_ID must be a valid Telegram numeric ID in Environment Variables.';
+} else {
+  bot = new TelegramBot(BOT_TOKEN, { polling: true });
+}
 
 const BOT_STATS = {
   startedAt: new Date(),
@@ -530,6 +533,7 @@ async function editOrSendHome(query) {
   }
 }
 
+if (bot) {
 bot.onText(/^\/start$/, async (msg) => {
   registerUser(msg);
   await sendHome(msg.chat.id, msg);
@@ -823,6 +827,32 @@ bot.setMyCommands([
 ]).catch((error) => {
   console.error('Failed to set bot commands', error.message);
 });
+}
+
+const PORT = Number(process.env.PORT || 10000);
+const healthServer = http.createServer((req, res) => {
+  const body = {
+    ok: true,
+    service: 'telegram-pair-bot',
+    bot_enabled: Boolean(bot),
+    bot_status: bot ? 'running' : 'disabled',
+    reason: bot ? null : BOT_DISABLED_REASON,
+    linked_numbers: LINKED_NUMBERS.linked_numbers.length,
+    uptime_seconds: Math.floor(process.uptime())
+  };
+
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(body, null, 2));
+});
+
+healthServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`Health server listening on port ${PORT}`);
+  if (bot) {
+    console.log('Telegram bot is running...');
+  } else {
+    console.warn(`Telegram bot is disabled: ${BOT_DISABLED_REASON}`);
+  }
+});
 
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled rejection:', error);
@@ -832,7 +862,6 @@ process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
 });
 
-console.log('Telegram bot is running...');
 if (!SETTINGS.pair_code_api_url) {
   console.warn('Pairing API is not configured yet.');
 }
