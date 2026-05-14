@@ -1,19 +1,17 @@
 {
-  "name": "whatsapp-pairing-api-index.js",
+  "name": "wastory-bot-js",
   "version": "1.0.0",
-  "private": true,
+  "description": "Telegram pairing bot converted from Python to JavaScript with environment-based runtime settings",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
-  "engines": {
-    "node": ">=18.18.0"
-  },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.21",
-    "express": "4.22.2",
-    "pino": "10.3.1",
-    "telegraf": "4.16.3"
+    "axios": "^1.9.0",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
