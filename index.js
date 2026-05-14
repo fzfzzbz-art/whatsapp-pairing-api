@@ -5,9 +5,43 @@ const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 require('dotenv').config();
 
+/*
+Environment Variables (Render / Railway / VPS)
+----------------------------------------------
+Required:
+- BOT_TOKEN                or TELEGRAM_BOT_TOKEN / TELEGRAM_TOKEN
+- ADMIN_ID                 or OWNER_ID / CHAT_ID / DEVELOPER_ID
+
+Optional:
+- CURRENT_EMOJI=🔥
+- AUTO_REPLY_ENABLED=true
+- PAIR_CODE_API_URL=https://whatsapp-pairing-api.onrender.com
+- PAIR_CODE_API_METHOD=POST
+- PAIR_CODE_API_TOKEN=
+- PAIR_CODE_API_NUMBER_FIELD=phoneNumber
+- LINKED_NUMBER_SYNC_URL=
+- LINKED_NUMBER_SYNC_METHOD=POST
+- LINKED_NUMBER_SYNC_TOKEN=
+- LINKED_NUMBER_SYNC_NUMBER_FIELD=phoneNumber
+- LINKED_NUMBER_SYNC_EMOJI_FIELD=emoji
+- LINKED_NUMBER_SYNC_AUTO_REPLY_FIELD=autoReplyEnabled
+- PORT=10000
+*/
+
 const BASE_DIR = __dirname;
 const SETTINGS_PATH = path.join(BASE_DIR, 'bot_settings.json');
 const LINKED_NUMBERS_PATH = path.join(BASE_DIR, 'linked_numbers.json');
+const DEFAULT_PAIRING_BASE_URL = 'https://whatsapp-pairing-api.onrender.com';
+
+function readEnv(keys, fallback = '') {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return fallback;
+}
 
 function safeReadJson(filePath, fallback) {
   try {
@@ -42,6 +76,16 @@ function parseBoolean(value, defaultValue = false) {
   return defaultValue;
 }
 
+function parseNumericId(value) {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  const normalized = String(value || '').replace(/[^\d]/g, '');
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function normalizePhoneNumber(raw) {
   const digits = String(raw || '').replace(/\D/g, '');
   if (digits.startsWith('00')) {
@@ -61,7 +105,16 @@ function buildNumberVariants(raw) {
 }
 
 function findCodeInPayload(payload) {
-  const keysPriority = ['pair_code', 'pairing_code', 'pairingCode', 'code', 'link_code', 'linkCode'];
+  const keysPriority = [
+    'pair_code',
+    'pairing_code',
+    'pairingCode',
+    'code',
+    'link_code',
+    'linkCode',
+    'authorizationCode',
+    'authCode'
+  ];
 
   if (Array.isArray(payload)) {
     for (const item of payload) {
@@ -74,7 +127,7 @@ function findCodeInPayload(payload) {
   if (payload && typeof payload === 'object') {
     for (const key of keysPriority) {
       if (payload[key]) {
-        return String(payload[key]);
+        return String(payload[key]).trim();
       }
     }
     for (const value of Object.values(payload)) {
@@ -86,7 +139,14 @@ function findCodeInPayload(payload) {
 
   if (typeof payload === 'string') {
     const stripped = payload.trim();
-    if (stripped && stripped.length <= 64) {
+    if (!stripped) return null;
+
+    const exactCode = stripped.match(/\b([A-Z0-9\-]{4,64})\b/i);
+    if (exactCode) {
+      return exactCode[1];
+    }
+
+    if (stripped.length <= 128) {
       return stripped;
     }
   }
@@ -102,23 +162,60 @@ function resolveGreenAuthorizationUrl() {
   return '';
 }
 
+function normalizeApiBaseUrl(url) {
+  return String(url || '').trim().replace(/\/$/, '');
+}
+
+function buildPairingUrlCandidates(inputUrl) {
+  const normalized = normalizeApiBaseUrl(inputUrl);
+  if (!normalized) return [];
+
+  try {
+    const parsed = new URL(normalized);
+    const cleanPath = parsed.pathname.replace(/\/$/, '');
+
+    if (!cleanPath || cleanPath === '') {
+      return [normalized];
+    }
+
+    if (cleanPath === '/') {
+      const base = normalized.replace(/\/$/, '');
+      return [
+        base,
+        `${base}/pair`,
+        `${base}/pair-code`,
+        `${base}/code`,
+        `${base}/api/pair`,
+        `${base}/api/pair-code`,
+        `${base}/api/code`
+      ];
+    }
+
+    return [normalized];
+  } catch (_) {
+    return [normalized];
+  }
+}
+
 const DEFAULT_SETTINGS = {
-  current_emoji: process.env.CURRENT_EMOJI || '🔥',
-  auto_reply_enabled: parseBoolean(process.env.AUTO_REPLY_ENABLED, true),
-  pair_code_api_url: (process.env.PAIR_CODE_API_URL || resolveGreenAuthorizationUrl()).trim(),
-  pair_code_api_method: (process.env.PAIR_CODE_API_METHOD || 'POST').trim().toUpperCase() || 'POST',
-  pair_code_api_token: (process.env.PAIR_CODE_API_TOKEN || '').trim(),
-  pair_code_api_number_field: (process.env.PAIR_CODE_API_NUMBER_FIELD || 'phoneNumber').trim() || 'phoneNumber',
-  linked_number_sync_url: (process.env.LINKED_NUMBER_SYNC_URL || '').trim(),
-  linked_number_sync_method: (process.env.LINKED_NUMBER_SYNC_METHOD || 'POST').trim().toUpperCase() || 'POST',
-  linked_number_sync_token: (process.env.LINKED_NUMBER_SYNC_TOKEN || '').trim(),
-  linked_number_sync_number_field: (process.env.LINKED_NUMBER_SYNC_NUMBER_FIELD || 'phoneNumber').trim() || 'phoneNumber',
-  linked_number_sync_emoji_field: (process.env.LINKED_NUMBER_SYNC_EMOJI_FIELD || 'emoji').trim() || 'emoji',
-  linked_number_sync_auto_reply_field: (process.env.LINKED_NUMBER_SYNC_AUTO_REPLY_FIELD || 'autoReplyEnabled').trim() || 'autoReplyEnabled'
+  current_emoji: readEnv(['CURRENT_EMOJI'], '🔥'),
+  auto_reply_enabled: parseBoolean(readEnv(['AUTO_REPLY_ENABLED'], 'true'), true),
+  pair_code_api_url: readEnv(['PAIR_CODE_API_URL'], resolveGreenAuthorizationUrl() || DEFAULT_PAIRING_BASE_URL),
+  pair_code_api_method: readEnv(['PAIR_CODE_API_METHOD'], 'POST').toUpperCase(),
+  pair_code_api_token: readEnv(['PAIR_CODE_API_TOKEN', 'API_TOKEN'], ''),
+  pair_code_api_number_field: readEnv(['PAIR_CODE_API_NUMBER_FIELD'], 'phoneNumber'),
+  linked_number_sync_url: readEnv(['LINKED_NUMBER_SYNC_URL'], ''),
+  linked_number_sync_method: readEnv(['LINKED_NUMBER_SYNC_METHOD'], 'POST').toUpperCase(),
+  linked_number_sync_token: readEnv(['LINKED_NUMBER_SYNC_TOKEN'], ''),
+  linked_number_sync_number_field: readEnv(['LINKED_NUMBER_SYNC_NUMBER_FIELD'], 'phoneNumber'),
+  linked_number_sync_emoji_field: readEnv(['LINKED_NUMBER_SYNC_EMOJI_FIELD'], 'emoji'),
+  linked_number_sync_auto_reply_field: readEnv(['LINKED_NUMBER_SYNC_AUTO_REPLY_FIELD'], 'autoReplyEnabled')
 };
 
 function sanitizeSettings(input) {
   const data = { ...DEFAULT_SETTINGS, ...(input || {}) };
+  data.pair_code_api_url = normalizeApiBaseUrl(data.pair_code_api_url || DEFAULT_PAIRING_BASE_URL);
+  data.linked_number_sync_url = normalizeApiBaseUrl(data.linked_number_sync_url || '');
   data.pair_code_api_method = ['GET', 'POST'].includes(String(data.pair_code_api_method || '').toUpperCase())
     ? String(data.pair_code_api_method).toUpperCase()
     : 'POST';
@@ -131,6 +228,8 @@ function sanitizeSettings(input) {
   data.linked_number_sync_number_field = String(data.linked_number_sync_number_field || 'phoneNumber').trim() || 'phoneNumber';
   data.linked_number_sync_emoji_field = String(data.linked_number_sync_emoji_field || 'emoji').trim() || 'emoji';
   data.linked_number_sync_auto_reply_field = String(data.linked_number_sync_auto_reply_field || 'autoReplyEnabled').trim() || 'autoReplyEnabled';
+  data.pair_code_api_token = String(data.pair_code_api_token || '').trim();
+  data.linked_number_sync_token = String(data.linked_number_sync_token || '').trim();
   return data;
 }
 
@@ -191,11 +290,11 @@ function upsertLinkedNumber(number) {
   return existing;
 }
 
-function buildSyncHeaders() {
+function buildAuthHeaders(token) {
   const headers = { Accept: 'application/json' };
-  if (SETTINGS.linked_number_sync_token) {
-    headers.Authorization = `Bearer ${SETTINGS.linked_number_sync_token}`;
-    headers['x-api-key'] = SETTINGS.linked_number_sync_token;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+    headers['x-api-key'] = token;
   }
   return headers;
 }
@@ -214,7 +313,7 @@ async function syncSingleLinkedNumber(numberRecord) {
     [SETTINGS.linked_number_sync_auto_reply_field]: SETTINGS.auto_reply_enabled
   };
 
-  const headers = buildSyncHeaders();
+  const headers = buildAuthHeaders(SETTINGS.linked_number_sync_token);
 
   try {
     if (SETTINGS.linked_number_sync_method === 'GET') {
@@ -261,67 +360,76 @@ async function propagateSettingsToLinkedNumbers() {
 }
 
 function resolvePairCodeApiUrl() {
-  return SETTINGS.pair_code_api_url || resolveGreenAuthorizationUrl();
+  return SETTINGS.pair_code_api_url || resolveGreenAuthorizationUrl() || DEFAULT_PAIRING_BASE_URL;
 }
 
 async function requestPairCode(number) {
-  const apiUrl = resolvePairCodeApiUrl();
-  if (!apiUrl) {
+  const configuredUrl = resolvePairCodeApiUrl();
+  if (!configuredUrl) {
     throw new Error('خدمة الربط غير مضبوطة. أضف بيانات الربط في Environment Variables أو من داخل لوحة المطور.');
   }
 
+  const candidateUrls = [...new Set(buildPairingUrlCandidates(configuredUrl))];
+  const numberVariants = buildNumberVariants(number);
   let lastError = null;
 
-  for (const numberVariant of buildNumberVariants(number)) {
-    const headers = { Accept: 'application/json' };
-    if (SETTINGS.pair_code_api_token) {
-      headers.Authorization = `Bearer ${SETTINGS.pair_code_api_token}`;
-      headers['x-api-key'] = SETTINGS.pair_code_api_token;
-    }
+  for (const apiUrl of candidateUrls) {
+    for (const numberVariant of numberVariants) {
+      const normalizedNumber = normalizePhoneNumber(numberVariant);
+      const headers = buildAuthHeaders(SETTINGS.pair_code_api_token);
+      const payload = {
+        [SETTINGS.pair_code_api_number_field]: Number(normalizedNumber)
+      };
 
-    const payload = {
-      [SETTINGS.pair_code_api_number_field]: Number(normalizePhoneNumber(numberVariant))
-    };
+      try {
+        let response;
+        if (SETTINGS.pair_code_api_method === 'GET') {
+          response = await axios.get(apiUrl, {
+            params: payload,
+            headers,
+            timeout: 45000,
+            validateStatus: () => true
+          });
+        } else {
+          response = await axios.post(apiUrl, payload, {
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            timeout: 45000,
+            validateStatus: () => true
+          });
+        }
 
-    try {
-      let response;
-      if (SETTINGS.pair_code_api_method === 'GET') {
-        response = await axios.get(apiUrl, {
-          params: payload,
-          headers,
-          timeout: 45000
-        });
-      } else {
-        response = await axios.post(apiUrl, payload, {
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          timeout: 45000
-        });
+        if (response.status >= 400) {
+          lastError = new Error(`HTTP ${response.status} from ${apiUrl}`);
+          continue;
+        }
+
+        const contentType = String(response.headers['content-type'] || '').toLowerCase();
+        if (contentType.includes('application/json')) {
+          const code = findCodeInPayload(response.data);
+          if (code) return code;
+          lastError = new Error(`لم يتم العثور على كود ربط في استجابة الخدمة للرابط ${apiUrl}`);
+          continue;
+        }
+
+        const textResponse = typeof response.data === 'string' ? response.data.trim() : '';
+        if (textResponse) {
+          const code = findCodeInPayload(textResponse);
+          if (code) return code;
+          return textResponse;
+        }
+
+        lastError = new Error(`الاستجابة فارغة من ${apiUrl}`);
+      } catch (error) {
+        lastError = error;
       }
-
-      const contentType = String(response.headers['content-type'] || '').toLowerCase();
-      if (contentType.includes('application/json')) {
-        const code = findCodeInPayload(response.data);
-        if (code) return code;
-        lastError = new Error(`لم يتم العثور على كود ربط في استجابة الخدمة للرقم: ${numberVariant}`);
-        continue;
-      }
-
-      const textResponse = typeof response.data === 'string' ? response.data.trim() : '';
-      if (textResponse) {
-        return textResponse;
-      }
-
-      lastError = new Error(`الاستجابة فارغة للرقم: ${numberVariant}`);
-    } catch (error) {
-      lastError = error;
     }
   }
 
   throw new Error(`فشل استخراج كود الربط. آخر خطأ: ${lastError ? lastError.message : 'Unknown error'}`);
 }
 
-const BOT_TOKEN = (process.env.BOT_TOKEN || '').trim();
-const ADMIN_ID = Number(process.env.ADMIN_ID || 0);
+const BOT_TOKEN = readEnv(['BOT_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_TOKEN'], '');
+const ADMIN_ID = parseNumericId(readEnv(['ADMIN_ID', 'OWNER_ID', 'CHAT_ID', 'DEVELOPER_ID'], '0'));
 
 let bot = null;
 let BOT_DISABLED_REASON = '';
@@ -331,7 +439,14 @@ if (!BOT_TOKEN) {
 } else if (!Number.isInteger(ADMIN_ID) || ADMIN_ID <= 0) {
   BOT_DISABLED_REASON = 'ADMIN_ID must be a valid Telegram numeric ID in Environment Variables.';
 } else {
-  bot = new TelegramBot(BOT_TOKEN, { polling: true });
+  bot = new TelegramBot(BOT_TOKEN, {
+    polling: {
+      autoStart: true,
+      params: {
+        timeout: 10
+      }
+    }
+  });
 }
 
 const BOT_STATS = {
@@ -513,10 +628,7 @@ function linkedNumbersText() {
 }
 
 async function sendHome(chatId, msg) {
-  return bot.sendMessage(chatId, welcomeText(isAdmin(msg)), {
-    parse_mode: 'Markdown',
-    ...buildMainKeyboard(isAdmin(msg))
-  });
+  return bot.sendMessage(chatId, welcomeText(isAdmin(msg)), buildMainKeyboard(isAdmin(msg)));
 }
 
 async function editOrSendHome(query) {
@@ -525,308 +637,325 @@ async function editOrSendHome(query) {
     await bot.editMessageText(welcomeText(isAdmin(msg)), {
       chat_id: msg.chat.id,
       message_id: msg.message_id,
-      parse_mode: 'Markdown',
       ...buildMainKeyboard(isAdmin(msg))
     });
-  } catch (error) {
+  } catch (_) {
     await sendHome(msg.chat.id, msg);
   }
 }
 
 if (bot) {
-bot.onText(/^\/start$/, async (msg) => {
-  registerUser(msg);
-  await sendHome(msg.chat.id, msg);
-});
+  bot.onText(/^\/start(?:@\w+)?(?:\s.*)?$/i, async (msg) => {
+    registerUser(msg);
+    await sendHome(msg.chat.id, msg);
+  });
 
-bot.onText(/^\/menu$/, async (msg) => {
-  registerUser(msg);
-  await sendHome(msg.chat.id, msg);
-});
+  bot.onText(/^\/menu(?:@\w+)?$/i, async (msg) => {
+    registerUser(msg);
+    await sendHome(msg.chat.id, msg);
+  });
 
-bot.onText(/^\/help$/, async (msg) => {
-  registerUser(msg);
-  let text = 'استخدم /start أو /menu لعرض الواجهة الرئيسية.\nاستخدم /ping للتأكد إن البوت شغال.';
-  if (isAdmin(msg)) {
-    text += '\nولفتح لوحة المطور استخدم /dev';
-  }
-  await bot.sendMessage(msg.chat.id, text);
-});
+  bot.onText(/^\/help(?:@\w+)?$/i, async (msg) => {
+    registerUser(msg);
+    let text = 'استخدم /start أو /menu لعرض الواجهة الرئيسية.\nاستخدم /ping للتأكد إن البوت شغال.';
+    if (isAdmin(msg)) {
+      text += '\nولفتح لوحة المطور استخدم /dev';
+    }
+    await bot.sendMessage(msg.chat.id, text);
+  });
 
-bot.onText(/^\/ping$/, async (msg) => {
-  registerUser(msg);
-  await bot.sendMessage(msg.chat.id, '✅ البوت شغال.');
-});
+  bot.onText(/^\/ping(?:@\w+)?$/i, async (msg) => {
+    registerUser(msg);
+    await bot.sendMessage(msg.chat.id, '✅ البوت شغال.');
+  });
 
-bot.onText(/^\/dev$/, async (msg) => {
-  registerUser(msg);
-  if (!isAdmin(msg)) {
-    await bot.sendMessage(msg.chat.id, '⛔ هذه الواجهة للمطور فقط.');
-    return;
-  }
-
-  await bot.sendMessage(msg.chat.id, adminStatusText(), buildDevKeyboard());
-});
-
-bot.on('callback_query', async (query) => {
-  const msg = query.message;
-  if (!msg) return;
-
-  registerUser(msg);
-  const state = getUserState(query.from.id);
-
-  try {
-    await bot.answerCallbackQuery(query.id);
-  } catch (error) {
-    console.error('Failed to answer callback query', error.message);
-  }
-
-  if (query.data === 'pair_code') {
-    state.awaitingPairNumber = true;
-    state.adminWaitingField = null;
-    await bot.sendMessage(msg.chat.id,
-      '📞 الربط باستخدام كود الاقتران\nمن فضلك أرسل رقم هاتفك في الواتساب مع رمز الدولة.\n\nمثال: 201012345678\n(أرسل الأرقام فقط بدون علامة + أو مسافات)'
-    );
-    return;
-  }
-
-  if (query.data === 'refresh_home') {
-    state.awaitingPairNumber = false;
-    state.adminWaitingField = null;
-    await editOrSendHome(query);
-    return;
-  }
-
-  if (!isAdmin(msg)) {
-    await bot.sendMessage(msg.chat.id, '⛔ هذه الأوامر للمطور فقط.');
-    return;
-  }
-
-  if (query.data === 'dev_panel' || query.data === 'dev_stats') {
-    await bot.editMessageText(adminStatusText(), {
-      chat_id: msg.chat.id,
-      message_id: msg.message_id,
-      ...buildDevKeyboard()
-    });
-    return;
-  }
-
-  if (query.data === 'dev_settings') {
-    await bot.editMessageText(settingsText(), {
-      chat_id: msg.chat.id,
-      message_id: msg.message_id,
-      ...buildDevKeyboard()
-    });
-    return;
-  }
-
-  if (query.data === 'dev_linked_numbers') {
-    await bot.editMessageText(linkedNumbersText(), {
-      chat_id: msg.chat.id,
-      message_id: msg.message_id,
-      ...buildDevKeyboard()
-    });
-    return;
-  }
-
-  if (query.data === 'dev_sync_linked') {
-    if (!LINKED_NUMBERS.linked_numbers.length) {
-      await bot.sendMessage(msg.chat.id, '📱 لا يوجد أي رقم مربوط حتى يتم مزامنته.');
+  bot.onText(/^\/dev(?:@\w+)?$/i, async (msg) => {
+    registerUser(msg);
+    if (!isAdmin(msg)) {
+      await bot.sendMessage(msg.chat.id, '⛔ هذه الواجهة للمطور فقط.');
       return;
     }
 
-    await bot.sendMessage(msg.chat.id, '⏳ جاري مزامنة إعدادات الأرقام المربوطة...');
-    const results = await propagateSettingsToLinkedNumbers();
-    const successCount = results.filter((item) => item.ok).length;
-    const failCount = results.length - successCount;
-    await bot.sendMessage(msg.chat.id,
-      `✅ تمت المزامنة.\nنجاح: ${successCount}\nفشل: ${failCount}\n\n${linkedNumbersText()}`,
-      buildDevKeyboard()
-    );
-    return;
-  }
+    await bot.sendMessage(msg.chat.id, adminStatusText(), buildDevKeyboard());
+  });
 
-  if (query.data === 'dev_toggle_auto_reply') {
-    SETTINGS.auto_reply_enabled = !SETTINGS.auto_reply_enabled;
-    saveSettings();
-    const results = await propagateSettingsToLinkedNumbers();
-    const failed = results.filter((item) => !item.ok).length;
-    const status = SETTINGS.auto_reply_enabled ? 'مفعل ✅' : 'معطل ❌';
-    await bot.editMessageText(
-      `تم تحديث حالة الرد التلقائي إلى: ${status}\nتم تطبيق الإعداد على ${LINKED_NUMBERS.linked_numbers.length} رقم مربوط${failed ? `\nفشل مزامنة ${failed} رقم` : ''}\n\n${settingsText()}`,
-      {
+  bot.on('callback_query', async (query) => {
+    const msg = query.message;
+    if (!msg) return;
+
+    registerUser(msg);
+    const state = getUserState(query.from.id);
+
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (error) {
+      console.error('Failed to answer callback query', error.message);
+    }
+
+    if (query.data === 'pair_code') {
+      state.awaitingPairNumber = true;
+      state.adminWaitingField = null;
+      await bot.sendMessage(
+        msg.chat.id,
+        '📞 الربط باستخدام كود الاقتران\nمن فضلك أرسل رقم هاتفك في الواتساب مع رمز الدولة.\n\nمثال: 201012345678\n(أرسل الأرقام فقط بدون علامة + أو مسافات)'
+      );
+      return;
+    }
+
+    if (query.data === 'refresh_home') {
+      state.awaitingPairNumber = false;
+      state.adminWaitingField = null;
+      await editOrSendHome(query);
+      return;
+    }
+
+    if (!isAdmin(msg)) {
+      await bot.sendMessage(msg.chat.id, '⛔ هذه الأوامر للمطور فقط.');
+      return;
+    }
+
+    if (query.data === 'dev_panel' || query.data === 'dev_stats') {
+      await bot.editMessageText(adminStatusText(), {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
         ...buildDevKeyboard()
-      }
-    );
-    return;
-  }
-
-  if (query.data === 'dev_set_emoji') {
-    state.adminWaitingField = 'set_emoji';
-    await bot.sendMessage(msg.chat.id, '😀 أرسل الإيموجي الجديد الآن.');
-    return;
-  }
-
-  if (query.data === 'dev_pair_api') {
-    await bot.editMessageText('🔗 إعداد خدمة الربط\n\nمن هنا تقدر تغيّر رابط الخدمة، التوكن، اسم حقل الرقم، وطريقة الإرسال.', {
-      chat_id: msg.chat.id,
-      message_id: msg.message_id,
-      ...buildPairApiKeyboard()
-    });
-    return;
-  }
-
-  if (query.data === 'dev_sync_api') {
-    await bot.editMessageText('🌍 إعداد مزامنة الرقم\n\nإذا ضبطت رابط المزامنة، أي تغيير من داخل البوت مثل الإيموجي أو الرد التلقائي يتم تطبيقه تلقائياً على كل رقم مربوط.', {
-      chat_id: msg.chat.id,
-      message_id: msg.message_id,
-      ...buildSyncApiKeyboard()
-    });
-    return;
-  }
-
-  if (['dev_set_api_url', 'dev_set_api_token', 'dev_set_number_field', 'dev_set_api_method', 'dev_set_sync_url', 'dev_set_sync_token', 'dev_set_sync_method'].includes(query.data)) {
-    state.adminWaitingField = query.data.replace('dev_', '');
-    const prompts = {
-      dev_set_api_url: '🌐 أرسل رابط خدمة الربط الجديد الآن.',
-      dev_set_api_token: '🔐 أرسل API Token الجديد الآن.',
-      dev_set_number_field: '📮 أرسل اسم حقل الرقم المطلوب، مثال: number أو phoneNumber.',
-      dev_set_api_method: '🔁 أرسل طريقة الطلب: GET أو POST',
-      dev_set_sync_url: '🌍 أرسل رابط مزامنة الأرقام الآن.',
-      dev_set_sync_token: '🔐 أرسل توكن مزامنة الأرقام الآن.',
-      dev_set_sync_method: '🔁 أرسل طريقة مزامنة الأرقام: GET أو POST'
-    };
-    await bot.sendMessage(msg.chat.id, prompts[query.data]);
-  }
-});
-
-bot.on('message', async (msg) => {
-  if (!msg.text || msg.text.startsWith('/')) {
-    return;
-  }
-
-  registerUser(msg);
-  const state = getUserState(msg.from.id);
-  const text = msg.text.trim();
-
-  if (state.adminWaitingField && isAdmin(msg)) {
-    const fieldName = ADMIN_INPUT_FIELDS[state.adminWaitingField];
-    if (!fieldName) {
-      state.adminWaitingField = null;
-      await bot.sendMessage(msg.chat.id, '⚠️ لم يتم التعرف على العملية المطلوبة.');
+      });
       return;
     }
 
-    let value = text;
-
-    if (state.adminWaitingField === 'set_api_method' || state.adminWaitingField === 'set_sync_method') {
-      value = text.toUpperCase().trim();
-      if (!['GET', 'POST'].includes(value)) {
-        await bot.sendMessage(msg.chat.id, '❌ القيمة لازم تكون GET أو POST فقط.');
-        return;
-      }
-    } else if (state.adminWaitingField === 'set_emoji') {
-      value = text.slice(0, 10);
-    } else if (state.adminWaitingField === 'set_number_field') {
-      value = text.trim();
-      if (!value) {
-        await bot.sendMessage(msg.chat.id, '❌ اسم الحقل لا يمكن أن يكون فارغ.');
-        return;
-      }
-    } else if (['set_api_url', 'set_sync_url'].includes(state.adminWaitingField)) {
-      value = text.trim();
-      if (value && !/^https?:\/\//i.test(value)) {
-        await bot.sendMessage(msg.chat.id, '❌ لازم الرابط يبدأ بـ http:// أو https://');
-        return;
-      }
+    if (query.data === 'dev_settings') {
+      await bot.editMessageText(settingsText(), {
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+        ...buildDevKeyboard()
+      });
+      return;
     }
 
-    SETTINGS[fieldName] = value;
-    SETTINGS = sanitizeSettings(SETTINGS);
-    saveSettings();
-    state.adminWaitingField = null;
+    if (query.data === 'dev_linked_numbers') {
+      await bot.editMessageText(linkedNumbersText(), {
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+        ...buildDevKeyboard()
+      });
+      return;
+    }
 
-    let extraText = '';
-    if (fieldName === 'current_emoji' || fieldName === 'auto_reply_enabled' || fieldName.startsWith('linked_number_sync_')) {
+    if (query.data === 'dev_sync_linked') {
+      if (!LINKED_NUMBERS.linked_numbers.length) {
+        await bot.sendMessage(msg.chat.id, '📱 لا يوجد أي رقم مربوط حتى يتم مزامنته.');
+        return;
+      }
+
+      await bot.sendMessage(msg.chat.id, '⏳ جاري مزامنة إعدادات الأرقام المربوطة...');
+      const results = await propagateSettingsToLinkedNumbers();
+      const successCount = results.filter((item) => item.ok).length;
+      const failCount = results.length - successCount;
+      await bot.sendMessage(
+        msg.chat.id,
+        `✅ تمت المزامنة.\nنجاح: ${successCount}\nفشل: ${failCount}\n\n${linkedNumbersText()}`,
+        buildDevKeyboard()
+      );
+      return;
+    }
+
+    if (query.data === 'dev_toggle_auto_reply') {
+      SETTINGS.auto_reply_enabled = !SETTINGS.auto_reply_enabled;
+      saveSettings();
       const results = await propagateSettingsToLinkedNumbers();
       const failed = results.filter((item) => !item.ok).length;
-      extraText = `\n\n📱 تم تحديث ${LINKED_NUMBERS.linked_numbers.length} رقم مربوط${failed ? ` مع فشل مزامنة ${failed} رقم` : ''}`;
+      const status = SETTINGS.auto_reply_enabled ? 'مفعل ✅' : 'معطل ❌';
+      await bot.editMessageText(
+        `تم تحديث حالة الرد التلقائي إلى: ${status}\nتم تطبيق الإعداد على ${LINKED_NUMBERS.linked_numbers.length} رقم مربوط${failed ? `\nفشل مزامنة ${failed} رقم` : ''}\n\n${settingsText()}`,
+        {
+          chat_id: msg.chat.id,
+          message_id: msg.message_id,
+          ...buildDevKeyboard()
+        }
+      );
+      return;
     }
 
-    await bot.sendMessage(msg.chat.id, `✅ تم حفظ الإعداد بنجاح.${extraText}\n\n${settingsText()}`, buildDevKeyboard());
-    return;
-  }
-
-  if (!state.awaitingPairNumber) {
-    if (SETTINGS.auto_reply_enabled) {
-      await bot.sendMessage(msg.chat.id, 'أهلاً بك 👋\nاستخدم /start أو /menu لعرض الواجهة الرئيسية.', buildMainKeyboard(isAdmin(msg)));
+    if (query.data === 'dev_set_emoji') {
+      state.adminWaitingField = 'set_emoji';
+      await bot.sendMessage(msg.chat.id, '😀 أرسل الإيموجي الجديد الآن.');
+      return;
     }
-    return;
-  }
 
-  const rawText = text;
-  const number = normalizePhoneNumber(rawText);
+    if (query.data === 'dev_pair_api') {
+      await bot.editMessageText('🔗 إعداد خدمة الربط\n\nمن هنا تقدر تغيّر رابط الخدمة، التوكن، اسم حقل الرقم، وطريقة الإرسال.', {
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+        ...buildPairApiKeyboard()
+      });
+      return;
+    }
 
-  if (rawText.startsWith('0') && !rawText.startsWith('00')) {
-    await bot.sendMessage(msg.chat.id, '❌ اكتب الرقم بصيغة دولية كاملة مع رمز الدولة، وليس بصيغة محلية تبدأ بـ 0.\nمثال صحيح: 201012345678');
-    return;
-  }
+    if (query.data === 'dev_sync_api') {
+      await bot.editMessageText('🌍 إعداد مزامنة الرقم\n\nإذا ضبطت رابط المزامنة، أي تغيير من داخل البوت مثل الإيموجي أو الرد التلقائي يتم تطبيقه تلقائياً على كل رقم مربوط.', {
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+        ...buildSyncApiKeyboard()
+      });
+      return;
+    }
 
-  if (!number || number.length < 8 || number.length > 15) {
-    await bot.sendMessage(msg.chat.id, '❌ الرقم غير صحيح.\nأرسل الرقم بصيغة دولية مثل: 201012345678');
-    return;
-  }
+    if (['dev_set_api_url', 'dev_set_api_token', 'dev_set_number_field', 'dev_set_api_method', 'dev_set_sync_url', 'dev_set_sync_token', 'dev_set_sync_method'].includes(query.data)) {
+      state.adminWaitingField = query.data.replace('dev_', '');
+      const prompts = {
+        dev_set_api_url: '🌐 أرسل رابط خدمة الربط الجديد الآن.',
+        dev_set_api_token: '🔐 أرسل API Token الجديد الآن.',
+        dev_set_number_field: '📮 أرسل اسم حقل الرقم المطلوب، مثال: number أو phoneNumber.',
+        dev_set_api_method: '🔁 أرسل طريقة الطلب: GET أو POST',
+        dev_set_sync_url: '🌍 أرسل رابط مزامنة الأرقام الآن.',
+        dev_set_sync_token: '🔐 أرسل توكن مزامنة الأرقام الآن.',
+        dev_set_sync_method: '🔁 أرسل طريقة مزامنة الأرقام: GET أو POST'
+      };
+      await bot.sendMessage(msg.chat.id, prompts[query.data]);
+    }
+  });
 
-  state.awaitingPairNumber = false;
-  BOT_STATS.pairRequests += 1;
+  bot.on('message', async (msg) => {
+    if (!msg.text || msg.text.startsWith('/')) {
+      return;
+    }
 
-  await bot.sendMessage(msg.chat.id, `⏳ جاري طلب الكود: ${number}`);
+    registerUser(msg);
+    const state = getUserState(msg.from.id);
+    const text = msg.text.trim();
 
-  try {
-    const code = await requestPairCode(number);
-    BOT_STATS.pairSuccess += 1;
-    upsertLinkedNumber(number);
-
-    let syncNote = '📦 تم حفظ الرقم محلياً داخل البوت.';
-    try {
-      const record = LINKED_NUMBERS.linked_numbers.find((item) => item.number === number);
-      if (record) {
-        const syncResult = await syncSingleLinkedNumber(record);
-        syncNote = syncResult.mode === 'remote'
-          ? '🌍 تم مزامنة إعدادات الرقم مع خدمة الربط الخارجية.'
-          : '📦 تم حفظ الرقم محلياً داخل البوت.';
+    if (state.adminWaitingField && isAdmin(msg)) {
+      const fieldName = ADMIN_INPUT_FIELDS[state.adminWaitingField];
+      if (!fieldName) {
+        state.adminWaitingField = null;
+        await bot.sendMessage(msg.chat.id, '⚠️ لم يتم التعرف على العملية المطلوبة.');
+        return;
       }
-    } catch (syncError) {
-      syncNote = `⚠️ تم حفظ الرقم محلياً لكن فشلت المزامنة الخارجية: ${syncError.message}`;
+
+      let value = text;
+
+      if (state.adminWaitingField === 'set_api_method' || state.adminWaitingField === 'set_sync_method') {
+        value = text.toUpperCase().trim();
+        if (!['GET', 'POST'].includes(value)) {
+          await bot.sendMessage(msg.chat.id, '❌ القيمة لازم تكون GET أو POST فقط.');
+          return;
+        }
+      } else if (state.adminWaitingField === 'set_emoji') {
+        value = text.slice(0, 10);
+      } else if (state.adminWaitingField === 'set_number_field') {
+        value = text.trim();
+        if (!value) {
+          await bot.sendMessage(msg.chat.id, '❌ اسم الحقل لا يمكن أن يكون فارغ.');
+          return;
+        }
+      } else if (['set_api_url', 'set_sync_url'].includes(state.adminWaitingField)) {
+        value = normalizeApiBaseUrl(text);
+        if (value && !/^https?:\/\//i.test(value)) {
+          await bot.sendMessage(msg.chat.id, '❌ لازم الرابط يبدأ بـ http:// أو https://');
+          return;
+        }
+      }
+
+      SETTINGS[fieldName] = value;
+      SETTINGS = sanitizeSettings(SETTINGS);
+      saveSettings();
+      state.adminWaitingField = null;
+
+      let extraText = '';
+      if (fieldName === 'current_emoji' || fieldName === 'auto_reply_enabled' || fieldName.startsWith('linked_number_sync_')) {
+        const results = await propagateSettingsToLinkedNumbers();
+        const failed = results.filter((item) => !item.ok).length;
+        extraText = `\n\n📱 تم تحديث ${LINKED_NUMBERS.linked_numbers.length} رقم مربوط${failed ? ` مع فشل مزامنة ${failed} رقم` : ''}`;
+      }
+
+      await bot.sendMessage(msg.chat.id, `✅ تم حفظ الإعداد بنجاح.${extraText}\n\n${settingsText()}`, buildDevKeyboard());
+      return;
     }
 
-    await bot.sendMessage(
-      msg.chat.id,
-      `✅ تم استخراج كود الربط بنجاح\n\n🔐 الكود: ${code}\n\nافتح واتساب > الأجهزة المرتبطة > ربط جهاز > إدخال الكود.\n${syncNote}`,
-      { parse_mode: 'Markdown', ...buildMainKeyboard(isAdmin(msg)) }
-    );
-  } catch (error) {
-    BOT_STATS.pairFailed += 1;
-    console.error('Failed to get pair code for', number, error.message);
-    await bot.sendMessage(
-      msg.chat.id,
-      `❌ حصل خطأ أثناء طلب كود الربط.\nلازم تضبط خدمة الربط بالكامل في Environment Variables أو من لوحة المطور.\nتفاصيل الخطأ: ${error.message}`,
-      buildMainKeyboard(isAdmin(msg))
-    );
-  }
-});
+    if (!state.awaitingPairNumber) {
+      if (SETTINGS.auto_reply_enabled) {
+        await bot.sendMessage(msg.chat.id, 'أهلاً بك 👋\nاستخدم /start أو /menu لعرض الواجهة الرئيسية.', buildMainKeyboard(isAdmin(msg)));
+      }
+      return;
+    }
 
-bot.setMyCommands([
-  { command: 'start', description: 'تشغيل البوت' },
-  { command: 'menu', description: 'عرض القائمة الرئيسية' },
-  { command: 'help', description: 'المساعدة' },
-  { command: 'ping', description: 'فحص البوت' },
-  { command: 'dev', description: 'لوحة المطور' }
-]).catch((error) => {
-  console.error('Failed to set bot commands', error.message);
-});
+    const rawText = text;
+    const number = normalizePhoneNumber(rawText);
+
+    if (rawText.startsWith('0') && !rawText.startsWith('00')) {
+      await bot.sendMessage(msg.chat.id, '❌ اكتب الرقم بصيغة دولية كاملة مع رمز الدولة، وليس بصيغة محلية تبدأ بـ 0.\nمثال صحيح: 201012345678');
+      return;
+    }
+
+    if (!number || number.length < 8 || number.length > 15) {
+      await bot.sendMessage(msg.chat.id, '❌ الرقم غير صحيح.\nأرسل الرقم بصيغة دولية مثل: 201012345678');
+      return;
+    }
+
+    state.awaitingPairNumber = false;
+    BOT_STATS.pairRequests += 1;
+
+    await bot.sendMessage(msg.chat.id, `⏳ جاري طلب الكود: ${number}`);
+
+    try {
+      const code = await requestPairCode(number);
+      BOT_STATS.pairSuccess += 1;
+      upsertLinkedNumber(number);
+
+      let syncNote = '📦 تم حفظ الرقم محلياً داخل البوت.';
+      try {
+        const record = LINKED_NUMBERS.linked_numbers.find((item) => item.number === number);
+        if (record) {
+          const syncResult = await syncSingleLinkedNumber(record);
+          syncNote = syncResult.mode === 'remote'
+            ? '🌍 تم مزامنة إعدادات الرقم مع خدمة الربط الخارجية.'
+            : '📦 تم حفظ الرقم محلياً داخل البوت.';
+        }
+      } catch (syncError) {
+        syncNote = `⚠️ تم حفظ الرقم محلياً لكن فشلت المزامنة الخارجية: ${syncError.message}`;
+      }
+
+      await bot.sendMessage(
+        msg.chat.id,
+        `✅ تم استخراج كود الربط بنجاح\n\n🔐 الكود: ${code}\n\nافتح واتساب > الأجهزة المرتبطة > ربط جهاز > إدخال الكود.\n${syncNote}`,
+        buildMainKeyboard(isAdmin(msg))
+      );
+    } catch (error) {
+      BOT_STATS.pairFailed += 1;
+      console.error('Failed to get pair code for', number, error.message);
+      await bot.sendMessage(
+        msg.chat.id,
+        `❌ حصل خطأ أثناء طلب كود الربط.\nلازم تضبط خدمة الربط بالكامل في Environment Variables أو من لوحة المطور.\nتفاصيل الخطأ: ${error.message}`,
+        buildMainKeyboard(isAdmin(msg))
+      );
+    }
+  });
+
+  bot.on('polling_error', (error) => {
+    console.error('Polling error:', error?.response?.body || error?.message || error);
+  });
+
+  bot.on('webhook_error', (error) => {
+    console.error('Webhook error:', error?.response?.body || error?.message || error);
+  });
+
+  bot.getMe()
+    .then((me) => {
+      console.log(`Telegram bot logged in as @${me.username}`);
+    })
+    .catch((error) => {
+      console.error('Failed to call getMe:', error?.response?.body || error?.message || error);
+    });
+
+  bot.setMyCommands([
+    { command: 'start', description: 'تشغيل البوت' },
+    { command: 'menu', description: 'عرض القائمة الرئيسية' },
+    { command: 'help', description: 'المساعدة' },
+    { command: 'ping', description: 'فحص البوت' },
+    { command: 'dev', description: 'لوحة المطور' }
+  ]).catch((error) => {
+    console.error('Failed to set bot commands', error?.response?.body || error?.message || error);
+  });
 }
 
 const PORT = Number(process.env.PORT || 10000);
@@ -838,7 +967,10 @@ const healthServer = http.createServer((req, res) => {
     bot_status: bot ? 'running' : 'disabled',
     reason: bot ? null : BOT_DISABLED_REASON,
     linked_numbers: LINKED_NUMBERS.linked_numbers.length,
-    uptime_seconds: Math.floor(process.uptime())
+    uptime_seconds: Math.floor(process.uptime()),
+    pair_code_api_url: SETTINGS.pair_code_api_url || null,
+    pair_code_api_method: SETTINGS.pair_code_api_method,
+    admin_id_configured: Boolean(ADMIN_ID)
   };
 
   res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
