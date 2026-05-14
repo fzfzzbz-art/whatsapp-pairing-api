@@ -3,7 +3,8 @@ const {
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
     Browsers,
-    DisconnectReason
+    DisconnectReason,
+    delay
 } = require('@whiskeysockets/baileys');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
@@ -18,7 +19,8 @@ const crypto = require('crypto');
 const APP_PORT = Number(process.env.PORT || 8080);
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
-const DEFAULT_REACTION_EMOJI = '👑';
+const DEFAULT_REACTION_EMOJI = '❤️';
+let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
 const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
@@ -118,7 +120,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     menu: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
     alive: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
     owner: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
-    statusCustomReact: '',
+    statusCustomReact: '❤️',
     antiBug: 'off',
     antiBot: 'off',
     antiBotAction: 'delete'
@@ -809,7 +811,8 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
         return fallbackReplies[Math.floor(Math.random() * fallbackReplies.length)] || fallbackReplies[0];
     }
 
-    return '';
+    const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
+    return firstStructuredReply || '';
 }
 
 function buildStatusAutoMessage(phone) {
@@ -896,8 +899,13 @@ async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, inco
         await sock.sendMessage(remoteJid, { text: replyText }, { quoted: msg });
         return true;
     } catch (error) {
-        rollbackLinkedNumberAutoReplyCooldown(phoneNumber, remoteJid);
-        throw error;
+        try {
+            await sock.sendMessage(remoteJid, { text: replyText });
+            return true;
+        } catch (fallbackError) {
+            rollbackLinkedNumberAutoReplyCooldown(phoneNumber, remoteJid);
+            throw fallbackError;
+        }
     }
 }
 
@@ -1639,7 +1647,7 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '📲 أوامر الرقم المربوط:',
         '.bot - إرسال رابط البوت',
         '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        '❌ تم إيقاف أي رد تلقائي آخر في الخاص.'
+        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.'
     ].join('\n');
 }
 
@@ -1789,6 +1797,15 @@ function normalizeWhatsAppJid(jid) {
 
 function textFromMessage(msg) {
     const content = unwrapMessageContent(msg?.message);
+    const interactiveParams = content?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
+    let interactiveText = '';
+
+    if (interactiveParams) {
+        try {
+            const parsed = JSON.parse(interactiveParams);
+            interactiveText = parsed?.id || parsed?.title || parsed?.value || parsed?.selectedId || parsed?.selectedTitle || '';
+        } catch (_) {}
+    }
 
     return (
         content?.conversation ||
@@ -1797,7 +1814,12 @@ function textFromMessage(msg) {
         content?.videoMessage?.caption ||
         content?.documentMessage?.caption ||
         content?.buttonsResponseMessage?.selectedDisplayText ||
+        content?.buttonsResponseMessage?.selectedButtonId ||
         content?.listResponseMessage?.title ||
+        content?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        content?.templateButtonReplyMessage?.selectedDisplayText ||
+        content?.templateButtonReplyMessage?.selectedId ||
+        interactiveText ||
         ''
     );
 }
@@ -2040,6 +2062,88 @@ async function cleanupSession(phone) {
     removeLinkedNumber(normalized);
 }
 
+function buildStatusReactionKey(msg, participant = '') {
+    return {
+        ...(msg?.key || {}),
+        remoteJid: 'status@broadcast',
+        participant: participant || msg?.key?.participant || msg?.participant,
+        fromMe: false
+    };
+}
+
+async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
+    const reactionKey = buildStatusReactionKey(msg, participant);
+    if (!sock || !participant || !reactionKey.id) {
+        return false;
+    }
+
+    const emoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
+    if (!emoji) {
+        return false;
+    }
+
+    reactionEmoji = emoji;
+
+    const attempts = [
+        async () => {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            }, { statusJidList: [participant] });
+        },
+        async () => {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            }, { statusJidList: [participant], participant });
+        },
+        async () => {
+            await sock.sendMessage(participant, {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            }, { statusJidList: [participant] });
+        },
+        async () => {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: {
+                        ...reactionKey,
+                        remoteJid: 'status@broadcast',
+                        participant,
+                        fromMe: false
+                    }
+                }
+            });
+        }
+    ];
+
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            if (typeof delay === 'function') {
+                await delay(150);
+            }
+            await attempt();
+            return true;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    return false;
+}
+
 async function handleStatusReaction(sock, phoneNumber, msg) {
     try {
         if (!hasStatusContent(msg)) return;
@@ -2047,12 +2151,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         const settings = getActivePhoneSettings(phoneNumber);
         const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
-        const reactionKey = {
-            ...(msg.key || {}),
-            remoteJid: 'status@broadcast',
-            participant: participant || msg.key?.participant || msg.participant,
-            fromMe: false
-        };
+        const reactionKey = buildStatusReactionKey(msg, participant);
 
         if (!reactionKey.id) return;
 
@@ -2073,52 +2172,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         }
 
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            const emoji = pickRandomStatusEmoji(phoneNumber);
-            const candidateKeys = [
-                reactionKey,
-                msg.key ? { ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false } : null,
-                msg.key || null
-            ].filter(Boolean);
-            const targetJids = Array.from(new Set(['status@broadcast', participant].filter(Boolean)));
-            const optionVariants = [
-                { statusJidList: [participant] },
-                participant ? { statusJidList: [participant], participant } : {},
-                {}
-            ];
-            const reactionAttempts = [];
-
-            for (const key of candidateKeys) {
-                for (const targetJid of targetJids) {
-                    for (const options of optionVariants) {
-                        reactionAttempts.push({
-                            targetJid,
-                            content: {
-                                react: {
-                                    text: emoji,
-                                    key
-                                }
-                            },
-                            options
-                        });
-                    }
-                }
-            }
-
-            let reacted = false;
-            let lastError = null;
-            for (const attempt of reactionAttempts) {
-                try {
-                    await sock.sendMessage(attempt.targetJid, attempt.content, attempt.options);
-                    reacted = true;
-                    break;
-                } catch (error) {
-                    lastError = error;
-                }
-            }
-
-            if (!reacted && lastError) {
-                throw lastError;
-            }
+            await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
         }
 
         if (settings.statusMsgSend === 'on' && participant && participant !== ownJid) {
