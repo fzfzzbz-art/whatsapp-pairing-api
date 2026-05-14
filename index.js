@@ -1020,29 +1020,48 @@ function buildPairingApiDescriptor(phone = '') {
     };
 }
 
+function findStructuredAutoReplyMatchFromEntries(replies, incomingText = '') {
+    const normalizedIncoming = normalizeArabicReplyText(incomingText);
+    if (!normalizedIncoming) {
+        return null;
+    }
+
+    for (const reply of replies) {
+        if (!reply.isStructured || !reply.normalizedKeywords.length || !reply.response) continue;
+        const matched = reply.normalizedKeywords.some((keyword) => {
+            if (!keyword) return false;
+            return (
+                normalizedIncoming === keyword ||
+                normalizedIncoming.startsWith(`${keyword} `) ||
+                normalizedIncoming.endsWith(` ${keyword}`) ||
+                normalizedIncoming.includes(` ${keyword} `)
+            );
+        });
+        if (matched) {
+            return reply;
+        }
+    }
+
+    return null;
+}
+
+function findStructuredAutoReplyMatch(phone, incomingText = '') {
+    const replies = getMergedAutoReplyEntries(phone);
+    if (!replies.length) {
+        return null;
+    }
+    return findStructuredAutoReplyMatchFromEntries(replies, incomingText);
+}
+
 function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const replies = getMergedAutoReplyEntries(phone);
     if (!replies.length) {
         return '';
     }
 
-    const normalizedIncoming = normalizeArabicReplyText(incomingText);
-    if (normalizedIncoming) {
-        for (const reply of replies) {
-            if (!reply.isStructured || !reply.normalizedKeywords.length || !reply.response) continue;
-            const matched = reply.normalizedKeywords.some((keyword) => {
-                if (!keyword) return false;
-                return (
-                    normalizedIncoming === keyword ||
-                    normalizedIncoming.startsWith(`${keyword} `) ||
-                    normalizedIncoming.endsWith(` ${keyword}`) ||
-                    normalizedIncoming.includes(` ${keyword} `)
-                );
-            });
-            if (matched) {
-                return reply.response;
-            }
-        }
+    const matchedStructuredReply = findStructuredAutoReplyMatchFromEntries(replies, incomingText);
+    if (matchedStructuredReply?.response) {
+        return matchedStructuredReply.response;
     }
 
     const fallbackReplies = replies
@@ -1075,10 +1094,16 @@ function buildAutoReplyCooldownKey(phone, remoteJid) {
 function canSendLinkedNumberAutoReply(phone, remoteJid, incomingText = '') {
     const normalizedRemote = normalizeWhatsAppJid(remoteJid);
     if (!normalizedRemote || normalizedRemote === 'status@broadcast' || normalizedRemote.endsWith('@g.us')) return false;
-    if (!String(incomingText || '').trim()) return false;
+    const cleanIncomingText = String(incomingText || '').trim();
+    if (!cleanIncomingText) return false;
 
     if (!getMergedAutoReplyEntries(phone).length) {
         return false;
+    }
+
+    const matchedStructuredReply = findStructuredAutoReplyMatch(phone, cleanIncomingText);
+    if (matchedStructuredReply?.response) {
+        return true;
     }
 
     const cooldownKey = buildAutoReplyCooldownKey(phone, normalizedRemote);
@@ -2542,6 +2567,60 @@ function buildStatusReactionKey(msg, participant = '') {
     };
 }
 
+function buildQuotedStatusMessage(msg, participant = '') {
+    if (!msg?.message || !msg?.key?.id) {
+        return null;
+    }
+
+    return {
+        ...msg,
+        key: buildStatusReactionKey(msg, participant),
+        participant: participant || msg?.participant || msg?.key?.participant
+    };
+}
+
+async function sendStatusReplyMessage(sock, participant, messageText, msg) {
+    if (!sock || !participant || !String(messageText || '').trim()) {
+        return false;
+    }
+
+    const cleanMessage = String(messageText).trim();
+    const quotedStatusMessage = buildQuotedStatusMessage(msg, participant);
+    const attempts = [
+        async () => {
+            if (!quotedStatusMessage) {
+                throw new Error('Status quote unavailable');
+            }
+            await sock.sendMessage(participant, { text: cleanMessage }, { quoted: quotedStatusMessage });
+        },
+        async () => {
+            if (!msg?.message || !msg?.key?.id) {
+                throw new Error('Original status message unavailable');
+            }
+            await sock.sendMessage(participant, { text: cleanMessage }, { quoted: msg });
+        },
+        async () => {
+            await sock.sendMessage(participant, { text: cleanMessage });
+        }
+    ];
+
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            await attempt();
+            return true;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    return false;
+}
+
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
     const reactionKey = buildStatusReactionKey(msg, participant);
     if (!sock || !participant || !reactionKey.id) {
@@ -2652,7 +2731,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         const messageText = globalStatusMessage || fallbackStatusMessage;
 
         if (messageText && participant && participant !== ownJid) {
-            await sock.sendMessage(participant, { text: messageText });
+            await sendStatusReplyMessage(sock, participant, messageText, msg);
         }
     } catch (error) {
         console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
