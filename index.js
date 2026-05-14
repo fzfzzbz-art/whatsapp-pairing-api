@@ -620,10 +620,74 @@ function parseAutoReplies(value) {
         .slice(0, MAX_AUTO_REPLIES);
 }
 
+function parseAutoReplyEntries(value) {
+    return parseAutoReplies(value).map((entry) => {
+        const line = String(entry || '').trim();
+        const structuredMatch = line.match(/^(.+?)\s*=>\s*([\s\S]+)$/);
+        if (!structuredMatch) {
+            return {
+                raw: line,
+                keywordsText: '',
+                keywords: [],
+                normalizedKeywords: [],
+                response: line,
+                isStructured: false
+            };
+        }
+
+        const keywordsText = String(structuredMatch[1] || '').trim();
+        const response = String(structuredMatch[2] || '').trim();
+        const keywords = keywordsText
+            .split(/[|,،/]+/)
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .slice(0, 20);
+
+        return {
+            raw: line,
+            keywordsText,
+            keywords,
+            normalizedKeywords: keywords.map((item) => normalizeArabicReplyText(item)).filter(Boolean),
+            response,
+            isStructured: Boolean(keywords.length && response)
+        };
+    });
+}
+
 function formatAutoRepliesList(phone) {
-    const replies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
+    const replies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
     if (!replies.length) return 'لا يوجد ردود تلقائية مخصصة.';
-    return replies.map((reply, index) => `${index + 1}) ${reply}`).join('\n');
+    return replies
+        .map((reply, index) => {
+            if (reply.isStructured) {
+                return `${index + 1}) الكلمات: ${reply.keywords.join(' | ')}\n   الرد: ${reply.response}`;
+            }
+            return `${index + 1}) ${reply.response}`;
+        })
+        .join('\n');
+}
+
+function normalizeAutoReplyKeywordsInput(value) {
+    const seen = new Set();
+    return String(value || '')
+        .split(/[\r\n|,،/]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => item.slice(0, 80))
+        .filter((item) => {
+            const normalized = normalizeArabicReplyText(item);
+            if (!normalized || seen.has(normalized)) return false;
+            seen.add(normalized);
+            return true;
+        })
+        .slice(0, 20);
+}
+
+function buildStructuredAutoReplyEntry(keywordsInput, responseInput) {
+    const keywords = normalizeAutoReplyKeywordsInput(keywordsInput);
+    const response = String(responseInput || '').trim().slice(0, 500);
+    if (!keywords.length || !response) return '';
+    return `${keywords.join(' | ')} => ${response}`;
 }
 
 function buildAutoReplyMessage(phone, incomingText = '') {
@@ -647,7 +711,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
         return 'العفو 🌷\nإذا احتجت أي شيء أنا حاضر.';
     }
 
-    const customReply = buildConfiguredAutoReplyMessage(phone);
+    const customReply = buildConfiguredAutoReplyMessage(phone, incomingText);
     if (customReply) {
         return customReply;
     }
@@ -661,7 +725,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
 }
 
 function getGuaranteedAutoReply(phone, incomingText = '') {
-    return buildConfiguredAutoReplyMessage(phone) || buildAutoReplyMessage(phone, incomingText);
+    return buildConfiguredAutoReplyMessage(phone, incomingText) || buildAutoReplyMessage(phone, incomingText);
 }
 
 function normalizeArabicReplyText(value = '') {
@@ -712,11 +776,39 @@ function buildPairingApiDescriptor(phone = '') {
     };
 }
 
-function buildConfiguredAutoReplyMessage(phone) {
-    const replies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
-    if (replies.length) {
-        return replies[Math.floor(Math.random() * replies.length)] || replies[0];
+function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
+    const replies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
+    if (!replies.length) {
+        return '';
     }
+
+    const normalizedIncoming = normalizeArabicReplyText(incomingText);
+    if (normalizedIncoming) {
+        for (const reply of replies) {
+            if (!reply.isStructured || !reply.normalizedKeywords.length || !reply.response) continue;
+            const matched = reply.normalizedKeywords.some((keyword) => {
+                if (!keyword) return false;
+                return (
+                    normalizedIncoming === keyword ||
+                    normalizedIncoming.startsWith(`${keyword} `) ||
+                    normalizedIncoming.endsWith(` ${keyword}`) ||
+                    normalizedIncoming.includes(` ${keyword} `)
+                );
+            });
+            if (matched) {
+                return reply.response;
+            }
+        }
+    }
+
+    const fallbackReplies = replies
+        .filter((reply) => !reply.isStructured && reply.response)
+        .map((reply) => reply.response);
+
+    if (fallbackReplies.length) {
+        return fallbackReplies[Math.floor(Math.random() * fallbackReplies.length)] || fallbackReplies[0];
+    }
+
     return '';
 }
 
@@ -741,7 +833,7 @@ function canSendLinkedNumberAutoReply(phone, remoteJid, incomingText = '') {
     if (!String(incomingText || '').trim()) return false;
 
     const settings = getActivePhoneSettings(phone);
-    if (!parseAutoReplies(settings.customAutoReplies).length) {
+    if (!parseAutoReplyEntries(settings.customAutoReplies).length) {
         return false;
     }
 
@@ -794,7 +886,7 @@ function extractStatusParticipant(msg) {
 async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, incomingText = '') {
     if (!canSendLinkedNumberAutoReply(phoneNumber, remoteJid, incomingText)) return false;
 
-    const replyText = buildConfiguredAutoReplyMessage(phoneNumber) || getGuaranteedAutoReply(phoneNumber, incomingText);
+    const replyText = buildConfiguredAutoReplyMessage(phoneNumber, incomingText) || getGuaranteedAutoReply(phoneNumber, incomingText);
     if (!String(replyText || '').trim()) {
         rollbackLinkedNumberAutoReplyCooldown(phoneNumber, remoteJid);
         return false;
@@ -1964,52 +2056,53 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         if (!reactionKey.id) return;
 
-        if (settings.autoStatusRead === 'on') {
-            try {
-                await sock.readMessages([reactionKey]);
-            } catch (_) {
+        const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
+        if (shouldReadStatus) {
+            const readAttempts = [
+                [reactionKey],
+                msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
+                msg.key ? [msg.key] : []
+            ].filter((items) => items.length);
+
+            for (const attempt of readAttempts) {
                 try {
-                    if (msg.key) {
-                        await sock.readMessages([{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }]);
-                    }
+                    await sock.readMessages(attempt);
+                    break;
                 } catch (_) {}
             }
         }
 
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
             const emoji = pickRandomStatusEmoji(phoneNumber);
-            const reactionAttempts = [
-                {
-                    targetJid: 'status@broadcast',
-                    content: {
-                        react: {
-                            text: emoji,
-                            key: reactionKey
-                        }
-                    },
-                    options: { statusJidList: [participant] }
-                },
-                {
-                    targetJid: 'status@broadcast',
-                    content: {
-                        react: {
-                            text: emoji,
-                            key: msg.key || reactionKey
-                        }
-                    },
-                    options: { statusJidList: [participant] }
-                },
-                {
-                    targetJid: 'status@broadcast',
-                    content: {
-                        react: {
-                            text: emoji,
-                            key: reactionKey
-                        }
-                    },
-                    options: {}
-                }
+            const candidateKeys = [
+                reactionKey,
+                msg.key ? { ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false } : null,
+                msg.key || null
+            ].filter(Boolean);
+            const targetJids = Array.from(new Set(['status@broadcast', participant].filter(Boolean)));
+            const optionVariants = [
+                { statusJidList: [participant] },
+                participant ? { statusJidList: [participant], participant } : {},
+                {}
             ];
+            const reactionAttempts = [];
+
+            for (const key of candidateKeys) {
+                for (const targetJid of targetJids) {
+                    for (const options of optionVariants) {
+                        reactionAttempts.push({
+                            targetJid,
+                            content: {
+                                react: {
+                                    text: emoji,
+                                    key
+                                }
+                            },
+                            options
+                        });
+                    }
+                }
+            }
 
             let reacted = false;
             let lastError = null;
@@ -2430,10 +2523,10 @@ ${buildTelegramCommandsOverview()}`);
         }
 
         if (phones.length === 1) {
-            ctx.session = { step: 'wait_auto_replies', targetPhone: phones[0] };
+            ctx.session = { step: 'wait_auto_reply_response', targetPhone: phones[0] };
             return safeReply(
                 ctx,
-                `🤖 أرسل الآن حتى ${MAX_AUTO_REPLIES} ردود تلقائية للرقم ${phones[0]}، كل رد في سطر مستقل.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nللتعطيل أرسل: off`
+                `🤖 أرسل الآن نص الرد للرقم ${phones[0]}.\nبعدها سأطلب منك الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nلإيقاف جميع الردود أرسل: off`
             );
         }
 
@@ -2475,10 +2568,10 @@ ${buildTelegramCommandsOverview()}`);
         if (!userOwnsPhone(ctx.from.id, phone)) {
             return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         }
-        ctx.session = { step: 'wait_auto_replies', targetPhone: phone };
+        ctx.session = { step: 'wait_auto_reply_response', targetPhone: phone };
         return safeReply(
             ctx,
-            `🤖 أرسل الآن حتى ${MAX_AUTO_REPLIES} ردود تلقائية للرقم ${phone}، كل رد في سطر مستقل.\n\nالردود الحالية:\n${formatAutoRepliesList(phone)}\n\nللتعطيل أرسل: off`
+            `🤖 أرسل الآن نص الرد للرقم ${phone}.\nبعدها سأطلب منك الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\n\nالردود الحالية:\n${formatAutoRepliesList(phone)}\n\nلإيقاف جميع الردود أرسل: off`
         );
     }
 
@@ -2511,7 +2604,7 @@ ${buildTelegramCommandsOverview()}`);
         }
         const settings = getActivePhoneSettings(phone);
         const nextValue = settings.autoStatusReact === 'on' ? 'off' : 'on';
-        updatePhoneSettings(phone, { autoStatusReact: nextValue, autoReact: 'off' });
+        updatePhoneSettings(phone, { autoStatusReact: nextValue, autoStatusRead: 'on', autoReact: 'off' });
         return safeReply(ctx, buildEmojiReactManagerMessage(phone), getEmojiReactManagerKeyboard(phone));
     }
 
@@ -2811,7 +2904,7 @@ bot.on('text', async (ctx) => {
         return safeReply(ctx, `✅ تم تغيير إيموجي التفاعل للرقم ${phone} إلى ${incomingText}`);
     }
 
-    if (sessionState === 'wait_auto_replies') {
+    if (sessionState === 'wait_auto_reply_response') {
         const phone = ctx.session?.targetPhone;
         if (!userOwnsPhone(ctx.from.id, phone)) {
             ctx.session = null;
@@ -2824,22 +2917,52 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, `✅ تم تعطيل الردود التلقائية المخصصة للرقم ${phone}.`);
         }
 
-        const rawReplies = incomingText
-            .split(/\r?\n/)
-            .map((item) => item.trim())
-            .filter(Boolean);
-
-        if (!rawReplies.length) {
-            return safeReply(ctx, '❌ أرسل رداً واحداً على الأقل، وكل رد في سطر مستقل.');
+        if (!String(incomingText || '').trim()) {
+            return safeReply(ctx, '❌ أرسل نص الرد أولاً.');
         }
 
-        if (rawReplies.length > MAX_AUTO_REPLIES) {
-            return safeReply(ctx, `❌ الحد الأقصى هو ${MAX_AUTO_REPLIES} ردود فقط.`);
+        const existingReplies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
+        if (existingReplies.length >= MAX_AUTO_REPLIES) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ وصلت للحد الأقصى ${MAX_AUTO_REPLIES} ردود. أرسل off لمسح الردود الحالية ثم أعد المحاولة.`);
         }
 
-        updatePhoneSettings(phone, { customAutoReplies: rawReplies.join('\n') });
+        ctx.session = {
+            step: 'wait_auto_reply_keyword',
+            targetPhone: phone,
+            pendingReplyText: String(incomingText || '').trim().slice(0, 500)
+        };
+        return safeReply(ctx, '✅ تم استلام نص الرد.\nالآن أرسل الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\nمثال: سلام أو سلام، هلا');
+    }
+
+    if (sessionState === 'wait_auto_reply_keyword') {
+        const phone = ctx.session?.targetPhone;
+        const pendingReplyText = String(ctx.session?.pendingReplyText || '').trim();
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+
+        if (!pendingReplyText) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ حصل خلل في حفظ نص الرد. أعد المحاولة من زر إدارة الرسائل.');
+        }
+
+        const keywords = normalizeAutoReplyKeywordsInput(incomingText);
+        if (!keywords.length) {
+            return safeReply(ctx, '❌ أرسل كلمة مفتاحية واحدة على الأقل مثل: سلام');
+        }
+
+        const entry = buildStructuredAutoReplyEntry(keywords.join(' | '), pendingReplyText);
+        if (!entry) {
+            return safeReply(ctx, '❌ لم أتمكن من إنشاء الرد التلقائي. حاول مرة أخرى.');
+        }
+
+        const existingReplies = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies);
+        const nextReplies = [...existingReplies, entry].slice(0, MAX_AUTO_REPLIES);
+        updatePhoneSettings(phone, { customAutoReplies: nextReplies.join('\n') });
         ctx.session = null;
-        return safeReply(ctx, `✅ تم حفظ ${rawReplies.length} ردود تلقائية للرقم ${phone}.`);
+        return safeReply(ctx, `✅ تم حفظ الرد التلقائي للرقم ${phone}.\n\n${formatAutoRepliesList(phone)}`);
     }
 
     if (sessionState === 'wait_new_start_message') {
