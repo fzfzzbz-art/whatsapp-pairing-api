@@ -1,41 +1,64 @@
 const { Telegraf, Markup } = require('telegraf');
+const axios = require('axios');
 const express = require('express');
 
-// قراءة التوكن من متغيرات البيئة
-const BOT_TOKEN = process.env.BOT_TOKEN; 
-
-if (!BOT_TOKEN) {
-    console.error("خطأ: لم يتم العثور على BOT_TOKEN في متغيرات البيئة!");
-    process.exit(1);
-}
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const API_URL = "https://whatsapp-pairing-api.onrender.com"; // رابط الـ API الخاص بك
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // واجهة الموقع
 app.get('/', (req, res) => {
-    res.send(`
-        <html>
-            <head><title>WhatsApp Pairing System</title></head>
-            <body style="font-family: Arial; text-align: center; padding-top: 50px; background-color: #f4f4f9;">
-                <h1 style="color: #2c3e50;">نظام ربط الواتساب - Golden Queen</h1>
-                <p>البوت يعمل الآن ومستعد لاستقبال طلبات الاقتران عبر التلجرام.</p>
-                <div style="margin-top: 20px; color: #27ae60; font-weight: bold;">● الحالة: متصل الآن</div>
-            </body>
-        </html>
-    `);
+    res.send('<h1 style="text-align:center;">Bot is Running...</h1>');
 });
 
+// رسالة الترحيب والأزرار
 bot.start((ctx) => {
-    ctx.reply(`مرحباً بك في بوت الربط التلقائي 🤖\n\nيمكنك الآن ربط رقمك بالضغط على الزر أدناه للحصول على كود الاقتران.`,
-        Markup.inlineKeyboard([
-            [Markup.button.url('إبدأ الاقتران الآن', 'https://whatsapp-pairing-api.onrender.com')]
-        ])
+    ctx.reply(`مرحباً بك في بوت الربط التلقائي 🤖\n\nأرسل رقمك الآن مع رمز الدولة (مثال: 967771163825) للحصول على كود الاقتران مباشرة.`,
+        Markup.keyboard([
+            ['ربط واتساب 📱', 'أرقامي المربوطة 📋'],
+            ['تفاعل الحالات ✨', 'إدارة الرسائل ⚙️'],
+            ['تحديث الاشتراك ✅', 'حذف جلسة 🗑️']
+        ]).resize()
     );
 });
 
+// التعامل مع إرسال الرقم
+bot.on('text', async (ctx) => {
+    const text = ctx.message.text;
+
+    // التحقق إذا كان النص عبارة عن رقم هاتف (أرقام فقط وطول مناسب)
+    if (/^\d{8,15}$/.test(text)) {
+        const msg = await ctx.reply("⏳ جاري توليد كود الاقتران، يرجى الانتظار...");
+
+        try {
+            // طلب كود الاقتران من الـ API الخاص بك
+            // ملاحظة: المسار /code و البرامتر number يعتمد على تصميم الـ API الخاص بك
+            const response = await axios.get(`${API_URL}/code?number=${text}`);
+            const pairingCode = response.data.code; 
+
+            if (pairingCode) {
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, 
+                    `✅ تم توليد كود الاقتران لرقمك: ${text}\n\nالكود هو: \`${pairingCode}\`\n\nقم بنسخ الكود وضعه في الواتساب (الأجهزة المرتبطة -> ربط باستخدام رقم الهاتف).`,
+                    { parse_mode: 'Markdown' }
+                );
+            } else {
+                throw new Error("لم يتم إرجاع كود");
+            }
+        } catch (error) {
+            console.error(error);
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, 
+                "❌ عذراً، حدث خطأ أثناء الاتصال بسيرفر الاقتران. تأكد من أن الرقم صحيح أو حاول لاحقاً."
+            );
+        }
+    } else if (text === 'ربط واتساب 📱') {
+        ctx.reply("حسناً، أرسل رقم الهاتف الذي تريد ربطه الآن.");
+    }
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    bot.launch().catch(err => console.error("فشل تشغيل البوت:", err));
+    console.log(`Server running on port ${PORT}`);
+    bot.launch();
 });
