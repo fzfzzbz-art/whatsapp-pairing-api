@@ -30,6 +30,7 @@ const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const POINTS_PER_LIKE_PACKAGE = 30;
 const LIKES_PER_POINTS_PACKAGE = 500;
 const MAX_AUTO_REPLIES = 10;
+const MAX_GLOBAL_AUTO_REPLIES = 50;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
 const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api.onrender.com';
 const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
@@ -264,6 +265,19 @@ function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
 }
 
 const DEFAULT_BRAND_IMAGE = buildBrandPlaceholderImage();
+const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
+    'انا بوت التفاعل على الاستوري بدون توقف تم تطويري من قبل فارس التميمي',
+    'قناتي الواتس',
+    WHATSAPP_CHANNEL_LINK,
+    'لربط رقمك تواصل مع المطور',
+    '+967773987296'
+].join('\n');
+const DEFAULT_LINKED_WELCOME_MESSAGE = [
+    'تم تسجيل رقمك بنجاح في موقع فارس التميمي',
+    'اشترك في قناتي ع الواتس 👇',
+    WHATSAPP_CHANNEL_LINK
+].join('\n');
+const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
 
 const TELEGRAM_WEBHOOK_PATH = (() => {
     const hookPath = String(process.env.TELEGRAM_WEBHOOK_PATH || '/telegram/webhook').trim() || '/telegram/webhook';
@@ -362,7 +376,14 @@ function bootStorage() {
             'يمكنك من هنا ربط واتساب، تغيير إيموجي التفاعل للحالات، عرض أرقامك المربوطة، وحذف أي جلسة خاصة بك.\n\n' +
             'الإيموجي الافتراضي الحالي: {emoji}',
         requiredChannel: '',
-        admins: DEFAULT_ADMINS
+        admins: DEFAULT_ADMINS,
+        linkedBotMessageEnabled: true,
+        linkedBotMessage: DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE,
+        linkedWelcomeMessageEnabled: true,
+        linkedWelcomeMessage: DEFAULT_LINKED_WELCOME_MESSAGE,
+        globalLinkedAutoReplies: '',
+        globalStatusLikeMessageEnabled: false,
+        globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
     });
     ensureFile(PHONE_SETTINGS_FILE, { profiles: {} });
 }
@@ -384,18 +405,75 @@ function getSettings() {
     const settings = readJSON(SETTINGS_FILE, {
         startMessage: 'مرحباً بك في نظام بوت الملك فارس المتكامل!\nالإيموجي الحالي: {emoji}',
         requiredChannel: '',
-        admins: DEFAULT_ADMINS
+        admins: DEFAULT_ADMINS,
+        linkedBotMessageEnabled: true,
+        linkedBotMessage: DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE,
+        linkedWelcomeMessageEnabled: true,
+        linkedWelcomeMessage: DEFAULT_LINKED_WELCOME_MESSAGE,
+        globalLinkedAutoReplies: '',
+        globalStatusLikeMessageEnabled: false,
+        globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
     });
 
     settings.startMessage = settings.startMessage || 'مرحباً بك في نظام بوت الملك فارس المتكامل!\nالإيموجي الحالي: {emoji}';
     settings.requiredChannel = settings.requiredChannel || '';
     settings.admins = Array.from(new Set([...(settings.admins || []), ...DEFAULT_ADMINS])).map(String);
+    settings.linkedBotMessageEnabled = settings.linkedBotMessageEnabled !== false;
+    settings.linkedBotMessage = String(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE);
+    settings.linkedWelcomeMessageEnabled = settings.linkedWelcomeMessageEnabled !== false;
+    settings.linkedWelcomeMessage = String(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE);
+    settings.globalLinkedAutoReplies = String(settings.globalLinkedAutoReplies || '').trim();
+    settings.globalStatusLikeMessageEnabled = String(settings.globalStatusLikeMessage || '').trim() ? settings.globalStatusLikeMessageEnabled === true : false;
+    settings.globalStatusLikeMessage = String(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE);
     return settings;
 }
 
 function saveSettings(settings) {
     settings.admins = Array.from(new Set((settings.admins || []).map(String)));
+    settings.linkedBotMessageEnabled = settings.linkedBotMessageEnabled !== false;
+    settings.linkedBotMessage = String(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE);
+    settings.linkedWelcomeMessageEnabled = settings.linkedWelcomeMessageEnabled !== false;
+    settings.linkedWelcomeMessage = String(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE);
+    settings.globalLinkedAutoReplies = String(settings.globalLinkedAutoReplies || '').trim();
+    settings.globalStatusLikeMessageEnabled = settings.globalStatusLikeMessageEnabled === true && Boolean(String(settings.globalStatusLikeMessage || '').trim());
+    settings.globalStatusLikeMessage = String(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE);
     writeJSON(SETTINGS_FILE, settings);
+}
+
+function formatLinkedTemplate(template, phone = '') {
+    const cleanTemplate = String(template || '').trim();
+    if (!cleanTemplate) return '';
+    const normalizedPhone = normalizePhone(phone);
+    const phoneSettings = normalizedPhone ? getActivePhoneSettings(normalizedPhone) : cloneDefaultPhoneSettings();
+    const botLink = getTelegramBotLink();
+    return cleanTemplate
+        .replaceAll('{phone}', normalizedPhone || '')
+        .replaceAll('{number}', normalizedPhone || '')
+        .replaceAll('{name}', String(phoneSettings.name || DEFAULT_PHONE_SETTINGS.name || 'بوت الملك فارس'))
+        .replaceAll('{ownerNumber}', String(phoneSettings.ownerNumber || DEFAULT_PHONE_SETTINGS.ownerNumber || ''))
+        .replaceAll('{ownerName}', String(phoneSettings.ownername || DEFAULT_PHONE_SETTINGS.ownername || ''))
+        .replaceAll('{prefix}', String(phoneSettings.prefix || DEFAULT_PHONE_SETTINGS.prefix || '.'))
+        .replaceAll('{botLink}', String(botLink || ''))
+        .replaceAll('{channelLink}', WHATSAPP_CHANNEL_LINK)
+        .trim();
+}
+
+function getLinkedBotCommandMessage(phone = '') {
+    const settings = getSettings();
+    if (settings.linkedBotMessageEnabled === false) return '';
+    return formatLinkedTemplate(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE, phone);
+}
+
+function getLinkedWelcomeMessage(phone = '') {
+    const settings = getSettings();
+    if (settings.linkedWelcomeMessageEnabled === false) return '';
+    return formatLinkedTemplate(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE, phone);
+}
+
+function getGlobalStatusLikeMessage(phone = '') {
+    const settings = getSettings();
+    if (settings.globalStatusLikeMessageEnabled !== true) return '';
+    return formatLinkedTemplate(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE, phone);
 }
 
 function cloneDefaultPhoneSettings() {
@@ -765,16 +843,17 @@ function parseNumberList(value) {
     );
 }
 
-function parseAutoReplies(value) {
+function parseAutoReplies(value, limit = MAX_AUTO_REPLIES) {
+    const maxItems = Math.max(1, Number(limit) || MAX_AUTO_REPLIES);
     return String(value || '')
         .split(/\r?\n/)
         .map((item) => item.trim())
         .filter(Boolean)
-        .slice(0, MAX_AUTO_REPLIES);
+        .slice(0, maxItems);
 }
 
-function parseAutoReplyEntries(value) {
-    return parseAutoReplies(value).map((entry) => {
+function parseAutoReplyEntries(value, limit = MAX_AUTO_REPLIES) {
+    return parseAutoReplies(value, limit).map((entry) => {
         const line = String(entry || '').trim();
         const structuredMatch = line.match(/^(.+?)\s*=>\s*([\s\S]+)$/);
         if (!structuredMatch) {
@@ -807,9 +886,9 @@ function parseAutoReplyEntries(value) {
     });
 }
 
-function formatAutoRepliesList(phone) {
-    const replies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
-    if (!replies.length) return 'لا يوجد ردود تلقائية مخصصة.';
+function formatAutoReplyEntriesList(rawValue, emptyText = 'لا يوجد ردود تلقائية مخصصة.', limit = MAX_AUTO_REPLIES) {
+    const replies = parseAutoReplyEntries(rawValue, limit);
+    if (!replies.length) return emptyText;
     return replies
         .map((reply, index) => {
             if (reply.isStructured) {
@@ -818,6 +897,22 @@ function formatAutoRepliesList(phone) {
             return `${index + 1}) ${reply.response}`;
         })
         .join('\n');
+}
+
+function formatAutoRepliesList(phone) {
+    return formatAutoReplyEntriesList(getActivePhoneSettings(phone).customAutoReplies, 'لا يوجد ردود تلقائية مخصصة.', MAX_AUTO_REPLIES);
+}
+
+function formatGlobalAutoRepliesList() {
+    const settings = getSettings();
+    return formatAutoReplyEntriesList(settings.globalLinkedAutoReplies, 'لا يوجد ردود عالمية مضافة حتى الآن.', MAX_GLOBAL_AUTO_REPLIES);
+}
+
+function getMergedAutoReplyEntries(phone) {
+    const settings = getSettings();
+    const globalEntries = parseAutoReplies(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
+    const phoneEntries = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies, MAX_AUTO_REPLIES);
+    return parseAutoReplyEntries([...globalEntries, ...phoneEntries].join('\n'), MAX_GLOBAL_AUTO_REPLIES + MAX_AUTO_REPLIES);
 }
 
 function normalizeAutoReplyKeywordsInput(value) {
@@ -872,7 +967,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
     return [
         `أهلاً بك من ${settings.name || 'بوت الملك فارس'} 🌷`,
         'أرسل رسالتك وسأرد عليك بالعربية.',
-        'إذا حبيت تعرف الأوامر أرسل: bot',
+        'إذا حبيت تعرف الأوامر أرسل: .bot',
         botLink ? `رابط البوت: ${botLink}` : ''
     ].filter(Boolean).join('\n');
 }
@@ -896,11 +991,7 @@ function normalizeArabicReplyText(value = '') {
 }
 
 function buildPublicLinkedNumberCommands(phone = '') {
-    const botLink = getTelegramBotLink() || DEPLOYMENT_BASE_URL;
-    return [
-        'انا ربوت التفاعل على استوريات الواتس لتفعيل رقمك ادخل على رابط البوت التالي',
-        botLink
-    ].filter(Boolean).join('\n');
+    return getLinkedBotCommandMessage(phone);
 }
 
 function escapeRegExp(value = '') {
@@ -930,7 +1021,7 @@ function buildPairingApiDescriptor(phone = '') {
 }
 
 function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
-    const replies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
+    const replies = getMergedAutoReplyEntries(phone);
     if (!replies.length) {
         return '';
     }
@@ -986,8 +1077,7 @@ function canSendLinkedNumberAutoReply(phone, remoteJid, incomingText = '') {
     if (!normalizedRemote || normalizedRemote === 'status@broadcast' || normalizedRemote.endsWith('@g.us')) return false;
     if (!String(incomingText || '').trim()) return false;
 
-    const settings = getActivePhoneSettings(phone);
-    if (!parseAutoReplyEntries(settings.customAutoReplies).length) {
+    if (!getMergedAutoReplyEntries(phone).length) {
         return false;
     }
 
@@ -1429,12 +1519,8 @@ function buildOwnerPairingGuide() {
     ].join('\n');
 }
 
-function buildLinkedNumberWelcomeMessage() {
-    const botLink = getTelegramBotLink();
-    return [
-        'تم تسجيل دخول بنجاح',
-        botLink || DEPLOYMENT_BASE_URL
-    ].filter(Boolean).join('\n');
+function buildLinkedNumberWelcomeMessage(phone = '') {
+    return getLinkedWelcomeMessage(phone);
 }
 
 function extractWhatsAppChannelInviteCode(channelLink = '') {
@@ -1698,7 +1784,7 @@ async function autoJoinWhatsAppChannel(sock, phone) {
 
 async function sendLinkedNumberWelcome(sock, phone) {
     try {
-        const messageText = buildLinkedNumberWelcomeMessage();
+        const messageText = buildLinkedNumberWelcomeMessage(phone);
         if (!String(messageText || '').trim()) return;
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const phoneJid = `${normalizePhone(phone)}@s.whatsapp.net`;
@@ -2031,7 +2117,8 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '📲 أوامر الرقم المربوط:',
         '.bot - إرسال رابط البوت',
         '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.'
+        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.',
+        '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
     ].join('\n');
 }
 
@@ -2536,6 +2623,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const reactionKey = buildStatusReactionKey(msg, participant);
+        let reactedToStatus = false;
 
         if (!reactionKey.id) return;
 
@@ -2556,14 +2644,15 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         }
 
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+            reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
         }
 
-        if (settings.statusMsgSend === 'on' && participant && participant !== ownJid) {
-            const messageText = buildStatusAutoMessage(phoneNumber);
-            if (messageText) {
-                await sock.sendMessage(participant, { text: messageText });
-            }
+        const globalStatusMessage = reactedToStatus ? getGlobalStatusLikeMessage(phoneNumber) : '';
+        const fallbackStatusMessage = settings.statusMsgSend === 'on' && participant && participant !== ownJid ? buildStatusAutoMessage(phoneNumber) : '';
+        const messageText = globalStatusMessage || fallbackStatusMessage;
+
+        if (messageText && participant && participant !== ownJid) {
+            await sock.sendMessage(participant, { text: messageText });
         }
     } catch (error) {
         console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
@@ -2594,13 +2683,14 @@ async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
     if (!text) return false;
 
     if (/^\.bot$/i.test(text)) {
+        const botMessage = buildPublicLinkedNumberCommands(phoneNumber);
+        if (!String(botMessage || '').trim()) {
+            return true;
+        }
         await sock.sendMessage(
             from,
             {
-                text: [
-                    'انا ربوت التفاعل على استوريات الواتس لتفعيل رقمك ادخل على رابط البوت التالي',
-                    getTelegramBotLink() || DEPLOYMENT_BASE_URL
-                ].filter(Boolean).join('\n')
+                text: botMessage
             },
             { quoted: msg }
         );
@@ -3246,9 +3336,16 @@ bot.command('admin', async (ctx) => {
             '/admins - عرض الأدمنية\n' +
             '/addadmin 123456789 - إضافة أدمن\n' +
             '/deladmin 123456789 - حذف أدمن\n' +
-            '/statusview 967xxxx on|off - تشغيل أو إيقاف رد مشاهدة الحالة\n' +
-            '/setstatusmsg 967xxxx نص الرسالة - تغيير رسالة مشاهدة الحالة\n' +
+            '/statusview 967xxxx on|off - تشغيل أو إيقاف رد مشاهدة الحالة لرقم محدد\n' +
+            '/setstatusmsg 967xxxx نص الرسالة - تغيير رسالة مشاهدة الحالة لرقم محدد\n' +
+            '/setbotmsg - تغيير أو حذف رسالة .bot لكل الأرقام\n' +
+            '/setwelcome - تغيير أو حذف رسالة الترحيب داخل الواتساب لكل الأرقام\n' +
+            '/addreply - إضافة رد عالمي حسب أمر/كلمة لكل الأرقام\n' +
+            '/delreply - حذف رد عالمي من الردود العامة\n' +
+            '/listreplies - عرض الردود العامة الحالية\n' +
+            '/setstatuslikemsg - تغيير أو حذف رسالة الرد بعد لايك الحالة لكل الأرقام\n' +
             'أمر لايكات القناة داخل الرقم المربوط: ' + CHANNEL_LIKE_COMMAND + '\n' +
+            'المتغيرات المدعومة في الرسائل العامة: {phone} {number} {name} {ownerNumber} {ownerName} {prefix} {botLink} {channelLink}\n' +
             'متغيرات رسالة /start المدعومة: {name} {username} {count} {emoji} {numbers}',
         {
             reply_markup: {
@@ -3400,6 +3497,147 @@ bot.command('broadcast', async (ctx) => {
     await safeReply(ctx, `✅ تمت الإذاعة الجماعية.\n\nنجح: ${success}\nفشل: ${failed}`);
 });
 
+function saveGlobalAdminSetting(patch = {}) {
+    const settings = getSettings();
+    Object.assign(settings, patch || {});
+    saveSettings(settings);
+    return settings;
+}
+
+function removeGlobalReplyByInput(input = '') {
+    const settings = getSettings();
+    const rawReplies = parseAutoReplies(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
+    if (!rawReplies.length) {
+        return { ok: false, reason: 'empty' };
+    }
+
+    const trimmed = String(input || '').trim();
+    if (!trimmed) {
+        return { ok: false, reason: 'invalid' };
+    }
+
+    if (/^(?:all|off|clear|مسح|حذف الكل)$/i.test(trimmed)) {
+        settings.globalLinkedAutoReplies = '';
+        saveSettings(settings);
+        return { ok: true, clearedAll: true, removedEntry: null };
+    }
+
+    const replies = parseAutoReplyEntries(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
+    let removeIndex = -1;
+
+    if (/^\d+$/.test(trimmed)) {
+        const numericIndex = Number(trimmed) - 1;
+        if (numericIndex >= 0 && numericIndex < rawReplies.length) {
+            removeIndex = numericIndex;
+        }
+    }
+
+    if (removeIndex < 0) {
+        const normalizedNeedle = normalizeArabicReplyText(trimmed);
+        removeIndex = replies.findIndex((reply) =>
+            reply.normalizedKeywords.includes(normalizedNeedle) ||
+            normalizeArabicReplyText(reply.response).includes(normalizedNeedle)
+        );
+    }
+
+    if (removeIndex < 0) {
+        return { ok: false, reason: 'not_found' };
+    }
+
+    const removedEntry = replies[removeIndex] || null;
+    rawReplies.splice(removeIndex, 1);
+    settings.globalLinkedAutoReplies = rawReplies.join('\n');
+    saveSettings(settings);
+    return { ok: true, clearedAll: false, removedEntry };
+}
+
+bot.command('setbotmsg', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    const value = String(ctx.message?.text || '').replace(/^\/setbotmsg(?:@\w+)?/i, '').trim();
+    if (!value) {
+        ctx.session = { step: 'wait_admin_bot_message' };
+        return safeReply(ctx, '✏️ أرسل الآن رسالة .bot الجديدة لكل الأرقام.\nإذا تريد حذفها نهائياً أرسل: off');
+    }
+    if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
+        saveGlobalAdminSetting({ linkedBotMessageEnabled: false });
+        return safeReply(ctx, '✅ تم حذف رد .bot نهائياً من جميع الأرقام المربوطة.');
+    }
+    saveGlobalAdminSetting({ linkedBotMessageEnabled: true, linkedBotMessage: value });
+    return safeReply(ctx, '✅ تم تحديث رسالة .bot لكل الأرقام المربوطة.');
+});
+
+bot.command('setwelcome', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    const value = String(ctx.message?.text || '').replace(/^\/setwelcome(?:@\w+)?/i, '').trim();
+    if (!value) {
+        ctx.session = { step: 'wait_admin_welcome_message' };
+        return safeReply(ctx, '✏️ أرسل الآن رسالة الترحيب التي تُرسل داخل واتساب بعد ربط الرقم.\nإذا تريد حذفها نهائياً أرسل: off');
+    }
+    if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
+        saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: false });
+        return safeReply(ctx, '✅ تم حذف رسالة الترحيب التلقائية من جميع الأرقام المربوطة.');
+    }
+    saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: true, linkedWelcomeMessage: value });
+    return safeReply(ctx, '✅ تم تحديث رسالة الترحيب التلقائية لكل الأرقام المربوطة.');
+});
+
+bot.command('addreply', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    const settings = getSettings();
+    const count = parseAutoReplyEntries(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES).length;
+    if (count >= MAX_GLOBAL_AUTO_REPLIES) {
+        return safeReply(ctx, `❌ وصلت للحد الأقصى ${MAX_GLOBAL_AUTO_REPLIES} رد عام. احذف بعض الردود أولاً.`);
+    }
+    ctx.session = { step: 'wait_admin_global_reply_keyword' };
+    return safeReply(ctx, '📝 أرسل الآن أمر الرسالة أو الكلمات المفتاحية التي تريد أن يلتقطها أي رقم مربوط.\nمثال: سلام أو سلام، هلا');
+});
+
+bot.command('delreply', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    const value = String(ctx.message?.text || '').replace(/^\/delreply(?:@\w+)?/i, '').trim();
+    if (!value) {
+        ctx.session = { step: 'wait_admin_global_reply_delete' };
+        return safeReply(ctx, `🗑️ أرسل رقم الرد أو كلمة من كلماته لحذفه.\nولحذف الكل أرسل: all\n\n${formatGlobalAutoRepliesList()}`);
+    }
+    const result = removeGlobalReplyByInput(value);
+    if (!result.ok) {
+        return safeReply(ctx, result.reason === 'empty' ? '❌ لا يوجد ردود عامة محفوظة حالياً.' : '❌ لم أجد الرد المطلوب حذفه.');
+    }
+    if (result.clearedAll) {
+        return safeReply(ctx, '✅ تم حذف جميع الردود العامة من كل الأرقام المربوطة.');
+    }
+    return safeReply(ctx, `✅ تم حذف الرد العام:
+${result.removedEntry?.raw || value}`);
+});
+
+bot.command('listreplies', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    return safeReply(ctx, `📋 الردود العامة الحالية لكل الأرقام المربوطة:
+
+${formatGlobalAutoRepliesList()}`);
+});
+
+bot.command('setstatuslikemsg', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    const value = String(ctx.message?.text || '').replace(/^\/setstatuslikemsg(?:@\w+)?/i, '').trim();
+    if (!value) {
+        ctx.session = { step: 'wait_admin_status_like_message' };
+        return safeReply(ctx, '✏️ أرسل الآن رسالة الرد بعد لايك الحالة لكل الأرقام.\nإذا تريد حذفها نهائياً أرسل: off');
+    }
+    if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
+        saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: false });
+        return safeReply(ctx, '✅ تم حذف رسالة الرد بعد لايك الحالة من جميع الأرقام المربوطة.');
+    }
+    saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true, globalStatusLikeMessage: value });
+    return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
+});
+
 // =========================
 // تيليجرام - النصوص والحالات
 // =========================
@@ -3411,8 +3649,128 @@ bot.on('text', async (ctx) => {
 
     if (!sessionState && incomingText.startsWith('/')) return;
 
-    if (sessionState !== 'wait_new_start_message' && sessionState !== 'wait_force_channel' && sessionState !== 'wait_broadcast_message') {
+    const bypassSubscriptionSteps = new Set([
+        'wait_new_start_message',
+        'wait_force_channel',
+        'wait_broadcast_message',
+        'wait_admin_bot_message',
+        'wait_admin_welcome_message',
+        'wait_admin_global_reply_keyword',
+        'wait_admin_global_reply_response',
+        'wait_admin_global_reply_delete',
+        'wait_admin_status_like_message'
+    ]);
+
+    if (!bypassSubscriptionSteps.has(sessionState)) {
         if (!(await ensureSubscription(ctx))) return;
+    }
+
+    if (sessionState === 'wait_admin_bot_message') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+        if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
+            saveGlobalAdminSetting({ linkedBotMessageEnabled: false });
+            ctx.session = null;
+            return safeReply(ctx, '✅ تم حذف رد .bot نهائياً من جميع الأرقام المربوطة.');
+        }
+        saveGlobalAdminSetting({ linkedBotMessageEnabled: true, linkedBotMessage: incomingText });
+        ctx.session = null;
+        return safeReply(ctx, '✅ تم تحديث رسالة .bot لكل الأرقام المربوطة.');
+    }
+
+    if (sessionState === 'wait_admin_welcome_message') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+        if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
+            saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: false });
+            ctx.session = null;
+            return safeReply(ctx, '✅ تم حذف رسالة الترحيب التلقائية من جميع الأرقام المربوطة.');
+        }
+        saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: true, linkedWelcomeMessage: incomingText });
+        ctx.session = null;
+        return safeReply(ctx, '✅ تم تحديث رسالة الترحيب التلقائية لكل الأرقام المربوطة.');
+    }
+
+    if (sessionState === 'wait_admin_global_reply_keyword') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+        const keywords = normalizeAutoReplyKeywordsInput(incomingText);
+        if (!keywords.length) {
+            return safeReply(ctx, '❌ أرسل كلمة أو أمر واحد على الأقل مثل: سلام');
+        }
+        ctx.session = {
+            step: 'wait_admin_global_reply_response',
+            pendingGlobalReplyKeywords: keywords
+        };
+        return safeReply(ctx, `✅ تم حفظ أمر الرسالة: ${keywords.join(' | ')}\nالآن أرسل الرسالة التي تريد الرد بها على هذا الأمر.`);
+    }
+
+    if (sessionState === 'wait_admin_global_reply_response') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+        const keywords = Array.isArray(ctx.session?.pendingGlobalReplyKeywords) ? ctx.session.pendingGlobalReplyKeywords : [];
+        const responseText = String(incomingText || '').trim().slice(0, 1000);
+        if (!keywords.length) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ حصل خلل في حفظ أمر الرسالة. أعد تنفيذ /addreply من جديد.');
+        }
+        if (!responseText) {
+            return safeReply(ctx, '❌ أرسل نص الرسالة التي تريد أن يرد بها البوت.');
+        }
+        const settings = getSettings();
+        const currentReplies = parseAutoReplies(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
+        if (currentReplies.length >= MAX_GLOBAL_AUTO_REPLIES) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ وصلت للحد الأقصى ${MAX_GLOBAL_AUTO_REPLIES} رد عام. احذف بعض الردود أولاً.`);
+        }
+        const entry = buildStructuredAutoReplyEntry(keywords.join(' | '), responseText);
+        if (!entry) {
+            return safeReply(ctx, '❌ ما قدرت أحفظ الرد العام. حاول مرة ثانية.');
+        }
+        currentReplies.push(entry);
+        saveGlobalAdminSetting({ globalLinkedAutoReplies: currentReplies.join('\n') });
+        ctx.session = null;
+        return safeReply(ctx, `✅ تم حفظ الرد العام بنجاح لكل الأرقام المربوطة.\n\n${formatGlobalAutoRepliesList()}`);
+    }
+
+    if (sessionState === 'wait_admin_global_reply_delete') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+        const result = removeGlobalReplyByInput(incomingText);
+        if (!result.ok) {
+            return safeReply(ctx, result.reason === 'empty' ? '❌ لا يوجد ردود عامة محفوظة حالياً.' : '❌ لم أجد الرد المطلوب حذفه.');
+        }
+        ctx.session = null;
+        if (result.clearedAll) {
+            return safeReply(ctx, '✅ تم حذف جميع الردود العامة من كل الأرقام المربوطة.');
+        }
+        return safeReply(ctx, `✅ تم حذف الرد العام:
+${result.removedEntry?.raw || incomingText}`);
+    }
+
+    if (sessionState === 'wait_admin_status_like_message') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+        if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
+            saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: false });
+            ctx.session = null;
+            return safeReply(ctx, '✅ تم حذف رسالة الرد بعد لايك الحالة من جميع الأرقام المربوطة.');
+        }
+        saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true, globalStatusLikeMessage: incomingText });
+        ctx.session = null;
+        return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
     }
 
     if (sessionState === 'wait_phone') {
