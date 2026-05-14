@@ -1,18 +1,19 @@
 {
-  "name": "telegram-pair-bot",
+  "name": "whatsapp-pairing-api-render-fix",
   "version": "1.0.0",
-  "description": "Telegram bot for WhatsApp pairing code management on Render",
-  "main": "index.js",
+  "private": true,
+  "main": "target.merged.render.fixed.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node target.merged.render.fixed.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18.18.0"
   },
   "dependencies": {
-    "axios": "^1.7.9",
-    "dotenv": "^16.4.5",
-    "node-telegram-bot-api": "^0.66.0"
+    "@whiskeysockets/baileys": "6.7.21",
+    "express": "4.22.2",
+    "pino": "10.3.1",
+    "telegraf": "4.16.3"
   }
 }
