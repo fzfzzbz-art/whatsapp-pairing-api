@@ -1,19 +1,16 @@
 {
-  "name": "whatsapp-pairing-api-render-fix",
+  "name": "wa-story-liker-bot",
   "version": "1.0.0",
-  "private": true,
-  "main": "target.merged.render.fixed.js",
-  "type": "commonjs",
+  "description": "Telegram bot for WhatsApp pairing and auto-story liking",
+  "main": "index.js",
   "scripts": {
-    "start": "node target.merged.render.fixed.js"
-  },
-  "engines": {
-    "node": ">=18.18.0"
+    "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.21",
-    "express": "4.22.2",
-    "pino": "10.3.1",
-    "telegraf": "4.16.3"
+    "telegraf": "^4.12.0",
+    "axios": "^1.4.0",
+    "express": "^4.18.2",
+    "@whiskeysockets/baileys": "latest",
+    "qrcode-terminal": "^0.12.0"
   }
 }
