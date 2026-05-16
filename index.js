@@ -2235,15 +2235,7 @@ function buildLinkedNumberCommandsOverview(phone = '') {
 }
 
 function buildTelegramCommandsOverview() {
-    return [
-        '🤖 أوامر البوت:',
-        '/daily - استلام الهدية اليومية',
-        '/order_react - طلب تفاعلات لمنشور قناة واتساب',
-        '/mywa - عرض الأرقام المربوطة',
-        '/unlink - حذف جلسة رقم مربوط',
-        '/setemoji - تغيير إيموجي الرقم',
-        'ومن الأزرار تقدر تدير الردود والإعدادات وتفعيل أو إيقاف التفاعل بالإيموجي واستلام الهدية اليومية وطلب التفاعلات.'
-    ].join('\n');
+    return '';
 }
 
 function buildNumberManagerMessage(phone) {
@@ -2305,7 +2297,7 @@ function buildStartMessage(ctx) {
         ? phones.map((phone) => user.emojis?.[phone] || DEFAULT_REACTION_EMOJI).join(' ')
         : '';
 
-    const baseMessage = String(settings.startMessage || '')
+    const customStartMessage = String(settings.startMessage || '')
         .replaceAll('{name}', ctx.from.first_name || 'صديقي')
         .replaceAll('{username}', ctx.from.username ? `@${ctx.from.username}` : 'بدون معرف')
         .replaceAll('{count}', String(phones.length))
@@ -2313,8 +2305,9 @@ function buildStartMessage(ctx) {
         .replaceAll('{numbers}', numbersList)
         .trim();
 
-    const commandsOverview = buildTelegramCommandsOverview();
-    return [baseMessage, linkedEmojiOnly, commandsOverview].filter(Boolean).join('\n\n').trim() || primaryEmoji;
+    const baseMessage = customStartMessage || 'الايموجي الحالي :';
+    const emojiLine = linkedEmojiOnly || primaryEmoji;
+    return [baseMessage, emojiLine].filter(Boolean).join('\n').trim();
 }
 
 function getStartKeyboard() {
