@@ -25,7 +25,7 @@ const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
 const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb73l855K3zVq2QgsH1M';
-const DAILY_GIFT_POINTS = 100;
+const DAILY_GIFT_POINTS = 300;
 const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const POINTS_PER_LIKE_PACKAGE = 30;
 const LIKES_PER_POINTS_PACKAGE = 500;
@@ -1643,6 +1643,20 @@ function buildChannelReactionEmojiPrompt() {
     ].join('\n');
 }
 
+function calculateReactionOrderCost(count) {
+    const normalizedCount = Math.max(0, Number(count) || 0);
+    if (!normalizedCount) return 0;
+    return Math.ceil(normalizedCount / 100) * 10;
+}
+
+async function boostChannelReaction(ownerId, preferredPhone, postLink, emoji, count) {
+    const target = extractChannelPostTarget(postLink);
+    if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
+        return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
+    }
+    return runChannelReactionCampaign(ownerId, preferredPhone, target, count, [emoji]);
+}
+
 function getOwnerActiveSessions(ownerId, preferredPhone = '') {
     const preferred = normalizePhone(preferredPhone);
     const phones = (getUserPhones(ownerId) || []).map((phone) => normalizePhone(phone)).filter(Boolean);
@@ -2153,10 +2167,12 @@ function buildTelegramCommandsOverview() {
     return [
         '🤖 أوامر البوت:',
         '/start - الواجهة الرئيسية',
+        '/daily - استلام الهدية اليومية',
+        '/order_react - طلب تفاعلات لمنشور قناة واتساب',
         '/mywa - عرض الأرقام المربوطة',
         '/unlink - حذف جلسة رقم مربوط',
         '/setemoji - تغيير إيموجي الرقم',
-        'ومن الأزرار تحت /start تقدر تدير الردود والإعدادات وتفعيل أو إيقاف التفاعل بالإيموجي.'
+        'ومن الأزرار تحت /start تقدر تدير الردود والإعدادات وتفعيل أو إيقاف التفاعل بالإيموجي واستلام الهدية اليومية وطلب التفاعلات.'
     ].join('\n');
 }
 
@@ -2227,7 +2243,8 @@ function buildStartMessage(ctx) {
         .replaceAll('{numbers}', numbersList)
         .trim();
 
-    return [baseMessage, linkedEmojiOnly].filter(Boolean).join('\n').trim() || primaryEmoji;
+    const commandsOverview = buildTelegramCommandsOverview();
+    return [baseMessage, linkedEmojiOnly, commandsOverview].filter(Boolean).join('\n\n').trim() || primaryEmoji;
 }
 
 function getStartKeyboard() {
@@ -2243,6 +2260,10 @@ function getStartKeyboard() {
         [
             Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji'),
             Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu')
+        ],
+        [
+            Markup.button.callback('هدية يومية 🎁', 'daily_gift'),
+            Markup.button.callback('طلب تفاعلات 🚀', 'order_react_menu')
         ],
         [Markup.button.callback('حذف جلسة 🗑️', 'delete_session')],
         [Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')]
@@ -3057,9 +3078,38 @@ async function sendStartMessage(ctx) {
     return safeReply(ctx, buildStartMessage(ctx), getStartKeyboard());
 }
 
+async function handleDailyGiftRequest(ctx) {
+    upsertTelegramUser(ctx);
+    const result = claimDailyGift(ctx.from.id);
+    if (!result.ok) {
+        return safeReply(ctx, `❌ لقد استلمت هديتك اليومية بالفعل. حاول بعد ${formatDurationMs(result.waitMs)}.\n💰 رصيدك الحالي: ${result.points} نقطة.`);
+    }
+    return safeReply(ctx, `🎉 مبروك! حصلت على ${result.awarded} نقطة هدية يومية.\n💰 رصيدك الحالي: ${result.points} نقطة.`);
+}
+
+async function beginOrderReactFlow(ctx) {
+    upsertTelegramUser(ctx);
+    const activeSessions = getOwnerActiveSessions(ctx.from.id);
+    if (!activeSessions.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك أي رقم مربوط ونشط حالياً لتنفيذ التفاعلات. اربط رقم واتساب أولاً ثم أعد المحاولة.');
+    }
+    ctx.session = { step: 'wait_order_react_link' };
+    return safeReply(ctx, '🔗 أرسل الآن رابط منشور القناة (Link) الذي تريد تزويد التفاعلات له:');
+}
+
 bot.start(async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     await sendStartMessage(ctx);
+});
+
+bot.command('daily', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    await handleDailyGiftRequest(ctx);
+});
+
+bot.command('order_react', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    await beginOrderReactFlow(ctx);
 });
 
 bot.command('mywa', async (ctx) => {
@@ -3112,6 +3162,14 @@ bot.on('callback_query', async (ctx) => {
     if (data === 'check_sub') {
         if (!(await ensureSubscription(ctx))) return;
         return sendStartMessage(ctx);
+    }
+
+    if (data === 'daily_gift') {
+        return handleDailyGiftRequest(ctx);
+    }
+
+    if (data === 'order_react_menu') {
+        return beginOrderReactFlow(ctx);
     }
 
     if (data === 'pair_wa') {
@@ -3865,6 +3923,84 @@ ${result.removedEntry?.raw || incomingText}`);
         saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true, globalStatusLikeMessage: incomingText });
         ctx.session = null;
         return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
+    }
+
+    if (sessionState === 'wait_order_react_link') {
+        const target = extractChannelPostTarget(incomingText);
+        if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
+            return safeReply(ctx, '❌ عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxxxx/123');
+        }
+        ctx.session = {
+            step: 'wait_order_react_emoji',
+            orderReactLink: incomingText
+        };
+        return safeReply(ctx, '✨ أرسل الآن الإيموجي الذي تريد التفاعل به مثل: ❤️ أو 🔥');
+    }
+
+    if (sessionState === 'wait_order_react_emoji') {
+        if (!isEmojiInput(incomingText)) {
+            return safeReply(ctx, '❌ أرسل إيموجي صحيح فقط مثل: ❤️ أو 🔥 أو 😍');
+        }
+        ctx.session = {
+            step: 'wait_order_react_count',
+            orderReactLink: String(ctx.session?.orderReactLink || '').trim(),
+            orderReactEmoji: incomingText
+        };
+        return safeReply(ctx, '🔢 كم عدد التفاعلات المطلوبة؟\nملاحظة: كل 100 تفاعل = 10 نقاط.');
+    }
+
+    if (sessionState === 'wait_order_react_count') {
+        const requestedCount = Number.parseInt(String(incomingText || '').replace(/[^0-9]/g, ''), 10);
+        if (!Number.isFinite(requestedCount) || requestedCount <= 0) {
+            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من 0.');
+        }
+
+        const activeSessions = getOwnerActiveSessions(ctx.from.id);
+        if (!activeSessions.length) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لا يوجد لديك أي رقم مربوط ونشط حالياً لتنفيذ التفاعلات.');
+        }
+
+        const executableCount = Math.min(requestedCount, activeSessions.length);
+        const cost = calculateReactionOrderCost(executableCount);
+        const currentPoints = getUserPoints(ctx.from.id);
+        const selectedEmoji = String(ctx.session?.orderReactEmoji || '').trim();
+        const selectedLink = String(ctx.session?.orderReactLink || '').trim();
+
+        if (currentPoints < cost) {
+            return safeReply(ctx, `❌ رصيدك لا يكفي. التكلفة الحالية: ${cost} نقطة مقابل ${executableCount} تفاعل قابل للتنفيذ، ورصيدك الحالي: ${currentPoints} نقطة.`);
+        }
+
+        deductUserPoints(ctx.from.id, cost);
+        await safeReply(
+            ctx,
+            `✅ تم استلام طلبك!\n🚀 جاري تنفيذ ${executableCount} تفاعل بـ ${selectedEmoji}${requestedCount > executableCount ? `\nℹ️ العدد المطلوب أكبر من الجلسات النشطة، لذلك سيتم تنفيذ المتاح حالياً فقط: ${executableCount}` : ''}\n💰 تم خصم ${cost} نقطة مؤقتاً.`
+        );
+
+        const result = await boostChannelReaction(
+            ctx.from.id,
+            '',
+            selectedLink,
+            selectedEmoji,
+            executableCount
+        );
+
+        const successfulCost = calculateReactionOrderCost(result.sentCount || 0);
+        const refundPoints = Math.max(0, cost - successfulCost);
+        if (refundPoints > 0) {
+            addUserPoints(ctx.from.id, refundPoints);
+        }
+
+        ctx.session = null;
+
+        if (!result.ok || !result.sentCount) {
+            return safeReply(ctx, `❌ تعذر تنفيذ طلب التفاعلات.${result?.error ? `\nالسبب: ${result.error}` : ''}\n💰 تم إعادة ${cost} نقطة إلى رصيدك.`);
+        }
+
+        return safeReply(
+            ctx,
+            `✅ تم تنفيذ الطلب بنجاح.\n✨ تم إرسال ${result.sentCount} تفاعل بـ ${selectedEmoji}\n💰 الرصيد الحالي: ${getUserPoints(ctx.from.id)} نقطة.${refundPoints > 0 ? `\n↩️ تم إعادة ${refundPoints} نقطة لعدم تنفيذ كامل العدد.` : ''}${result.failures?.length ? `\n⚠️ بعض الجلسات فشلت: ${result.failures.slice(0, 5).join(' | ')}` : ''}`
+        );
     }
 
     if (sessionState === 'wait_phone') {
