@@ -1602,7 +1602,7 @@ function normalizeRequestedLikeCount(value) {
     const clean = String(value || '').replace(/[^0-9]/g, '');
     const count = Number(clean);
     if (!Number.isFinite(count) || count < 1) return 0;
-    return Math.min(count, 500);
+    return Math.min(count, 5000);
 }
 
 function extractReactionEmojiChoices(value) {
@@ -1672,8 +1672,36 @@ function getOwnerActiveSessions(ownerId, preferredPhone = '') {
 
     return ordered
         .filter((phone) => waClients.has(phone))
-        .map((phone) => ({ phone, sock: waClients.get(phone) }))
+        .map((phone) => ({ phone, sock: waClients.get(phone), ownerId: getPhoneOwner(phone) || null }))
         .filter((item) => item.sock);
+}
+
+function getGlobalActiveSessions(preferredPhone = '') {
+    const preferred = normalizePhone(preferredPhone);
+    const ordered = [];
+
+    if (preferred && waClients.has(preferred)) {
+        ordered.push(preferred);
+    }
+
+    for (const phone of waClients.keys()) {
+        const normalizedPhone = normalizePhone(phone);
+        if (normalizedPhone && !ordered.includes(normalizedPhone)) {
+            ordered.push(normalizedPhone);
+        }
+    }
+
+    return ordered
+        .filter((phone) => waClients.has(phone))
+        .map((phone) => ({ phone, sock: waClients.get(phone), ownerId: getPhoneOwner(phone) || null }))
+        .filter((item) => item.sock);
+}
+
+function getReactionCampaignSessions(ownerId, preferredPhone = '') {
+    const ownerSessions = getOwnerActiveSessions(ownerId, preferredPhone);
+    const seen = new Set(ownerSessions.map((item) => item.phone));
+    const globalSessions = getGlobalActiveSessions(preferredPhone).filter((item) => !seen.has(item.phone));
+    return [...ownerSessions, ...globalSessions];
 }
 
 async function resolveNewsletterJidForTarget(sock, target) {
@@ -1746,11 +1774,12 @@ async function reactToNewsletterPost(sock, target, emoji) {
 }
 
 async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
-    const activeSessions = getOwnerActiveSessions(ownerId, preferredPhone);
+    const activeSessions = getReactionCampaignSessions(ownerId, preferredPhone);
+    console.log(`[Channel React] owner=${ownerId} requested=${requestedCount} available=${activeSessions.length}`);
     if (!activeSessions.length) {
         return {
             ok: false,
-            error: 'لا يوجد أي رقم مربوط ونشط حالياً لتنفيذ الإعجابات.',
+            error: 'لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ الإعجابات.',
             requestedCount,
             sentCount: 0,
             availableSessions: 0,
@@ -1758,36 +1787,78 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
         };
     }
 
-    const executionPool = activeSessions.slice(0, Math.max(1, requestedCount));
-    let sentCount = 0;
-    const failures = [];
-
-    for (let index = 0; index < executionPool.length; index += 1) {
-        const item = executionPool[index];
-        const emoji = emojiChoices[index % emojiChoices.length] || emojiChoices[0] || CHANNEL_LIKE_EMOJIS[0];
-
+    let resolvedTarget = target;
+    let resolveError = '';
+    for (const item of activeSessions) {
         try {
-            await ensureNewsletterFollow(item.sock, target);
-            const reactResult = await reactToNewsletterPost(item.sock, target, emoji);
-            if (reactResult.ok) {
-                sentCount += 1;
-            } else {
-                failures.push(item.phone + ': ' + reactResult.error);
-            }
+            resolvedTarget = await resolveNewsletterJidForTarget(item.sock, target);
+            if (resolvedTarget?.newsletterJid) break;
         } catch (error) {
-            failures.push(item.phone + ': ' + (error.message || 'Unknown error'));
+            resolveError = error.message || 'تعذر تحديد القناة';
         }
-
-        await new Promise((resolve) => setTimeout(resolve, 350));
     }
 
+    if (!resolvedTarget?.newsletterJid) {
+        return {
+            ok: false,
+            error: resolveError || 'تعذر تحديد معرف القناة من الرابط المرسل.',
+            requestedCount,
+            sentCount: 0,
+            availableSessions: activeSessions.length,
+            failures: []
+        };
+    }
+
+    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
+    const executionPool = activeSessions.slice(0, normalizedRequestedCount);
+    let sentCount = 0;
+    const failures = [];
+    const batchSize = executionPool.length >= 300 ? 20 : executionPool.length >= 100 ? 12 : executionPool.length >= 30 ? 8 : 4;
+
+    for (let start = 0; start < executionPool.length; start += batchSize) {
+        const batch = executionPool.slice(start, start + batchSize);
+        const settled = await Promise.allSettled(
+            batch.map(async (item, batchIndex) => {
+                const index = start + batchIndex;
+                const emoji = emojiChoices[index % emojiChoices.length] || emojiChoices[0] || CHANNEL_LIKE_EMOJIS[0];
+                await new Promise((resolve) => setTimeout(resolve, batchIndex * 120));
+                await ensureNewsletterFollow(item.sock, resolvedTarget);
+                const reactResult = await reactToNewsletterPost(item.sock, resolvedTarget, emoji);
+                if (!reactResult.ok) {
+                    throw new Error(reactResult.error || 'Reaction failed');
+                }
+                return item.phone;
+            })
+        );
+
+        for (let index = 0; index < settled.length; index += 1) {
+            const result = settled[index];
+            const phone = batch[index]?.phone || 'unknown';
+            if (result.status === 'fulfilled') {
+                sentCount += 1;
+            } else {
+                failures.push(phone + ': ' + (result.reason?.message || 'Unknown error'));
+            }
+        }
+
+        if (start + batchSize < executionPool.length) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+    }
+
+    const primaryError = failures.length ? failures[0].split(': ').slice(1).join(': ').trim() : '';
+    if (failures.length) {
+        console.warn('[Channel React] failures:', failures.slice(0, 10));
+    }
     return {
         ok: sentCount > 0,
-        requestedCount,
+        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع الجلسات في تنفيذ التفاعل.'),
+        requestedCount: normalizedRequestedCount,
         sentCount,
         availableSessions: activeSessions.length,
         failures,
-        connectedPhones: activeSessions.map((item) => item.phone)
+        connectedPhones: activeSessions.map((item) => item.phone),
+        target: resolvedTarget
     };
 }
 
@@ -2166,13 +2237,12 @@ function buildLinkedNumberCommandsOverview(phone = '') {
 function buildTelegramCommandsOverview() {
     return [
         '🤖 أوامر البوت:',
-        '/start - الواجهة الرئيسية',
         '/daily - استلام الهدية اليومية',
         '/order_react - طلب تفاعلات لمنشور قناة واتساب',
         '/mywa - عرض الأرقام المربوطة',
         '/unlink - حذف جلسة رقم مربوط',
         '/setemoji - تغيير إيموجي الرقم',
-        'ومن الأزرار تحت /start تقدر تدير الردود والإعدادات وتفعيل أو إيقاف التفاعل بالإيموجي واستلام الهدية اليومية وطلب التفاعلات.'
+        'ومن الأزرار تقدر تدير الردود والإعدادات وتفعيل أو إيقاف التفاعل بالإيموجي واستلام الهدية اليومية وطلب التفاعلات.'
     ].join('\n');
 }
 
@@ -3089,9 +3159,9 @@ async function handleDailyGiftRequest(ctx) {
 
 async function beginOrderReactFlow(ctx) {
     upsertTelegramUser(ctx);
-    const activeSessions = getOwnerActiveSessions(ctx.from.id);
+    const activeSessions = getReactionCampaignSessions(ctx.from.id);
     if (!activeSessions.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك أي رقم مربوط ونشط حالياً لتنفيذ التفاعلات. اربط رقم واتساب أولاً ثم أعد المحاولة.');
+        return safeReply(ctx, '❌ لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ التفاعلات. حاول مرة أخرى لاحقاً.');
     }
     ctx.session = { step: 'wait_order_react_link' };
     return safeReply(ctx, '🔗 أرسل الآن رابط منشور القناة (Link) الذي تريد تزويد التفاعلات له:');
@@ -3950,15 +4020,15 @@ ${result.removedEntry?.raw || incomingText}`);
     }
 
     if (sessionState === 'wait_order_react_count') {
-        const requestedCount = Number.parseInt(String(incomingText || '').replace(/[^0-9]/g, ''), 10);
-        if (!Number.isFinite(requestedCount) || requestedCount <= 0) {
+        const requestedCount = normalizeRequestedLikeCount(incomingText);
+        if (!requestedCount) {
             return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من 0.');
         }
 
-        const activeSessions = getOwnerActiveSessions(ctx.from.id);
+        const activeSessions = getReactionCampaignSessions(ctx.from.id);
         if (!activeSessions.length) {
             ctx.session = null;
-            return safeReply(ctx, '❌ لا يوجد لديك أي رقم مربوط ونشط حالياً لتنفيذ التفاعلات.');
+            return safeReply(ctx, '❌ لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ التفاعلات.');
         }
 
         const executableCount = Math.min(requestedCount, activeSessions.length);
@@ -3974,7 +4044,7 @@ ${result.removedEntry?.raw || incomingText}`);
         deductUserPoints(ctx.from.id, cost);
         await safeReply(
             ctx,
-            `✅ تم استلام طلبك!\n🚀 جاري تنفيذ ${executableCount} تفاعل بـ ${selectedEmoji}${requestedCount > executableCount ? `\nℹ️ العدد المطلوب أكبر من الجلسات النشطة، لذلك سيتم تنفيذ المتاح حالياً فقط: ${executableCount}` : ''}\n💰 تم خصم ${cost} نقطة مؤقتاً.`
+            `✅ تم استلام طلبك!\n🚀 جاري تنفيذ ${executableCount} تفاعل بـ ${selectedEmoji}${requestedCount > executableCount ? `\nℹ️ العدد المطلوب أكبر من الجلسات النشطة المتاحة حالياً داخل البوت، لذلك سيتم تنفيذ المتاح فقط: ${executableCount}` : ''}\n💰 تم خصم ${cost} نقطة مؤقتاً.`
         );
 
         const result = await boostChannelReaction(
@@ -3999,7 +4069,7 @@ ${result.removedEntry?.raw || incomingText}`);
 
         return safeReply(
             ctx,
-            `✅ تم تنفيذ الطلب بنجاح.\n✨ تم إرسال ${result.sentCount} تفاعل بـ ${selectedEmoji}\n💰 الرصيد الحالي: ${getUserPoints(ctx.from.id)} نقطة.${refundPoints > 0 ? `\n↩️ تم إعادة ${refundPoints} نقطة لعدم تنفيذ كامل العدد.` : ''}${result.failures?.length ? `\n⚠️ بعض الجلسات فشلت: ${result.failures.slice(0, 5).join(' | ')}` : ''}`
+            `✅ تم تنفيذ الطلب بنجاح.\n✨ تم إرسال ${result.sentCount} تفاعل بـ ${selectedEmoji}\n👥 تم استخدام ${result.availableSessions} جلسة نشطة من إجمالي البوت\n💰 الرصيد الحالي: ${getUserPoints(ctx.from.id)} نقطة.${refundPoints > 0 ? `\n↩️ تم إعادة ${refundPoints} نقطة لعدم تنفيذ كامل العدد.` : ''}${result.failures?.length ? `\n⚠️ بعض الجلسات فشلت: ${result.failures.slice(0, 5).join(' | ')}` : ''}`
         );
     }
 
@@ -4457,7 +4527,7 @@ app.get('/api/dashboard/load', (req, res) => {
             gna: {
                 command: CHANNEL_LIKE_COMMAND,
                 emojiChoices: CHANNEL_LIKE_EMOJIS,
-                note: 'العدد الفعلي يعتمد على عدد الجلسات النشطة المربوطة لنفس الحساب. وإذا جمعت نقاطاً فكل 30 نقطة تمنحك سعة إضافية حتى 500 لايك.'
+                note: 'العدد الفعلي يعتمد على إجمالي الجلسات النشطة داخل البوت كله، ويتم استخدام أرقامك أولاً ثم بقية الجلسات المتاحة تلقائياً. ويمكن طلب 1000 تفاعل أو أكثر بحسب الجلسات النشطة المتوفرة.'
             },
             pairingApi: buildPairingApiDescriptor(phone),
             rewards: {
@@ -7417,10 +7487,10 @@ const PythonMergedLayer = (() => {
     const ARABIC_DIGIT_SOURCE = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
     const ARABIC_DIGIT_TARGET = '01234567890123456789';
     const START_MESSAGE_AUTO_LINE_PATTERNS = [
-        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?الإيموجي الحالي\\s*:\\s*.*$', 'gmu'), '{emoji} الإيموجي الحالي: {emoji}'],
+        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?الإيموجي الحالي\\s*:\\s*.*$', 'gmu'), '{emoji}'],
         [new RegExp('^[^\\S\\r\\n]*\\{?auto_reply_status\\}?[^\\S\\r\\n]*$', 'gmu'), ''],
-        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الأساسي\\s*:\\s*.*$', 'gmu'), '{admin_text}'],
-        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الاساسي\\s*:\\s*.*$', 'gmu'), '{admin_text}'],
+        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الأساسي\\s*:\\s*.*$', 'gmu'), ''],
+        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الاساسي\\s*:\\s*.*$', 'gmu'), ''],
     ];
     const USER_EMOJI_TRIGGERS = new Set(["تغيير ايموجي الحاله", "تغيير إيموجي الحاله", "تغيير ايموجي الحالة", "تغيير إيموجي الحالة", "غير الايموجي", "غيّر الايموجي", "غير الإيموجي", "غيّر الإيموجي"]);
     const DRF_TEXT_TRIGGERS = new Set(["اعدادات الموقع", "إعدادات الموقع", "اعدادات الموقع /drf", "إعدادات الموقع /drf", "drf", "/drf"]);
@@ -7496,11 +7566,6 @@ const PythonMergedLayer = (() => {
             normalized = normalized.replace(pattern, replacement);
         }
         normalized = normalized.replace(/^.*(?:حالة الرد التلقائي|\{auto_reply_status\}).*$/gmu, '');
-        normalized = normalized.replace(/\n{3,}/g, '\n\n').trim();
-        const missingLines = [];
-        if (!normalized.includes('{emoji}') && !normalized.includes('الإيموجي الحالي')) missingLines.push('{emoji} الإيموجي الحالي: {emoji}');
-        if (!normalized.includes('{admin_text}') && !normalized.includes('المطور الأساسي') && !normalized.includes('المطور الاساسي')) missingLines.push('{admin_text}');
-        if (missingLines.length) normalized = `${normalized.replace(/\s+$/, '')}\n${missingLines.join('\n')}`;
         normalized = normalized.replace(/\n{3,}/g, '\n\n').trim();
         return normalized || DEFAULT_START_MESSAGE_TEMPLATE;
     }
