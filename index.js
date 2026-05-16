@@ -2560,12 +2560,27 @@ async function cleanupSession(phone) {
 }
 
 function buildStatusReactionKey(msg, participant = '') {
+    const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
     return {
         ...(msg?.key || {}),
         remoteJid: 'status@broadcast',
-        participant: participant || msg?.key?.participant || msg?.participant,
+        participant: normalizedParticipant,
         fromMe: false
     };
+}
+
+function buildStatusReactionSendOptions(participant = '') {
+    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const options = {
+        broadcast: true
+    };
+
+    if (normalizedParticipant) {
+        options.statusJidList = [normalizedParticipant];
+        options.participant = normalizedParticipant;
+    }
+
+    return options;
 }
 
 function buildQuotedStatusMessage(msg, participant = '') {
@@ -2623,8 +2638,9 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
 }
 
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
-    const reactionKey = buildStatusReactionKey(msg, participant);
-    if (!sock || !participant || !reactionKey.id) {
+    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
+    if (!sock || !normalizedParticipant || !reactionKey.id) {
         return false;
     }
 
@@ -2634,6 +2650,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     }
 
     reactionEmoji = emoji;
+    const sendOptions = buildStatusReactionSendOptions(normalizedParticipant);
 
     const attempts = [
         async () => {
@@ -2642,23 +2659,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
                     text: emoji,
                     key: reactionKey
                 }
-            }, { statusJidList: [participant] });
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: reactionKey
-                }
-            }, { statusJidList: [participant], participant });
-        },
-        async () => {
-            await sock.sendMessage(participant, {
-                react: {
-                    text: emoji,
-                    key: reactionKey
-                }
-            }, { statusJidList: [participant] });
+            }, sendOptions);
         },
         async () => {
             await sock.sendMessage('status@broadcast', {
@@ -2667,11 +2668,24 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
                     key: {
                         ...reactionKey,
                         remoteJid: 'status@broadcast',
-                        participant,
+                        participant: normalizedParticipant,
                         fromMe: false
                     }
                 }
-            });
+            }, sendOptions);
+        },
+        async () => {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: {
+                        id: reactionKey.id,
+                        remoteJid: 'status@broadcast',
+                        participant: normalizedParticipant,
+                        fromMe: false
+                    }
+                }
+            }, sendOptions);
         }
     ];
 
