@@ -34,6 +34,7 @@ const LIKES_PER_POINTS_PACKAGE = 500;
 const MAX_AUTO_REPLIES = 10;
 const MAX_GLOBAL_AUTO_REPLIES = 50;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
+const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api.onrender.com';
 const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
 const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
@@ -335,6 +336,7 @@ const ownerReactionFlows = new Map();
 const autoReplyCooldowns = new Map();
 const ghostPendingReads = new Map();
 const statusMirrorTimers = new Map();
+const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
@@ -785,6 +787,13 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
     clean.autoStatusReact = ['on', 'off'].includes(clean.autoStatusReact) ? clean.autoStatusReact : DEFAULT_PHONE_SETTINGS.autoStatusReact;
     clean.keepDeletedStatus = ['on', 'off'].includes(clean.keepDeletedStatus) ? clean.keepDeletedStatus : DEFAULT_PHONE_SETTINGS.keepDeletedStatus;
     clean.ghostMode = ['on', 'off'].includes(clean.ghostMode) ? clean.ghostMode : DEFAULT_PHONE_SETTINGS.ghostMode;
+    if (clean.ghostMode === 'on') {
+        clean.autoRead = 'off';
+        clean.alwaysOnline = 'off';
+        clean.autoTyping = 'off';
+        clean.autoRecording = 'off';
+        clean.autoStatusRead = 'off';
+    }
     clean.statusMsgSend = ['on', 'off'].includes(clean.statusMsgSend) ? clean.statusMsgSend : DEFAULT_PHONE_SETTINGS.statusMsgSend;
     clean.antiCall = ['on', 'off'].includes(clean.antiCall) ? clean.antiCall : DEFAULT_PHONE_SETTINGS.antiCall;
     clean.antiBug = ['on', 'off'].includes(clean.antiBug) ? clean.antiBug : DEFAULT_PHONE_SETTINGS.antiBug;
@@ -1294,6 +1303,35 @@ function startPresenceKeepAlive(sock, phone) {
     presenceTimers.set(normalized, timer);
 }
 
+async function syncGhostPrivacySettings(sock, enabled = false) {
+    if (!sock) return false;
+
+    const operations = enabled
+        ? [
+            ['updateReadReceiptsPrivacy', 'none'],
+            ['updateReadReceiptPrivacy', 'none'],
+            ['updateOnlinePrivacy', 'match_last_seen'],
+            ['updateLastSeenPrivacy', 'none']
+        ]
+        : [
+            ['updateReadReceiptsPrivacy', 'all'],
+            ['updateReadReceiptPrivacy', 'all'],
+            ['updateOnlinePrivacy', 'all'],
+            ['updateLastSeenPrivacy', 'all']
+        ];
+
+    let changed = false;
+    for (const [methodName, value] of operations) {
+        if (typeof sock[methodName] !== 'function') continue;
+        try {
+            await sock[methodName](value);
+            changed = true;
+        } catch (_) {}
+    }
+
+    return changed;
+}
+
 async function applyLivePhoneSettingsSideEffects(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
@@ -1304,11 +1342,14 @@ async function applyLivePhoneSettingsSideEffects(phone) {
     const settings = getActivePhoneSettings(normalized);
     if (settings.ghostMode === 'on') {
         clearPresenceTimer(normalized);
+        await syncGhostPrivacySettings(sock, true);
         try {
             await sock.sendPresenceUpdate('unavailable');
         } catch (_) {}
         return true;
     }
+
+    await syncGhostPrivacySettings(sock, false);
 
     if (settings.alwaysOnline === 'on') {
         startPresenceKeepAlive(sock, normalized);
@@ -2035,8 +2076,141 @@ function isOwnerControlChat(sock, phone, remoteJid) {
     return [ownJid, `${normalizedPhone}@s.whatsapp.net`].filter(Boolean).includes(normalizedRemote);
 }
 
+function rememberOwnerControlBypassMessage(messageId = '') {
+    const key = String(messageId || '').trim();
+    if (!key) return;
+    ownerControlBypassMessageIds.add(key);
+    const timer = setTimeout(() => ownerControlBypassMessageIds.delete(key), 5 * 60 * 1000);
+    if (typeof timer?.unref === 'function') timer.unref();
+}
+
+function rememberOwnerControlBypassResult(result = null) {
+    rememberOwnerControlBypassMessage(result?.key?.id || '');
+}
+
+function buildOwnerControlHelpText(phoneNumber) {
+    const settings = getActivePhoneSettings(phoneNumber);
+    const prefix = String(settings.prefix || '.').trim() || '.';
+    return [
+        '🛠️ أوامر المطور داخل واتساب',
+        '',
+        `${prefix}dev`,
+        `${prefix}help`,
+        `${prefix}wabroadcast نص الرسالة`,
+        '',
+        '📣 يرسل الرسالة بشكل خاص لكل رقم مربوط ومتصّل حالياً داخل واتساب.',
+        '📝 الأرقام غير المتصلة سيتم تجاوزها وإظهارها في التقرير.'
+    ].join('\n');
+}
+
+function formatWhatsAppBroadcastReport(report) {
+    const summary = [
+        '✅ تم تنفيذ إذاعة واتساب الخاصة.',
+        '',
+        `📱 الإجمالي: ${report.total || 0}`,
+        `✅ نجح: ${report.success || 0}`,
+        `⏭️ تم تجاوزه: ${report.skipped || 0}`,
+        `❌ فشل: ${report.failed || 0}`
+    ];
+
+    const issues = (report.details || [])
+        .filter((item) => item.status !== 'sent')
+        .slice(0, 10)
+        .map((item) => `• ${item.phone}: ${item.status === 'offline' ? 'غير متصل حالياً' : (item.error || 'فشل الإرسال')}`);
+
+    if (issues.length) {
+        summary.push('', '📋 ملاحظات:', ...issues);
+    }
+
+    return summary.join('\n');
+}
+
+async function sendWhatsAppLinkedNumbersBroadcast(messageText) {
+    const cleanMessage = String(messageText || '').trim();
+    const linkedPhones = Array.from(new Set(getAllLinkedPhones().map((phone) => normalizePhone(phone)).filter(Boolean)));
+    const report = { total: linkedPhones.length, success: 0, failed: 0, skipped: 0, details: [] };
+
+    if (!cleanMessage) {
+        return report;
+    }
+
+    for (const phone of linkedPhones) {
+        const sock = waClients.get(phone);
+        if (!sock) {
+            report.skipped += 1;
+            report.details.push({ phone, status: 'offline' });
+            continue;
+        }
+
+        const targets = Array.from(new Set([`${phone}@s.whatsapp.net`, normalizeWhatsAppJid(sock.user?.id)].filter(Boolean)));
+        let sent = false;
+        let lastError = null;
+
+        for (const targetJid of targets) {
+            try {
+                const result = await sock.sendMessage(targetJid, { text: cleanMessage });
+                rememberOwnerControlBypassResult(result);
+                sent = true;
+                break;
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        if (sent) {
+            report.success += 1;
+            report.details.push({ phone, status: 'sent' });
+        } else {
+            report.failed += 1;
+            report.details.push({ phone, status: 'failed', error: lastError?.message || 'فشل الإرسال' });
+        }
+    }
+
+    return report;
+}
+
 async function handleOwnerControlMessage(sock, phoneNumber, msg) {
-    return false;
+    if (!msg?.key?.fromMe) return false;
+
+    const currentMessageId = String(msg.key?.id || '');
+    if (ownerControlBypassMessageIds.has(currentMessageId)) {
+        ownerControlBypassMessageIds.delete(currentMessageId);
+        return false;
+    }
+
+    if (!isOwnerControlChat(sock, phoneNumber, msg.key?.remoteJid)) return false;
+
+    const ownerId = getPhoneOwner(phoneNumber);
+    if (!ownerId || !isAdmin(ownerId)) return false;
+
+    const text = String(textFromMessage(msg) || '').trim();
+    if (!text) return false;
+
+    const targetChat = normalizeWhatsAppJid(msg.key?.remoteJid);
+    const helpRegex = buildOwnerCommandRegex(phoneNumber, '(?:dev|help|menu)');
+    if (helpRegex.test(text)) {
+        const response = await sock.sendMessage(targetChat, { text: buildOwnerControlHelpText(phoneNumber) }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const settings = getActivePhoneSettings(phoneNumber);
+    const prefix = escapeRegExp(settings.prefix || '.');
+    const broadcastRegex = new RegExp(`^(?:${prefix}|\\.)?(?:wabroadcast|broadcastwa|اذاعة|اذاعه)(?:\\s+([\\s\\S]+))?$`, 'i');
+    const broadcastMatch = text.match(broadcastRegex);
+    if (!broadcastMatch) return false;
+
+    const messageText = String(broadcastMatch[1] || '').trim();
+    if (!messageText) {
+        const response = await sock.sendMessage(targetChat, { text: `❌ اكتب الرسالة بعد الأمر.\n\n${buildOwnerControlHelpText(phoneNumber)}` }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const report = await sendWhatsAppLinkedNumbersBroadcast(messageText);
+    const response = await sock.sendMessage(targetChat, { text: formatWhatsAppBroadcastReport(report) }, { quoted: msg });
+    rememberOwnerControlBypassResult(response);
+    return true;
 }
 
 function getUserRecord(userId) {
@@ -2858,7 +3032,7 @@ async function backupStatusMessage(sock, phoneNumber, msg) {
         participantPhone: normalizePhone(participant) || '',
         messageId,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        expiresAt: new Date(Date.now() + STATUS_RETENTION_MS).toISOString(),
         kind: statusData.kind,
         rawType: statusData.rawType,
         text: statusData.text || '',
@@ -2930,14 +3104,18 @@ async function deleteMirroredStatusMessage(sock, mirrorKey) {
     return false;
 }
 
+function getDeletedStatusRetentionNote(entry) {
+    return `🛡️ تم حفظ نسخة من حالة محذوفة خلال أقل من 24 ساعة.\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
+}
+
 function buildRetainedStatusText(entry) {
-    const note = `🛡️ نسخة محفوظة من حالة محذوفة\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
-    return [String(entry.text || entry.caption || '').trim(), note].filter(Boolean).join('\n\n').trim();
+    const note = getDeletedStatusRetentionNote(entry);
+    return [note, String(entry.text || entry.caption || '').trim()].filter(Boolean).join('\n\n').trim();
 }
 
 function buildRetainedStatusCaption(entry) {
-    const note = `🛡️ نسخة محفوظة من حالة محذوفة\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
-    return [String(entry.caption || entry.text || '').trim(), note].filter(Boolean).join('\n\n').trim();
+    const note = getDeletedStatusRetentionNote(entry);
+    return [note, String(entry.caption || entry.text || '').trim()].filter(Boolean).join('\n\n').trim();
 }
 
 function buildRetainedStatusPayload(entry) {
@@ -3059,6 +3237,11 @@ async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
     const entry = db.items[key];
     if (!entry) return false;
     if (entry.restoredAt) return true;
+
+    entry.deletedAt = new Date().toISOString();
+    entry.expiresAt = new Date(Date.now() + STATUS_RETENTION_MS).toISOString();
+    db.items[key] = entry;
+    saveStatusBackupsDB(db);
 
     try {
         const reposted = await repostStatusBackupToOwnStatus(sock, phoneNumber, entry);
@@ -4031,6 +4214,11 @@ ${buildTelegramCommandsOverview()}`);
         ctx.session = { step: 'wait_broadcast_message' };
         return safeReply(ctx, '📣 أرسل الآن الرسالة التي تريد إرسالها لجميع المستخدمين.');
     }
+
+    if (data === 'admin_wabroadcast' && isAdmin(ctx.from.id)) {
+        ctx.session = { step: 'wait_wa_broadcast_message' };
+        return safeReply(ctx, '📲 أرسل الآن الرسالة التي تريد إرسالها خاص داخل واتساب لكل الأرقام المربوطة والمتصلة.');
+    }
 });
 
 // =========================
@@ -4049,7 +4237,8 @@ bot.command('admin', async (ctx) => {
             '/stats - إحصائيات البوت\n' +
             '/setstart - تغيير رسالة /start\n' +
             '/setchannel - تفعيل أو إلغاء الاشتراك الإجباري\n' +
-            '/broadcast - إرسال رسالة جماعية لكل المستخدمين\n' +
+            '/broadcast - إرسال رسالة جماعية لكل المستخدمين على تيليجرام\n' +
+            '/wabroadcast - إرسال رسالة خاصة داخل واتساب لكل الأرقام المربوطة\n' +
             '/admins - عرض الأدمنية\n' +
             '/addadmin 123456789 - إضافة أدمن\n' +
             '/deladmin 123456789 - حذف أدمن\n' +
@@ -4073,6 +4262,9 @@ bot.command('admin', async (ctx) => {
                     [
                         Markup.button.callback('اشتراك إجباري 📢', 'admin_setchannel'),
                         Markup.button.callback('إذاعة عامة 📣', 'admin_broadcast')
+                    ],
+                    [
+                        Markup.button.callback('إذاعة واتساب 📲', 'admin_wabroadcast')
                     ]
                 ]
             }
@@ -4212,6 +4404,22 @@ bot.command('broadcast', async (ctx) => {
     }
 
     await safeReply(ctx, `✅ تمت الإذاعة الجماعية.\n\nنجح: ${success}\nفشل: ${failed}`);
+});
+
+bot.command('wabroadcast', async (ctx) => {
+    upsertTelegramUser(ctx);
+    if (!isAdmin(ctx.from.id)) {
+        return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
+    }
+
+    const text = String(ctx.message?.text || '').replace(/^\/wabroadcast(?:@\w+)?/i, '').trim();
+    if (!text) {
+        ctx.session = { step: 'wait_wa_broadcast_message' };
+        return safeReply(ctx, '📲 أرسل الآن الرسالة التي تريد إرسالها خاص داخل واتساب لكل الأرقام المربوطة والمتصلة.');
+    }
+
+    const report = await sendWhatsAppLinkedNumbersBroadcast(text);
+    return safeReply(ctx, formatWhatsAppBroadcastReport(report));
 });
 
 function saveGlobalAdminSetting(patch = {}) {
@@ -4370,6 +4578,7 @@ bot.on('text', async (ctx) => {
         'wait_new_start_message',
         'wait_force_channel',
         'wait_broadcast_message',
+        'wait_wa_broadcast_message',
         'wait_admin_bot_message',
         'wait_admin_welcome_message',
         'wait_admin_global_reply_keyword',
@@ -4719,6 +4928,17 @@ ${result.removedEntry?.raw || incomingText}`);
 
         ctx.session = null;
         return safeReply(ctx, `✅ تمت الإذاعة الجماعية.\n\nنجح: ${success}\nفشل: ${failed}`);
+    }
+
+    if (sessionState === 'wait_wa_broadcast_message') {
+        if (!isAdmin(ctx.from.id)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
+        }
+
+        const report = await sendWhatsAppLinkedNumbersBroadcast(incomingText);
+        ctx.session = null;
+        return safeReply(ctx, formatWhatsAppBroadcastReport(report));
     }
 });
 
