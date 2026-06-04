@@ -334,6 +334,7 @@ const stoppedPairings = new Set();
 const ownerReactionFlows = new Map();
 const autoReplyCooldowns = new Map();
 const ghostPendingReads = new Map();
+const statusMirrorTimers = new Map();
 const phoneSettingsAuthSessions = new Map();
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
@@ -843,6 +844,7 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
         }
     }
 
+    Promise.resolve(applyLivePhoneSettingsSideEffects(normalizedPhone)).catch(() => {});
     return clean;
 }
 
@@ -1283,13 +1285,41 @@ function startPresenceKeepAlive(sock, phone) {
     const normalized = normalizePhone(phone);
     clearPresenceTimer(normalized);
     const settings = getActivePhoneSettings(normalized);
-    if (settings.alwaysOnline !== 'on') return;
+    if (settings.alwaysOnline !== 'on' || settings.ghostMode === 'on') return;
     const timer = setInterval(async () => {
         try {
             await sock.sendPresenceUpdate('available');
         } catch (_) {}
     }, 45000);
     presenceTimers.set(normalized, timer);
+}
+
+async function applyLivePhoneSettingsSideEffects(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+
+    const sock = waClients.get(normalized);
+    if (!sock) return false;
+
+    const settings = getActivePhoneSettings(normalized);
+    if (settings.ghostMode === 'on') {
+        clearPresenceTimer(normalized);
+        try {
+            await sock.sendPresenceUpdate('unavailable');
+        } catch (_) {}
+        return true;
+    }
+
+    if (settings.alwaysOnline === 'on') {
+        startPresenceKeepAlive(sock, normalized);
+        return true;
+    }
+
+    clearPresenceTimer(normalized);
+    try {
+        await sock.sendPresenceUpdate('unavailable');
+    } catch (_) {}
+    return true;
 }
 
 function buildImageFileName(ext = 'png') {
@@ -2792,6 +2822,11 @@ function pruneExpiredStatusBackups() {
     for (const [key, entry] of Object.entries(db.items || {})) {
         const expiresAt = Date.parse(entry?.expiresAt || 0);
         if (expiresAt && expiresAt > now) continue;
+        const timer = statusMirrorTimers.get(key);
+        if (timer) {
+            clearTimeout(timer);
+            statusMirrorTimers.delete(key);
+        }
         if (entry?.filePath && fs.existsSync(entry.filePath)) {
             try { fs.rmSync(entry.filePath, { force: true }); } catch (_) {}
         }
@@ -2859,6 +2894,120 @@ function extractRevokedStatusId(msg) {
     return String(content?.protocolMessage?.key?.id || '').trim();
 }
 
+function clearStatusMirrorTimer(backupKey) {
+    const timer = statusMirrorTimers.get(backupKey);
+    if (timer) {
+        clearTimeout(timer);
+        statusMirrorTimers.delete(backupKey);
+    }
+}
+
+async function deleteMirroredStatusMessage(sock, mirrorKey) {
+    if (!sock || !mirrorKey?.id) return false;
+
+    const attempts = [
+        async () => {
+            await sock.sendMessage('status@broadcast', {
+                delete: {
+                    ...(mirrorKey || {}),
+                    remoteJid: 'status@broadcast',
+                    fromMe: true
+                }
+            });
+        },
+        async () => {
+            await sock.sendMessage('status@broadcast', { delete: mirrorKey });
+        }
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            await attempt();
+            return true;
+        } catch (_) {}
+    }
+
+    return false;
+}
+
+function buildRetainedStatusText(entry) {
+    const note = `🛡️ نسخة محفوظة من حالة محذوفة\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
+    return [String(entry.text || entry.caption || '').trim(), note].filter(Boolean).join('\n\n').trim();
+}
+
+function buildRetainedStatusCaption(entry) {
+    const note = `🛡️ نسخة محفوظة من حالة محذوفة\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
+    return [String(entry.caption || entry.text || '').trim(), note].filter(Boolean).join('\n\n').trim();
+}
+
+function buildRetainedStatusPayload(entry) {
+    if (entry.kind === 'text') {
+        return {
+            text: buildRetainedStatusText(entry),
+            backgroundColor: '#0B141A',
+            font: 1
+        };
+    }
+
+    if (!entry.filePath || !fs.existsSync(entry.filePath)) {
+        return null;
+    }
+
+    const buffer = fs.readFileSync(entry.filePath);
+    const caption = buildRetainedStatusCaption(entry);
+
+    if (entry.kind === 'image') {
+        return { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' };
+    }
+    if (entry.kind === 'video') {
+        return { video: buffer, caption, mimetype: entry.mimetype || 'video/mp4' };
+    }
+
+    return null;
+}
+
+function scheduleMirroredStatusExpiry(sock, backupKey, mirrorKey, expiresAt) {
+    clearStatusMirrorTimer(backupKey);
+    const expiresAtMs = Date.parse(expiresAt || 0);
+    if (!expiresAtMs) return;
+    const delayMs = expiresAtMs - Date.now();
+    if (!Number.isFinite(delayMs) || delayMs <= 0 || delayMs > 2147483647) return;
+
+    const timer = setTimeout(async () => {
+        try {
+            await deleteMirroredStatusMessage(sock, mirrorKey);
+        } catch (_) {}
+        clearStatusMirrorTimer(backupKey);
+    }, delayMs);
+
+    statusMirrorTimers.set(backupKey, timer);
+}
+
+async function repostStatusBackupToOwnStatus(sock, phoneNumber, entry) {
+    if (!sock || !entry) return null;
+
+    const payload = buildRetainedStatusPayload(entry);
+    if (!payload) return null;
+
+    const attempts = [
+        async () => sock.sendMessage('status@broadcast', payload, { broadcast: true }),
+        async () => sock.sendMessage('status@broadcast', payload)
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            const result = await attempt();
+            if (result?.key?.id) {
+                const backupKey = buildStatusBackupKey(phoneNumber, entry.participant, entry.messageId);
+                scheduleMirroredStatusExpiry(sock, backupKey, result.key, entry.expiresAt);
+            }
+            return result || { key: null };
+        } catch (_) {}
+    }
+
+    return null;
+}
+
 async function sendStatusBackupCopy(sock, targetJid, entry) {
     const note = `🛡️ تم حفظ نسخة من حالة محذوفة خلال أقل من 24 ساعة.\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
     const caption = [note, entry.caption || entry.text || ''].filter(Boolean).join('\n\n');
@@ -2910,6 +3059,17 @@ async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
     const entry = db.items[key];
     if (!entry) return false;
     if (entry.restoredAt) return true;
+
+    try {
+        const reposted = await repostStatusBackupToOwnStatus(sock, phoneNumber, entry);
+        if (reposted) {
+            entry.restoredAt = new Date().toISOString();
+            entry.mirroredStatusKey = reposted?.key || null;
+            db.items[key] = entry;
+            saveStatusBackupsDB(db);
+            return true;
+        }
+    } catch (_) {}
 
     const ownJid = normalizeWhatsAppJid(sock.user?.id);
     const phoneJid = `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
@@ -3144,7 +3304,8 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (!reactionKey.id) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
-        if (shouldReadStatus && settings.ghostMode !== 'on') {
+        const forceVisibleReaction = settings.autoStatusReact === 'on';
+        if (shouldReadStatus && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
             const readAttempts = [
                 [reactionKey],
                 msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
@@ -3226,6 +3387,10 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         if (!from) return;
 
         const settings = getActivePhoneSettings(phoneNumber);
+
+        if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
+            await applyLivePhoneSettingsSideEffects(phoneNumber);
+        }
 
         if (from === 'status@broadcast') {
             await handleStatusReaction(sock, phoneNumber, msg);
@@ -3432,6 +3597,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             incrementAnalytics('totalSessionsStarted');
             clearReconnectTimer(normalizedPhone);
             startPresenceKeepAlive(sock, normalizedPhone);
+            await applyLivePhoneSettingsSideEffects(normalizedPhone);
 
             const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
             if (finalOwnerId) {
