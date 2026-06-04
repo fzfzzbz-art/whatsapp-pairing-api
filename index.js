@@ -4,7 +4,8 @@
     fetchLatestBaileysVersion,
     Browsers,
     DisconnectReason,
-    delay
+    delay,
+    downloadContentFromMessage
 } = require('@whiskeysockets/baileys');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
@@ -12,6 +13,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { EventEmitter } = require('events');
 
 // =========================
 // الإعدادات الأساسية
@@ -62,6 +64,8 @@ const SITE_SETTINGS_FIELD_LABELS = {
     alwaysOnline: 'دائمًا أونلاين',
     autoStatusRead: 'مشاهدة الحالة تلقائيًا',
     autoStatusReact: 'التفاعل مع الحالة تلقائيًا',
+    keepDeletedStatus: 'حفظ الحالة عند حذفها',
+    ghostMode: 'تفعيل الشبح',
     autoRead: 'قراءة تلقائية',
     autoBlock: 'حظر تلقائي',
     autoReact: 'تفاعل تلقائي',
@@ -101,6 +105,8 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     alwaysOnline: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
+    keepDeletedStatus: 'off',
+    ghostMode: 'off',
     autoRead: 'off',
     autoBlock: 'off',
     autoReact: 'off',
@@ -141,7 +147,7 @@ const PHONE_SETTINGS_SECTIONS = [
     {
         key: 'automation',
         label: 'الحالة والخيارات التلقائية',
-        fields: ['autoStatusRead', 'autoStatusReact', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
+        fields: ['autoStatusRead', 'autoStatusReact', 'keepDeletedStatus', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
     },
     {
         key: 'protection',
@@ -161,7 +167,7 @@ const PHONE_SETTINGS_SECTIONS = [
 ];
 const PHONE_SETTINGS_TOGGLE_FIELDS = new Set([
     'antiBad', 'antiLink', 'autoRecording', 'autoTyping', 'alwaysOnline', 'autoStatusRead', 'autoStatusReact',
-    'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave'
+    'keepDeletedStatus', 'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave'
 ]);
 const PHONE_SETTINGS_SELECT_OPTIONS = {
     mode: [
@@ -219,6 +225,9 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PHONE_SETTINGS_FILE = path.join(DATA_DIR, 'phone-settings.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const BOT_ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
+const STATUS_BACKUPS_FILE = path.join(DATA_DIR, 'status-backups.json');
+const STATUS_MEDIA_DIR = path.join(DATA_DIR, 'status-media');
 const DEFAULT_ADMINS = Array.from(
     new Set(
         [...BUILTIN_ADMIN_IDS, ...(process.env.ADMIN_IDS || '').split(',')]
@@ -296,6 +305,7 @@ const TELEGRAM_ENABLED = Boolean(String(BOT_TOKEN || '').trim());
 const TELEGRAM_PLACEHOLDER_TOKEN = '0000000000:render-disabled-placeholder-token';
 
 const app = express();
+EventEmitter.defaultMaxListeners = 0;
 app.set('trust proxy', 1);
 const bot = new Telegraf(TELEGRAM_ENABLED ? BOT_TOKEN : TELEGRAM_PLACEHOLDER_TOKEN);
 bot.use(session());
@@ -323,6 +333,7 @@ const clientActivity = new Map();
 const stoppedPairings = new Set();
 const ownerReactionFlows = new Map();
 const autoReplyCooldowns = new Map();
+const ghostPendingReads = new Map();
 const phoneSettingsAuthSessions = new Map();
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
@@ -369,6 +380,7 @@ function bootStorage() {
     ensureDir(DATA_DIR);
     ensureDir(SESSIONS_DIR);
     ensureDir(UPLOADS_DIR);
+    ensureDir(STATUS_MEDIA_DIR);
     ensureFile(USERS_FILE, { users: {}, phoneOwners: {} });
     ensureFile(SETTINGS_FILE, {
         startMessage: '',
@@ -383,6 +395,17 @@ function bootStorage() {
         globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
     });
     ensureFile(PHONE_SETTINGS_FILE, { profiles: {} });
+    ensureFile(BOT_ANALYTICS_FILE, {
+        totalIncomingMessages: 0,
+        totalStatusEvents: 0,
+        totalStatusReactions: 0,
+        totalOwnerReplies: 0,
+        totalReconnects: 0,
+        totalSessionsStarted: 0,
+        updatedAt: '',
+        lastBootAt: ''
+    });
+    ensureFile(STATUS_BACKUPS_FILE, { items: {} });
 }
 
 bootStorage();
@@ -396,6 +419,65 @@ function getUsersDB() {
 
 function saveUsersDB(db) {
     writeJSON(USERS_FILE, db);
+}
+
+let analyticsCache = null;
+let analyticsSaveTimer = null;
+
+function getDefaultAnalyticsDB() {
+    return {
+        totalIncomingMessages: 0,
+        totalStatusEvents: 0,
+        totalStatusReactions: 0,
+        totalOwnerReplies: 0,
+        totalReconnects: 0,
+        totalSessionsStarted: 0,
+        updatedAt: '',
+        lastBootAt: ''
+    };
+}
+
+function getAnalyticsDB() {
+    if (!analyticsCache) {
+        analyticsCache = { ...getDefaultAnalyticsDB(), ...(readJSON(BOT_ANALYTICS_FILE, getDefaultAnalyticsDB()) || {}) };
+    }
+    return analyticsCache;
+}
+
+function flushAnalyticsDB() {
+    if (!analyticsCache) return;
+    analyticsCache.updatedAt = new Date().toISOString();
+    writeJSON(BOT_ANALYTICS_FILE, analyticsCache);
+    if (analyticsSaveTimer) {
+        clearTimeout(analyticsSaveTimer);
+        analyticsSaveTimer = null;
+    }
+}
+
+function queueAnalyticsSave() {
+    if (analyticsSaveTimer) return;
+    analyticsSaveTimer = setTimeout(() => {
+        analyticsSaveTimer = null;
+        flushAnalyticsDB();
+    }, 1200);
+    if (typeof analyticsSaveTimer.unref === 'function') {
+        analyticsSaveTimer.unref();
+    }
+}
+
+function incrementAnalytics(field, amount = 1) {
+    const db = getAnalyticsDB();
+    db[field] = Math.max(0, Number(db[field] || 0) + Number(amount || 0));
+    db.updatedAt = new Date().toISOString();
+    queueAnalyticsSave();
+    return db[field];
+}
+
+function markAnalyticsBoot() {
+    const db = getAnalyticsDB();
+    db.lastBootAt = new Date().toISOString();
+    db.updatedAt = db.lastBootAt;
+    queueAnalyticsSave();
 }
 
 function getSettings() {
@@ -700,6 +782,8 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
     clean.autoSave = ['on', 'off'].includes(clean.autoSave) ? clean.autoSave : DEFAULT_PHONE_SETTINGS.autoSave;
     clean.autoStatusRead = ['on', 'off'].includes(clean.autoStatusRead) ? clean.autoStatusRead : DEFAULT_PHONE_SETTINGS.autoStatusRead;
     clean.autoStatusReact = ['on', 'off'].includes(clean.autoStatusReact) ? clean.autoStatusReact : DEFAULT_PHONE_SETTINGS.autoStatusReact;
+    clean.keepDeletedStatus = ['on', 'off'].includes(clean.keepDeletedStatus) ? clean.keepDeletedStatus : DEFAULT_PHONE_SETTINGS.keepDeletedStatus;
+    clean.ghostMode = ['on', 'off'].includes(clean.ghostMode) ? clean.ghostMode : DEFAULT_PHONE_SETTINGS.ghostMode;
     clean.statusMsgSend = ['on', 'off'].includes(clean.statusMsgSend) ? clean.statusMsgSend : DEFAULT_PHONE_SETTINGS.statusMsgSend;
     clean.antiCall = ['on', 'off'].includes(clean.antiCall) ? clean.antiCall : DEFAULT_PHONE_SETTINGS.antiCall;
     clean.antiBug = ['on', 'off'].includes(clean.antiBug) ? clean.antiBug : DEFAULT_PHONE_SETTINGS.antiBug;
@@ -1404,6 +1488,8 @@ function buildPhoneSettingsMessage(phone) {
         `📍 الوضع: ${formatPhoneSettingValue(phone, 'mode', settings.mode)}`,
         `👀 قراءة الحالات: ${formatPhoneSettingValue(phone, 'autoStatusRead', settings.autoStatusRead)}`,
         `😍 التفاعل على الحالات: ${formatPhoneSettingValue(phone, 'autoStatusReact', settings.autoStatusReact)}`,
+        `🛡️ حفظ الحالة بعد الحذف: ${formatPhoneSettingValue(phone, 'keepDeletedStatus', settings.keepDeletedStatus)}`,
+        `👻 وضع الشبح: ${formatPhoneSettingValue(phone, 'ghostMode', settings.ghostMode)}`,
         `🎭 الإيموجيات: ${formatPhoneSettingValue(phone, 'statusCustomReact', settings.statusCustomReact)}`,
         `🤖 الردود التلقائية: ${repliesCount}/${MAX_AUTO_REPLIES}`,
         '',
@@ -2324,10 +2410,6 @@ function getStartKeyboard() {
             Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji'),
             Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu')
         ],
-        [
-            Markup.button.callback('هدية يومية 🎁', 'daily_gift'),
-            Markup.button.callback('طلب تفاعلات 🚀', 'order_react_menu')
-        ],
         [Markup.button.callback('حذف جلسة 🗑️', 'delete_session')],
         [Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')]
     ]);
@@ -2506,6 +2588,8 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized)) return;
 
+    incrementAnalytics('totalReconnects');
+
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
@@ -2576,6 +2660,7 @@ function startSessionSupervisor() {
     sessionSupervisorStarted = true;
 
     const interval = setInterval(() => {
+        pruneExpiredStatusBackups();
         const phones = getAllLinkedPhones();
 
         for (const phone of phones) {
@@ -2622,6 +2707,7 @@ async function cleanupSession(phone) {
     clearPairingRequest(normalized);
     clientActivity.delete(normalized);
     clearPresenceTimer(normalized);
+    clearGhostPendingMessagesForPhone(normalized);
     stoppedPairings.delete(normalized);
 
     if (sock) {
@@ -2641,6 +2727,244 @@ async function cleanupSession(phone) {
     }
 
     removeLinkedNumber(normalized);
+}
+
+
+function sanitizeFileFragment(value = '') {
+    return String(value || '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'item';
+}
+
+function getDefaultStatusBackupsDB() {
+    return { items: {} };
+}
+
+function getStatusBackupsDB() {
+    const db = readJSON(STATUS_BACKUPS_FILE, getDefaultStatusBackupsDB());
+    db.items = db.items || {};
+    return db;
+}
+
+function saveStatusBackupsDB(db) {
+    db.items = db.items || {};
+    writeJSON(STATUS_BACKUPS_FILE, db);
+}
+
+function buildStatusBackupKey(phone, participant, messageId) {
+    return [normalizePhone(phone), normalizePhone(participant) || sanitizeFileFragment(normalizeWhatsAppJid(participant)), sanitizeFileFragment(messageId)].filter(Boolean).join('__');
+}
+
+function getStatusMessagePayload(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    if (content?.conversation) {
+        return { kind: 'text', text: String(content.conversation || '').trim(), payload: null, rawType: 'conversation' };
+    }
+    if (content?.extendedTextMessage?.text) {
+        return { kind: 'text', text: String(content.extendedTextMessage.text || '').trim(), payload: content.extendedTextMessage, rawType: 'extendedTextMessage' };
+    }
+    if (content?.imageMessage) return { kind: 'image', text: String(content.imageMessage.caption || '').trim(), payload: content.imageMessage, rawType: 'imageMessage' };
+    if (content?.videoMessage) return { kind: 'video', text: String(content.videoMessage.caption || '').trim(), payload: content.videoMessage, rawType: 'videoMessage' };
+    if (content?.documentMessage) return { kind: 'document', text: String(content.documentMessage.caption || '').trim(), payload: content.documentMessage, rawType: 'documentMessage' };
+    if (content?.audioMessage) return { kind: 'audio', text: '', payload: content.audioMessage, rawType: 'audioMessage' };
+    return null;
+}
+
+function getStatusBackupExtension(kind, payload = {}) {
+    const mime = String(payload?.mimetype || '').toLowerCase();
+    if (kind === 'image') return mime.includes('png') ? 'png' : 'jpg';
+    if (kind === 'video') return mime.includes('quicktime') ? 'mov' : 'mp4';
+    if (kind === 'document') return path.extname(String(payload?.fileName || ''))?.replace(/^\./, '') || 'bin';
+    if (kind === 'audio') return mime.includes('ogg') ? 'ogg' : 'mp3';
+    return 'txt';
+}
+
+async function streamToBuffer(stream) {
+    const chunks = [];
+    for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+}
+
+function pruneExpiredStatusBackups() {
+    const db = getStatusBackupsDB();
+    let changed = false;
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(db.items || {})) {
+        const expiresAt = Date.parse(entry?.expiresAt || 0);
+        if (expiresAt && expiresAt > now) continue;
+        if (entry?.filePath && fs.existsSync(entry.filePath)) {
+            try { fs.rmSync(entry.filePath, { force: true }); } catch (_) {}
+        }
+        delete db.items[key];
+        changed = true;
+    }
+    if (changed) saveStatusBackupsDB(db);
+}
+
+async function backupStatusMessage(sock, phoneNumber, msg) {
+    const settings = getActivePhoneSettings(phoneNumber);
+    if (settings.keepDeletedStatus !== 'on') return null;
+    if (!hasStatusContent(msg)) return null;
+    const participant = extractStatusParticipant(msg);
+    const messageId = String(msg?.key?.id || '').trim();
+    if (!participant || !messageId) return null;
+
+    pruneExpiredStatusBackups();
+    const statusData = getStatusMessagePayload(msg);
+    if (!statusData) return null;
+
+    const key = buildStatusBackupKey(phoneNumber, participant, messageId);
+    const db = getStatusBackupsDB();
+    if (db.items[key]) return db.items[key];
+
+    const entry = {
+        phone: normalizePhone(phoneNumber),
+        participant,
+        participantPhone: normalizePhone(participant) || '',
+        messageId,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        kind: statusData.kind,
+        rawType: statusData.rawType,
+        text: statusData.text || '',
+        caption: statusData.text || '',
+        mimetype: String(statusData.payload?.mimetype || '').trim(),
+        fileName: '',
+        filePath: '',
+        restoredAt: ''
+    };
+
+    if (statusData.kind !== 'text' && statusData.payload && typeof downloadContentFromMessage === 'function') {
+        const downloadKind = statusData.kind === 'document' ? 'document' : statusData.kind;
+        const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
+        const buffer = await streamToBuffer(stream);
+        if (buffer.length) {
+            const ext = getStatusBackupExtension(statusData.kind, statusData.payload);
+            const fileName = `${key}.${ext}`;
+            const filePath = path.join(STATUS_MEDIA_DIR, fileName);
+            fs.writeFileSync(filePath, buffer);
+            entry.fileName = fileName;
+            entry.filePath = filePath;
+        }
+    }
+
+    db.items[key] = entry;
+    saveStatusBackupsDB(db);
+    incrementAnalytics('totalStatusEvents');
+    return entry;
+}
+
+function extractRevokedStatusId(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    return String(content?.protocolMessage?.key?.id || '').trim();
+}
+
+async function sendStatusBackupCopy(sock, targetJid, entry) {
+    const note = `🛡️ تم حفظ نسخة من حالة محذوفة خلال أقل من 24 ساعة.\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
+    const caption = [note, entry.caption || entry.text || ''].filter(Boolean).join('\n\n');
+
+    if (entry.kind === 'text') {
+        await sock.sendMessage(targetJid, { text: caption });
+        return true;
+    }
+
+    if (!entry.filePath || !fs.existsSync(entry.filePath)) {
+        await sock.sendMessage(targetJid, { text: caption });
+        return true;
+    }
+
+    const buffer = fs.readFileSync(entry.filePath);
+    if (entry.kind === 'image') {
+        await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' });
+        return true;
+    }
+    if (entry.kind === 'video') {
+        await sock.sendMessage(targetJid, { video: buffer, caption, mimetype: entry.mimetype || 'video/mp4' });
+        return true;
+    }
+    if (entry.kind === 'document') {
+        await sock.sendMessage(targetJid, { document: buffer, fileName: entry.fileName || 'status-backup.bin', caption, mimetype: entry.mimetype || 'application/octet-stream' });
+        return true;
+    }
+    if (entry.kind === 'audio') {
+        await sock.sendMessage(targetJid, { audio: buffer, mimetype: entry.mimetype || 'audio/mpeg', ptt: false });
+        await sock.sendMessage(targetJid, { text: note });
+        return true;
+    }
+
+    await sock.sendMessage(targetJid, { text: caption });
+    return true;
+}
+
+async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
+    const settings = getActivePhoneSettings(phoneNumber);
+    if (settings.keepDeletedStatus !== 'on') return false;
+
+    const revokedId = extractRevokedStatusId(msg);
+    const participant = extractStatusParticipant(msg);
+    if (!revokedId || !participant) return false;
+
+    pruneExpiredStatusBackups();
+    const key = buildStatusBackupKey(phoneNumber, participant, revokedId);
+    const db = getStatusBackupsDB();
+    const entry = db.items[key];
+    if (!entry) return false;
+    if (entry.restoredAt) return true;
+
+    const ownJid = normalizeWhatsAppJid(sock.user?.id);
+    const phoneJid = `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
+    const targets = Array.from(new Set([ownJid, phoneJid].filter(Boolean)));
+
+    for (const target of targets) {
+        try {
+            await sendStatusBackupCopy(sock, target, entry);
+            entry.restoredAt = new Date().toISOString();
+            db.items[key] = entry;
+            saveStatusBackupsDB(db);
+            return true;
+        } catch (_) {}
+    }
+
+    return false;
+}
+
+function buildGhostChatKey(phone, remoteJid) {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
+    if (!normalizedPhone || !normalizedRemote) return '';
+    return `${normalizedPhone}::${normalizedRemote}`;
+}
+
+function rememberGhostPendingMessage(phone, msg) {
+    if (!msg?.key?.id || msg.key?.fromMe) return;
+    const key = buildGhostChatKey(phone, msg.key?.remoteJid);
+    if (!key) return;
+    const pending = ghostPendingReads.get(key) || [];
+    pending.push({ ...msg.key, fromMe: false, remoteJid: normalizeWhatsAppJid(msg.key?.remoteJid) });
+    ghostPendingReads.set(key, pending.slice(-50));
+}
+
+async function flushGhostPendingMessages(sock, phone, remoteJid) {
+    const key = buildGhostChatKey(phone, remoteJid);
+    if (!key) return false;
+    const pending = ghostPendingReads.get(key) || [];
+    if (!pending.length) return false;
+    try {
+        await sock.readMessages(pending);
+        ghostPendingReads.delete(key);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function clearGhostPendingMessagesForPhone(phone) {
+    const prefix = `${normalizePhone(phone)}::`;
+    for (const key of ghostPendingReads.keys()) {
+        if (key.startsWith(prefix)) {
+            ghostPendingReads.delete(key);
+        }
+    }
 }
 
 function buildStatusReactionKey(msg, participant = '') {
@@ -2795,9 +3119,23 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
 
 async function handleStatusReaction(sock, phoneNumber, msg) {
     try {
+        const settings = getActivePhoneSettings(phoneNumber);
+
+        if (extractRevokedStatusId(msg)) {
+            await restoreDeletedStatusIfNeeded(sock, phoneNumber, msg);
+            return;
+        }
+
+        if (settings.keepDeletedStatus === 'on') {
+            try {
+                await backupStatusMessage(sock, phoneNumber, msg);
+            } catch (backupError) {
+                console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
+            }
+        }
+
         if (!hasStatusContent(msg)) return;
 
-        const settings = getActivePhoneSettings(phoneNumber);
         const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const reactionKey = buildStatusReactionKey(msg, participant);
@@ -2806,7 +3144,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (!reactionKey.id) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
-        if (shouldReadStatus) {
+        if (shouldReadStatus && settings.ghostMode !== 'on') {
             const readAttempts = [
                 [reactionKey],
                 msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
@@ -2823,6 +3161,9 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
             reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+            if (reactedToStatus) {
+                incrementAnalytics('totalStatusReactions');
+            }
         }
 
         const globalStatusMessage = reactedToStatus ? getGlobalStatusLikeMessage(phoneNumber) : '';
@@ -2892,19 +3233,28 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
         if (msg.key?.fromMe) {
+            incrementAnalytics('totalOwnerReplies');
+            if (settings.ghostMode === 'on') {
+                await flushGhostPendingMessages(sock, phoneNumber, from);
+            }
             await handleOwnerControlMessage(sock, phoneNumber, msg);
             return;
         }
 
+        incrementAnalytics('totalIncomingMessages');
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
+
+        if (!isGroup && settings.ghostMode === 'on' && msg.key) {
+            rememberGhostPendingMessage(phoneNumber, msg);
+        }
 
         if (!isGroup) {
             const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
             if (handledPublicCommand) return;
         }
 
-        if (settings.autoRead === 'on' && msg.key) {
+        if (settings.autoRead === 'on' && settings.ghostMode !== 'on' && msg.key) {
             try {
                 await sock.readMessages([msg.key]);
             } catch (_) {}
@@ -2977,6 +3327,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         markOnlineOnConnect: false
     });
 
+    sock.ev.setMaxListeners?.(0);
+    sock.ws?.setMaxListeners?.(0);
+
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
 
@@ -3029,6 +3382,23 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
+    sock.ev.on('messages.update', async (updates = []) => {
+        try {
+            touchClient(normalizedPhone);
+            for (const item of updates) {
+                if (normalizeWhatsAppJid(item?.key?.remoteJid) !== 'status@broadcast') continue;
+                if (!item?.update) continue;
+                await handleIncomingMessage(sock, normalizedPhone, {
+                    key: item.key,
+                    message: item.update,
+                    participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
+                });
+            }
+        } catch (error) {
+            console.error(`messages.update Error (${normalizedPhone}):`, error.message);
+        }
+    });
+
     sock.ev.on('call', async (calls = []) => {
         try {
             const settings = getActivePhoneSettings(normalizedPhone);
@@ -3059,6 +3429,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         if (connection === 'open') {
             console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
+            incrementAnalytics('totalSessionsStarted');
             clearReconnectTimer(normalizedPhone);
             startPresenceKeepAlive(sock, normalizedPhone);
 
@@ -3141,39 +3512,11 @@ async function sendStartMessage(ctx) {
     return safeReply(ctx, buildStartMessage(ctx), getStartKeyboard());
 }
 
-async function handleDailyGiftRequest(ctx) {
-    upsertTelegramUser(ctx);
-    const result = claimDailyGift(ctx.from.id);
-    if (!result.ok) {
-        return safeReply(ctx, `❌ لقد استلمت هديتك اليومية بالفعل. حاول بعد ${formatDurationMs(result.waitMs)}.\n💰 رصيدك الحالي: ${result.points} نقطة.`);
-    }
-    return safeReply(ctx, `🎉 مبروك! حصلت على ${result.awarded} نقطة هدية يومية.\n💰 رصيدك الحالي: ${result.points} نقطة.`);
-}
-
-async function beginOrderReactFlow(ctx) {
-    upsertTelegramUser(ctx);
-    const activeSessions = getReactionCampaignSessions(ctx.from.id);
-    if (!activeSessions.length) {
-        return safeReply(ctx, '❌ لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ التفاعلات. حاول مرة أخرى لاحقاً.');
-    }
-    ctx.session = { step: 'wait_order_react_link' };
-    return safeReply(ctx, '🔗 أرسل الآن رابط منشور القناة (Link) الذي تريد تزويد التفاعلات له:');
-}
-
 bot.start(async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     await sendStartMessage(ctx);
 });
 
-bot.command('daily', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    await handleDailyGiftRequest(ctx);
-});
-
-bot.command('order_react', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    await beginOrderReactFlow(ctx);
-});
 
 bot.command('mywa', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
@@ -3225,14 +3568,6 @@ bot.on('callback_query', async (ctx) => {
     if (data === 'check_sub') {
         if (!(await ensureSubscription(ctx))) return;
         return sendStartMessage(ctx);
-    }
-
-    if (data === 'daily_gift') {
-        return handleDailyGiftRequest(ctx);
-    }
-
-    if (data === 'order_react_menu') {
-        return beginOrderReactFlow(ctx);
     }
 
     if (data === 'pair_wa') {
@@ -3509,9 +3844,10 @@ ${buildTelegramCommandsOverview()}`);
         const usersCount = getAllUserIds().length;
         const phonesCount = getAllLinkedPhones().length;
         const adminsCount = getSettings().admins.length;
+        const analytics = getAnalyticsDB();
         return safeReply(
             ctx,
-            `📊 إحصائيات البوت:\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}`
+            `📊 إحصائيات البوت (محفوظة بعد إعادة التشغيل):\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة الآن: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}\n✉️ إجمالي الرسائل المستلمة: ${analytics.totalIncomingMessages || 0}\n📸 حالات تم حفظها: ${analytics.totalStatusEvents || 0}\n😍 تفاعلات الحالة المنفذة: ${analytics.totalStatusReactions || 0}\n💬 ردود المالك: ${analytics.totalOwnerReplies || 0}\n🔁 مرات إعادة الاتصال: ${analytics.totalReconnects || 0}\n🟢 مرات تشغيل الجلسات: ${analytics.totalSessionsStarted || 0}`
         );
     }
 
@@ -3559,7 +3895,6 @@ bot.command('admin', async (ctx) => {
             '/delreply - حذف رد عالمي من الردود العامة\n' +
             '/listreplies - عرض الردود العامة الحالية\n' +
             '/setstatuslikemsg - تغيير أو حذف رسالة الرد بعد لايك الحالة لكل الأرقام\n' +
-            'أمر لايكات القناة داخل الرقم المربوط: ' + CHANNEL_LIKE_COMMAND + '\n' +
             'المتغيرات المدعومة في الرسائل العامة: {phone} {number} {name} {ownerNumber} {ownerName} {prefix} {botLink} {channelLink}\n' +
             'متغيرات رسالة /start المدعومة: {name} {username} {count} {emoji} {numbers}',
         {
@@ -3588,10 +3923,11 @@ bot.command('stats', async (ctx) => {
     const usersCount = getAllUserIds().length;
     const phonesCount = getAllLinkedPhones().length;
     const adminsCount = getSettings().admins.length;
+    const analytics = getAnalyticsDB();
 
     await safeReply(
         ctx,
-        `📊 إحصائيات البوت:\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}`
+        `📊 إحصائيات البوت (محفوظة بعد إعادة التشغيل):\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة الآن: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}\n✉️ إجمالي الرسائل المستلمة: ${analytics.totalIncomingMessages || 0}\n📸 حالات تم حفظها: ${analytics.totalStatusEvents || 0}\n😍 تفاعلات الحالة المنفذة: ${analytics.totalStatusReactions || 0}\n💬 ردود المالك: ${analytics.totalOwnerReplies || 0}\n🔁 مرات إعادة الاتصال: ${analytics.totalReconnects || 0}\n🟢 مرات تشغيل الجلسات: ${analytics.totalSessionsStarted || 0}`
     );
 });
 
@@ -3987,85 +4323,6 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
     }
-
-    if (sessionState === 'wait_order_react_link') {
-        const target = extractChannelPostTarget(incomingText);
-        if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
-            return safeReply(ctx, '❌ عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxxxx/123');
-        }
-        ctx.session = {
-            step: 'wait_order_react_emoji',
-            orderReactLink: incomingText
-        };
-        return safeReply(ctx, '✨ أرسل الآن الإيموجي الذي تريد التفاعل به مثل: ❤️ أو 🔥');
-    }
-
-    if (sessionState === 'wait_order_react_emoji') {
-        if (!isEmojiInput(incomingText)) {
-            return safeReply(ctx, '❌ أرسل إيموجي صحيح فقط مثل: ❤️ أو 🔥 أو 😍');
-        }
-        ctx.session = {
-            step: 'wait_order_react_count',
-            orderReactLink: String(ctx.session?.orderReactLink || '').trim(),
-            orderReactEmoji: incomingText
-        };
-        return safeReply(ctx, '🔢 كم عدد التفاعلات المطلوبة؟\nملاحظة: كل 100 تفاعل = 10 نقاط.');
-    }
-
-    if (sessionState === 'wait_order_react_count') {
-        const requestedCount = normalizeRequestedLikeCount(incomingText);
-        if (!requestedCount) {
-            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من 0.');
-        }
-
-        const activeSessions = getReactionCampaignSessions(ctx.from.id);
-        if (!activeSessions.length) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ التفاعلات.');
-        }
-
-        const executableCount = Math.min(requestedCount, activeSessions.length);
-        const cost = calculateReactionOrderCost(executableCount);
-        const currentPoints = getUserPoints(ctx.from.id);
-        const selectedEmoji = String(ctx.session?.orderReactEmoji || '').trim();
-        const selectedLink = String(ctx.session?.orderReactLink || '').trim();
-
-        if (currentPoints < cost) {
-            return safeReply(ctx, `❌ رصيدك لا يكفي. التكلفة الحالية: ${cost} نقطة مقابل ${executableCount} تفاعل قابل للتنفيذ، ورصيدك الحالي: ${currentPoints} نقطة.`);
-        }
-
-        deductUserPoints(ctx.from.id, cost);
-        await safeReply(
-            ctx,
-            `✅ تم استلام طلبك!\n🚀 جاري تنفيذ ${executableCount} تفاعل بـ ${selectedEmoji}${requestedCount > executableCount ? `\nℹ️ العدد المطلوب أكبر من الجلسات النشطة المتاحة حالياً داخل البوت، لذلك سيتم تنفيذ المتاح فقط: ${executableCount}` : ''}\n💰 تم خصم ${cost} نقطة مؤقتاً.`
-        );
-
-        const result = await boostChannelReaction(
-            ctx.from.id,
-            '',
-            selectedLink,
-            selectedEmoji,
-            executableCount
-        );
-
-        const successfulCost = calculateReactionOrderCost(result.sentCount || 0);
-        const refundPoints = Math.max(0, cost - successfulCost);
-        if (refundPoints > 0) {
-            addUserPoints(ctx.from.id, refundPoints);
-        }
-
-        ctx.session = null;
-
-        if (!result.ok || !result.sentCount) {
-            return safeReply(ctx, `❌ تعذر تنفيذ طلب التفاعلات.${result?.error ? `\nالسبب: ${result.error}` : ''}\n💰 تم إعادة ${cost} نقطة إلى رصيدك.`);
-        }
-
-        return safeReply(
-            ctx,
-            `✅ تم تنفيذ الطلب بنجاح.\n✨ تم إرسال ${result.sentCount} تفاعل بـ ${selectedEmoji}\n👥 تم استخدام ${result.availableSessions} جلسة نشطة من إجمالي البوت\n💰 الرصيد الحالي: ${getUserPoints(ctx.from.id)} نقطة.${refundPoints > 0 ? `\n↩️ تم إعادة ${refundPoints} نقطة لعدم تنفيذ كامل العدد.` : ''}${result.failures?.length ? `\n⚠️ بعض الجلسات فشلت: ${result.failures.slice(0, 5).join(' | ')}` : ''}`
-        );
-    }
-
     if (sessionState === 'wait_phone') {
         const phone = normalizePhone(incomingText);
         if (!phone) {
@@ -4517,17 +4774,8 @@ app.get('/api/dashboard/load', (req, res) => {
             app: appId,
             settings,
             stats,
-            gna: {
-                command: CHANNEL_LIKE_COMMAND,
-                emojiChoices: CHANNEL_LIKE_EMOJIS,
-                note: 'العدد الفعلي يعتمد على إجمالي الجلسات النشطة داخل البوت كله، ويتم استخدام أرقامك أولاً ثم بقية الجلسات المتاحة تلقائياً. ويمكن طلب 1000 تفاعل أو أكثر بحسب الجلسات النشطة المتوفرة.'
-            },
             pairingApi: buildPairingApiDescriptor(phone),
-            rewards: {
-                dailyGiftPoints: DAILY_GIFT_POINTS,
-                likePackagePoints: POINTS_PER_LIKE_PACKAGE,
-                likePackageLikes: LIKES_PER_POINTS_PACKAGE
-            }
+            analytics: getAnalyticsDB()
         });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Dashboard load failed' });
@@ -4587,10 +4835,6 @@ app.get('/auto-save', (req, res) => {
     res.send(buildLandingSectionHTML('autoSaveSection'));
 });
 
-app.get('/points', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingSectionHTML('pointsBlock'));
-});
 
 app.get('/pair', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -4756,20 +5000,6 @@ app.get('/api/qr', async (req, res) => {
     }
 });
 
-app.post('/api/daily-gift', (req, res) => {
-    try {
-        const { num, pass } = req.body || {};
-        const auth = authenticateSettingsUser(num, pass);
-        if (!auth.ok) return res.status(401).json({ success: false, error: auth.error });
-        const result = claimDailyGift(auth.ownerId || getPhoneOwner(auth.phone));
-        if (!result.ok) {
-            return res.status(429).json({ success: false, error: `الهدية اليومية غير متاحة الآن. حاول بعد ${formatDurationMs(result.waitMs)}.`, points: result.points, waitMs: result.waitMs });
-        }
-        return res.json({ success: true, awarded: result.awarded, points: result.points, nextAt: result.nextAt });
-    } catch (error) {
-        return res.status(500).json({ success: false, error: error.message || 'فشل استلام الهدية اليومية' });
-    }
-});
 
 app.get('/', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -4840,6 +5070,7 @@ async function initTelegramTransport() {
 
 const server = app.listen(APP_PORT, async () => {
     console.log(`Server running on port ${APP_PORT}`);
+    markAnalyticsBoot();
 
     let telegramStatus = { enabled: false, mode: 'disabled' };
     try {
@@ -4898,6 +5129,7 @@ async function gracefulShutdown(signal) {
         console.error('Server Close Warning:', error.message);
     }
 
+    flushAnalyticsDB();
     process.exit(0);
 }
 
