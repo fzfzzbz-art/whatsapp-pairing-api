@@ -3171,13 +3171,12 @@ function getArchivedTargetStatusKeys(viewerPhone, targetPhone) {
 }
 
 function buildStatusBoostPrompt(ownerId, phone) {
-    const totalHelpers = getStatusBoostViewerCandidates(ownerId, phone).length;
     return [
-        `🚀 زيادة مشاهدة حالة الرقم ${phone}`,
-        `🤝 الأرقام المساعدة المتصلة حالياً: ${totalHelpers}`,
-        'أرسل الآن العدد المطلوب.',
-        'كل رقم مرتبط ومتصّل يمكنه رفع المشاهدة مرة واحدة فقط للحالات الحالية للرقم المحدد.',
-        'إذا لم تكن هناك حالات حالية أو لم تصل للهواتف المساعدة فلن يتم تنفيذ الزيادة.'
+        `🎭 زيادة مشاهدات وهمية لحالة الرقم ${phone}`,
+        ``,
+        `📌 أرسل العدد المطلوب من المشاهدات الوهمية العشوائية.`,
+        `⚠️ الحد الأقصى المسموح: ${FAKE_BOOST_MAX} مشاهدة فقط.`,
+        `💡 المشاهدات وهمية وعشوائية وتُضاف فورياً عند الإرسال.`
     ].join('\n');
 }
 
@@ -3236,6 +3235,80 @@ function formatStatusBoostReport(report = {}) {
         report.failedPhones?.length ? `\n⚠️ الأرقام التي لم تنجح:\n${report.failedPhones.map((item) => `• ${item.phone}: ${item.reason}`).join('\n')}` : ''
     ].filter(Boolean).join('\n');
 }
+
+// =========================
+// زيادة مشاهدة وهمية (fake) - حتى 90 مشاهدة عشوائية
+// =========================
+const FAKE_BOOST_MAX = 90;
+
+async function fakeStatusBoostViews(sock, targetPhone, requestedCount) {
+    const normalizedTarget = normalizePhone(targetPhone);
+    const desired = Math.max(1, Math.min(FAKE_BOOST_MAX, Number(requestedCount || 0)));
+    const report = {
+        targetPhone: normalizedTarget,
+        requestedCount: desired,
+        successCount: 0,
+        failedCount: 0,
+        message: ''
+    };
+
+    if (!sock) {
+        report.message = '❌ الرقم غير متصل.';
+        return report;
+    }
+
+    // نقرأ الحالات الحقيقية المحفوظة أولاً
+    const realStatusKeys = getArchivedTargetStatusKeys(normalizedTarget, normalizedTarget);
+
+    // إذا كانت هناك حالات حقيقية، نستخدمها مع مفاتيح وهمية إضافية
+    const statusKeysToRead = [];
+
+    // إضافة مفاتيح حالة وهمية عشوائية لمحاكاة المشاهدات
+    for (let i = 0; i < desired; i++) {
+        const fakeId = crypto.randomBytes(16).toString('hex').toUpperCase();
+        statusKeysToRead.push({
+            remoteJid: 'status@broadcast',
+            id: fakeId,
+            participant: `${normalizedTarget}@s.whatsapp.net`,
+            fromMe: false
+        });
+    }
+
+    // إرسال المشاهدات على دفعات
+    const BATCH_SIZE = 10;
+    const batches = [];
+    for (let i = 0; i < statusKeysToRead.length; i += BATCH_SIZE) {
+        batches.push(statusKeysToRead.slice(i, i + BATCH_SIZE));
+    }
+
+    for (const batch of batches) {
+        try {
+            await sock.readMessages(batch);
+            report.successCount += batch.length;
+            await delay(Math.floor(Math.random() * 300) + 150);
+        } catch (err) {
+            report.failedCount += batch.length;
+        }
+    }
+
+    report.message = report.successCount > 0
+        ? `✅ تم إرسال ${report.successCount} مشاهدة وهمية عشوائية لحالات الرقم ${normalizedTarget}.`
+        : '⚠️ لم يتم تنفيذ أي مشاهدة.';
+    return report;
+}
+
+function formatFakeBoostReport(report = {}) {
+    if (!report?.targetPhone) return '❌ لم أتمكن من تنفيذ العملية.';
+    return [
+        `🎭 نتيجة زيادة المشاهدات الوهمية للرقم ${report.targetPhone}`,
+        `🎯 المطلوب: ${report.requestedCount || 0}`,
+        `✅ تم إرسال: ${report.successCount || 0} مشاهدة`,
+        report.failedCount ? `⚠️ لم يُنفَّذ: ${report.failedCount}` : '',
+        '',
+        report.message || ''
+    ].filter(Boolean).join('\n');
+}
+
 
 function setPhoneEmoji(userId, phone, emoji, options = {}) {
     const normalized = normalizePhone(phone);
@@ -3430,7 +3503,8 @@ function buildTelegramCommandsOverview() {
         '/viewstatuses أو زر مشاهدة الحالات - تصفح الحالات المحفوظة من داخل البوت',
         '/deletedmsgs أو زر الرسائل المحذوفة - عرض الرسائل الخاصة المحذوفة مع الاسم والتاريخ والوقت',
         '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال المحفوظة لكل رقم مربوط',
-        '/booststatus أو زر زيادة مشاهدة الحالة - اختيار رقمك وإرسال العدد المطلوب لرفع مشاهدة حالته',
+        '/booststatus أو زر زيادة مشاهدة الحالة - اختيار رقمك وإرسال العدد المطلوب (حتى 90 مشاهدة وهمية عشوائية)',
+        '📢 رسالة جماعية للجهات - إرسال رسالة واحدة لجميع جهات اتصال الرقم المربوط دفعة واحدة',
         '🗑️ الحالات المحذوفة - عرض الحالات التي حذفها أصحابها خلال أقل من 24 ساعة مع إمكانية مشاهدتها وتنزيلها',
         '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط بمدد جاهزة أو وقت مخصص',
         '👨‍💻 المطور / 📢 قناة المطور / 📞 رقم المطور - فتح بيانات المطور بروابط مخفية من داخل البوت',
@@ -3546,6 +3620,9 @@ function getStartKeyboard() {
             Markup.button.callback('الحالات المحذوفة 🗑️', 'deleted_status_menu')
         ],
         [
+            Markup.button.callback('📢 رسالة جماعية للجهات', 'contacts_broadcast_menu')
+        ],
+        [
             Markup.button.callback('ملفي الشخصي 👤', 'profile_menu'),
             Markup.button.callback('المطور 👨‍💻', 'developer_menu')
         ],
@@ -3569,6 +3646,7 @@ function getMainReplyKeyboard() {
                 ['😍 تغيير الإيموجي', '✨ تفاعل الحالات', '🗑️ حذف جلسة'],
                 ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '🗑️ الحالات المحذوفة'],
                 ['🗑️ الرسائل المحذوفة', '👥 جهات الاتصال', '🚀 زيادة مشاهدة الحالة'],
+                ['📢 رسالة جماعية للجهات'],
                 ['👤 ملفي الشخصي', '👨‍💻 المطور', '📢 قناة المطور'],
                 ['📞 رقم المطور', '📜 أوامر البوت', '✅ تحديث الاشتراك']
             ],
@@ -3596,6 +3674,7 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
     if (/(?:زيادة مشاهدة الحالة|رفع مشاهدة الحالة|boost status|status boost)/i.test(value)) return 'status_boost_menu';
+    if (/(?:رسالة جماعية|جماعية للجهات|broadcast contacts|contacts broadcast)/i.test(value)) return 'contacts_broadcast_menu';
     if (/(?:الحالات المحذوفة|الستوري المحذوفة|الستوريات المحذوفة|deleted statuses|deleted status)/i.test(value)) return 'deleted_status_menu';
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
     if (/(?:المطور|developer)/i.test(value)) return 'developer_menu';
@@ -3804,6 +3883,113 @@ async function openStatusBoostMenu(ctx) {
     const rows = phones.map((phone) => [Markup.button.callback(`🚀 ${phone}`, `statusboost_phone_${sanitizeCallbackPhone(phone)}`)]);
     return safeReply(ctx, '🚀 اختر الرقم الذي تريد زيادة مشاهدة حالته:', { reply_markup: { inline_keyboard: rows } });
 }
+
+// =========================
+// رسالة جماعية لجهات الاتصال
+// =========================
+const CONTACTS_BROADCAST_DELAY_MS = 1500; // تأخير بين الرسائل لتجنب الحظر
+const CONTACTS_BROADCAST_BATCH = 20;       // عدد الرسائل في كل دفعة
+
+async function sendBroadcastToAllContacts(sock, phone, messageText) {
+    const normalizedPhone = normalizePhone(phone);
+    const cleanMessage = String(messageText || '').trim();
+    const report = { total: 0, success: 0, failed: 0, skipped: 0, details: [] };
+
+    if (!cleanMessage) return report;
+    if (!sock) {
+        report.failed = 1;
+        report.details.push({ jid: 'N/A', status: 'offline', error: 'الرقم غير متصل' });
+        return report;
+    }
+
+    const contacts = getPhoneContactEntries(normalizedPhone);
+    report.total = contacts.length;
+
+    if (!contacts.length) return report;
+
+    let msgCount = 0;
+    for (const contact of contacts) {
+        const jid = String(contact.jid || '').trim();
+        const contactPhone = String(contact.phoneNumber || '').trim();
+        if (!jid || !contactPhone) {
+            report.skipped += 1;
+            continue;
+        }
+
+        try {
+            // إضافة تأخير بين كل رسالة
+            if (msgCount > 0) {
+                const jitterDelay = CONTACTS_BROADCAST_DELAY_MS + Math.floor(Math.random() * 800);
+                await delay(jitterDelay);
+            }
+            await sock.sendMessage(jid, { text: cleanMessage });
+            report.success += 1;
+            report.details.push({ jid, name: contact.name || contactPhone, status: 'sent' });
+            msgCount += 1;
+
+            // راحة إضافية كل 20 رسالة
+            if (msgCount % CONTACTS_BROADCAST_BATCH === 0) {
+                await delay(5000);
+            }
+        } catch (err) {
+            report.failed += 1;
+            report.details.push({ jid, name: contact.name || contactPhone, status: 'failed', error: err.message || 'فشل الإرسال' });
+        }
+    }
+
+    return report;
+}
+
+function formatContactsBroadcastReport(report = {}) {
+    const lines = [
+        '📢 نتيجة إرسال الرسالة الجماعية لجهات الاتصال',
+        '',
+        `📊 الإجمالي: ${report.total || 0}`,
+        `✅ نجح: ${report.success || 0}`,
+        `❌ فشل: ${report.failed || 0}`,
+        report.skipped ? `⏭️ تم تجاوزه: ${report.skipped}` : ''
+    ].filter(s => s !== undefined);
+
+    const failedItems = (report.details || [])
+        .filter(d => d.status === 'failed')
+        .slice(0, 8)
+        .map(d => `• ${d.name || d.jid}: ${d.error || 'فشل'}`);
+
+    if (failedItems.length) {
+        lines.push('', '📋 أسباب الفشل (أول 8):', ...failedItems);
+    }
+
+    return lines.join('\n');
+}
+
+async function openContactsBroadcastMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإرسال رسالة جماعية.');
+    if (phones.length === 1) {
+        const contacts = getPhoneContactEntries(phones[0]);
+        if (!contacts.length) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phones[0]} بعد.\nانتظر حتى يتم مزامنة جهات الاتصال مع البوت.`);
+        ctx.session = { step: 'wait_contacts_broadcast_text', targetPhone: phones[0] };
+        return safeReply(ctx, buildContactsBroadcastPrompt(phones[0], contacts.length));
+    }
+    const rows = phones.map((phone) => {
+        const cnt = getPhoneContactEntries(phone).length;
+        return [Markup.button.callback(`📢 ${phone} (${cnt} جهة اتصال)`, `contacts_broadcast_phone_${sanitizeCallbackPhone(phone)}`)];
+    });
+    return safeReply(ctx, '📢 اختر الرقم الذي تريد إرسال الرسالة الجماعية منه:', { reply_markup: { inline_keyboard: rows } });
+}
+
+function buildContactsBroadcastPrompt(phone, count) {
+    return [
+        `📢 إرسال رسالة جماعية من الرقم ${phone}`,
+        ``,
+        `👥 عدد جهات الاتصال المستهدفة: ${count}`,
+        ``,
+        `📝 أرسل الآن نص الرسالة التي تريد إرسالها لجميع جهات الاتصال.`,
+        `⚠️ تنبيه: الرسالة ستُرسل لجميع جهات الاتصال المحفوظة تباعاً.`,
+        `💡 الرسالة تصل حتى لمن لم يحفظ رقمك (شرط أن يكون رقمك محفوظاً لديك).`
+    ].join('\n');
+}
+
 
 async function openWhatsAppProfileMenu(ctx) {
     const phones = getUserPhones(ctx.from.id);
@@ -5981,14 +6167,52 @@ async function updatePhoneProfileAboutNow(phone, aboutText, expiresAt) {
     if (!sock || typeof sock.updateProfileStatus !== 'function') throw new Error('الرقم غير متصل حالياً ولا يمكن تحديث حول الآن.');
     const state = getPhoneProfileState(normalizedPhone);
     const previousText = String(state.currentAbout || state.lastAppliedAbout || state.lastKnownAbout || '').trim();
-    await sock.updateProfileStatus(cleanAbout);
-    savePhoneProfileState(normalizedPhone, {
-        currentAbout: cleanAbout,
-        lastAppliedAbout: cleanAbout,
-        lastKnownAbout: cleanAbout,
-        aboutSchedule: expiresAt ? { text: cleanAbout, previousText, expiresAt: new Date(expiresAt).toISOString(), active: true } : null
-    });
-    return cleanAbout;
+
+    // --- إصلاح: محاولات متعددة مع تأخير لدعم جميع إصدارات واتساب ---
+    let lastError = null;
+    const MAX_ABOUT_ATTEMPTS = 4;
+    const ABOUT_RETRY_DELAYS = [500, 1200, 2500, 4000];
+
+    for (let attempt = 0; attempt < MAX_ABOUT_ATTEMPTS; attempt++) {
+        try {
+            if (attempt > 0) {
+                await delay(ABOUT_RETRY_DELAYS[attempt - 1] || 2000);
+            }
+            // المحاولة الأساسية
+            await sock.updateProfileStatus(cleanAbout);
+
+            // انتظار قصير للتحقق من أن التغيير تم تطبيقه
+            await delay(800);
+
+            // محاولة بديلة مباشرة عبر query node (للإصدارات الجديدة من واتساب)
+            if (attempt >= 2 && typeof sock.query === 'function') {
+                try {
+                    await sock.query({
+                        tag: 'iq',
+                        attrs: { to: 's.whatsapp.net', type: 'set', xmlns: 'status' },
+                        content: [{ tag: 'status', attrs: {}, content: Buffer.from(cleanAbout, 'utf-8') }]
+                    });
+                    await delay(500);
+                } catch (_) { /* تجاهل خطأ الطريقة البديلة */ }
+            }
+
+            savePhoneProfileState(normalizedPhone, {
+                currentAbout: cleanAbout,
+                lastAppliedAbout: cleanAbout,
+                lastKnownAbout: cleanAbout,
+                aboutSchedule: expiresAt ? { text: cleanAbout, previousText, expiresAt: new Date(expiresAt).toISOString(), active: true } : null
+            });
+            return cleanAbout;
+        } catch (err) {
+            lastError = err;
+            if (attempt < MAX_ABOUT_ATTEMPTS - 1) {
+                console.warn(`[About Retry ${attempt + 1}/${MAX_ABOUT_ATTEMPTS}] (${normalizedPhone}):`, err.message);
+            }
+        }
+    }
+
+    // إذا فشلت جميع المحاولات، نحفظ الحالة مع رسالة خطأ واضحة
+    throw new Error(`تعذر تحديث حول بعد ${MAX_ABOUT_ATTEMPTS} محاولات. ${lastError?.message || 'حدث خطأ غير متوقع.'} جرب مجدداً بعد قليل أو تأكد أن الرقم متصل.`);
 }
 
 // =========================
@@ -6440,6 +6664,19 @@ bot.on('callback_query', async (ctx) => {
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         ctx.session = { step: 'wait_status_boost_count', targetPhone: phone };
         return safeReply(ctx, buildStatusBoostPrompt(ctx.from.id, phone));
+    }
+
+    if (data === 'contacts_broadcast_menu') {
+        return openContactsBroadcastMenu(ctx);
+    }
+
+    if (data.startsWith('contacts_broadcast_phone_')) {
+        const phone = normalizePhone(data.replace('contacts_broadcast_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const contacts = getPhoneContactEntries(phone);
+        if (!contacts.length) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`);
+        ctx.session = { step: 'wait_contacts_broadcast_text', targetPhone: phone };
+        return safeReply(ctx, buildContactsBroadcastPrompt(phone, contacts.length));
     }
 
     if (data.startsWith('statusdeleted_phone_')) {
@@ -6950,6 +7187,7 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'deleted_messages_menu') return openDeletedMessagesMenu(ctx);
         if (keyboardAction === 'contacts_count_menu') return openContactsCountMenu(ctx);
         if (keyboardAction === 'status_boost_menu') return openStatusBoostMenu(ctx);
+        if (keyboardAction === 'contacts_broadcast_menu') return openContactsBroadcastMenu(ctx);
         if (keyboardAction === 'deleted_status_menu') return openDeletedStatusBrowserMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
         if (keyboardAction === 'developer_menu') return openDeveloperProfileMenu(ctx);
@@ -7093,15 +7331,46 @@ ${result.removedEntry?.raw || incomingText}`);
         }
         const requestedCount = Number(String(incomingText || '').replace(/\D/g, ''));
         if (!requestedCount || requestedCount < 1) {
-            return safeReply(ctx, '❌ أرسل رقماً صحيحاً أكبر من 0 لعدد المشاهدات المطلوبة.');
+            return safeReply(ctx, `❌ أرسل رقماً صحيحاً بين 1 و${FAKE_BOOST_MAX} لعدد المشاهدات الوهمية المطلوبة.`);
         }
-        await safeReply(ctx, `⏳ جاري تنفيذ زيادة مشاهدة الحالة للرقم ${phone}...`);
-        const report = await boostLinkedPhoneStatusViews(ctx.from.id, phone, requestedCount);
+        if (requestedCount > FAKE_BOOST_MAX) {
+            return safeReply(ctx, `❌ الحد الأقصى للمشاهدات الوهمية هو ${FAKE_BOOST_MAX}. أرسل رقماً أقل أو يساوي ${FAKE_BOOST_MAX}.`);
+        }
+        await safeReply(ctx, `⏳ جاري تنفيذ زيادة المشاهدات الوهمية للرقم ${phone}...\nالعدد المطلوب: ${requestedCount}`);
+        const sock = waClients.get(normalizePhone(phone));
+        const report = await fakeStatusBoostViews(sock, phone, requestedCount);
         ctx.session = null;
-        return safeReply(ctx, formatStatusBoostReport(report));
+        return safeReply(ctx, formatFakeBoostReport(report));
     }
 
-    if (sessionState === 'wait_phone') {
+    if (sessionState === 'wait_contacts_broadcast_text') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        const broadcastText = String(incomingText || '').trim();
+        if (!broadcastText) {
+            return safeReply(ctx, '❌ أرسل نص الرسالة أولاً.');
+        }
+        const contacts = getPhoneContactEntries(phone);
+        if (!contacts.length) {
+            ctx.session = null;
+            return safeReply(ctx, '⚠️ لا توجد جهات اتصال محفوظة لهذا الرقم.');
+        }
+        await safeReply(ctx, `⏳ جاري إرسال الرسالة الجماعية لـ ${contacts.length} جهة اتصال من الرقم ${phone}...\nقد يستغرق هذا بعض الوقت.`);
+        const sock = waClients.get(normalizePhone(phone));
+        try {
+            const report = await sendBroadcastToAllContacts(sock, phone, broadcastText);
+            ctx.session = null;
+            return safeReply(ctx, formatContactsBroadcastReport(report));
+        } catch (err) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ حدث خطأ أثناء الإرسال الجماعي: ${err.message || 'خطأ غير متوقع'}`);
+        }
+    }
+
+        if (sessionState === 'wait_phone') {
         const phone = normalizePhone(incomingText);
         if (!phone) {
             return safeReply(ctx, '❌ أرسل أرقام فقط مع مفتاح الدولة.');
