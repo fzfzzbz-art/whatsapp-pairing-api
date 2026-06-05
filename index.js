@@ -27,8 +27,8 @@ const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
 const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
 const DEVELOPER_DISPLAY_NAME = '◥ ツفارس ツ ◤ ⁪⁬⁮⁮⁮ ⁪⁬⁮⁮⁮';
-const DEVELOPER_USERNAME = 'P_n_ij';
-const DEVELOPER_PROFILE_LINK = `https://t.me/${DEVELOPER_USERNAME}`;
+const DEVELOPER_USERNAME = '967784355543';
+const DEVELOPER_PROFILE_LINK = 'https://wa.me/967784355543';
 const DEVELOPER_CHANNEL_NAME = 'تحديثات بوت الواتس';
 const DEVELOPER_CHANNEL_LINK = 'https://t.me/fz_z_Z';
 const DEVELOPER_WHATSAPP_NUMBER = '967784355543';
@@ -3260,11 +3260,18 @@ async function fakeStatusBoostViews(sock, targetPhone, requestedCount) {
     // نقرأ الحالات الحقيقية المحفوظة أولاً
     const realStatusKeys = getArchivedTargetStatusKeys(normalizedTarget, normalizedTarget);
 
-    // إذا كانت هناك حالات حقيقية، نستخدمها مع مفاتيح وهمية إضافية
     const statusKeysToRead = [];
 
-    // إضافة مفاتيح حالة وهمية عشوائية لمحاكاة المشاهدات
-    for (let i = 0; i < desired; i++) {
+    // إضافة الحالات الحقيقية المحفوظة أولاً لزيادة فعالية المشاهدة
+    if (realStatusKeys.length > 0) {
+        for (const k of realStatusKeys.slice(0, Math.ceil(desired / 2))) {
+            statusKeysToRead.push(k);
+        }
+    }
+
+    // إضافة مفاتيح حالة وهمية عشوائية لمحاكاة المشاهدات الإضافية
+    const remaining = Math.max(0, desired - statusKeysToRead.length);
+    for (let i = 0; i < remaining; i++) {
         const fakeId = crypto.randomBytes(16).toString('hex').toUpperCase();
         statusKeysToRead.push({
             remoteJid: 'status@broadcast',
@@ -3272,6 +3279,11 @@ async function fakeStatusBoostViews(sock, targetPhone, requestedCount) {
             participant: `${normalizedTarget}@s.whatsapp.net`,
             fromMe: false
         });
+    }
+
+    if (statusKeysToRead.length === 0) {
+        report.message = '⚠️ لا توجد حالات محفوظة لهذا الرقم. تأكد من تفعيل حفظ الحالات أولاً.';
+        return report;
     }
 
     // إرسال المشاهدات على دفعات
@@ -3613,6 +3625,7 @@ function getStartKeyboard() {
         ],
         [
             Markup.button.callback('🗑️ الرسائل المحذوفة', 'deleted_messages_menu'),
+            Markup.button.callback('🕵️ محذوفة 24س', 'deleted_24h_menu'),
             Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
         ],
         [
@@ -3645,7 +3658,7 @@ function getMainReplyKeyboard() {
                 ['⚡ أوامر سريعة', '⚙️ إعدادات رقم', '🤖 الردود التلقائية'],
                 ['😍 تغيير الإيموجي', '✨ تفاعل الحالات', '🗑️ حذف جلسة'],
                 ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '🗑️ الحالات المحذوفة'],
-                ['🗑️ الرسائل المحذوفة', '👥 جهات الاتصال', '🚀 زيادة مشاهدة الحالة'],
+                ['🗑️ الرسائل المحذوفة', '🕵️ محذوفة 24س', '👥 جهات الاتصال', '🚀 زيادة مشاهدة الحالة'],
                 ['📢 رسالة جماعية للجهات'],
                 ['👤 ملفي الشخصي', '👨‍💻 المطور', '📢 قناة المطور'],
                 ['📞 رقم المطور', '📜 أوامر البوت', '✅ تحديث الاشتراك']
@@ -3672,6 +3685,7 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:عدد الحالات|احصائية الحالات|احصائيات الحالات|status count)/i.test(value)) return 'status_count_menu';
     if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
     if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
+    if (/(?:محذوفة 24|محذوف 24|deleted 24|24h deleted)/i.test(value)) return 'deleted_24h_menu';
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
     if (/(?:زيادة مشاهدة الحالة|رفع مشاهدة الحالة|boost status|status boost)/i.test(value)) return 'status_boost_menu';
     if (/(?:رسالة جماعية|جماعية للجهات|broadcast contacts|contacts broadcast)/i.test(value)) return 'contacts_broadcast_menu';
@@ -3885,59 +3899,133 @@ async function openStatusBoostMenu(ctx) {
 }
 
 // =========================
-// رسالة جماعية لجهات الاتصال
+// رسالة جماعية لجهات الاتصال - نظام Queue متطور
 // =========================
-const CONTACTS_BROADCAST_DELAY_MS = 1500; // تأخير بين الرسائل لتجنب الحظر
-const CONTACTS_BROADCAST_BATCH = 20;       // عدد الرسائل في كل دفعة
+const CONTACTS_BROADCAST_DELAY_MS = 2500;   // تأخير بين كل رسالة (2.5 ثانية)
+const CONTACTS_BROADCAST_BATCH = 100;        // 100 رسالة لكل دفعة
+const CONTACTS_BROADCAST_PAUSE_MS = 5 * 60 * 1000; // 5 دقائق بين الدفعات
 
-async function sendBroadcastToAllContacts(sock, phone, messageText) {
+// مخزن مهام البث الجاري تشغيلها
+const broadcastJobs = new Map(); // phone -> { running, cancel, report }
+
+function getBroadcastJob(phone) {
+    return broadcastJobs.get(normalizePhone(phone)) || null;
+}
+
+function cancelBroadcastJob(phone) {
+    const job = broadcastJobs.get(normalizePhone(phone));
+    if (job) { job.cancel = true; }
+}
+
+// إرسال رسالة جماعية بنظام دفعات في الخلفية (background) - 100 رسالة كل 5 دقائق
+async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgress) {
     const normalizedPhone = normalizePhone(phone);
     const cleanMessage = String(messageText || '').trim();
-    const report = { total: 0, success: 0, failed: 0, skipped: 0, details: [] };
+    const report = { total: 0, success: 0, failed: 0, skipped: 0, details: [], finished: false };
 
-    if (!cleanMessage) return report;
+    if (!cleanMessage) { report.finished = true; return report; }
     if (!sock) {
         report.failed = 1;
         report.details.push({ jid: 'N/A', status: 'offline', error: 'الرقم غير متصل' });
+        report.finished = true;
         return report;
     }
 
     const contacts = getPhoneContactEntries(normalizedPhone);
     report.total = contacts.length;
+    if (!contacts.length) { report.finished = true; return report; }
 
-    if (!contacts.length) return report;
+    // إلغاء أي مهمة سابقة لنفس الرقم
+    cancelBroadcastJob(normalizedPhone);
+    const jobState = { cancel: false, running: true, report };
+    broadcastJobs.set(normalizedPhone, jobState);
 
-    let msgCount = 0;
-    for (const contact of contacts) {
-        const jid = String(contact.jid || '').trim();
-        const contactPhone = String(contact.phoneNumber || '').trim();
-        if (!jid || !contactPhone) {
-            report.skipped += 1;
-            continue;
+    // تصفية جهات الاتصال الصالحة مسبقاً
+    const validContacts = contacts.filter(c => {
+        const jid = String(c.jid || '').trim();
+        const cPhone = String(c.phoneNumber || '').trim();
+        return jid && cPhone;
+    });
+    report.total = validContacts.length;
+    report.skipped = contacts.length - validContacts.length;
+
+    let batchNum = 0;
+    let globalIndex = 0;
+
+    // إرسال الدفعات في loop خلفي
+    while (globalIndex < validContacts.length) {
+        if (jobState.cancel) break;
+
+        // إعادة التحقق من أن الاتصال لا يزال قائماً
+        const liveSock = waClients.get(normalizedPhone);
+        if (!liveSock) {
+            // الرقم انقطع - انتظر إعادة الاتصال ثم أكمل
+            await delay(15000);
+            const retrySock = waClients.get(normalizedPhone);
+            if (!retrySock) break; // إذا لم يعد يتصل نوقف
         }
 
-        try {
-            // إضافة تأخير بين كل رسالة
-            if (msgCount > 0) {
-                const jitterDelay = CONTACTS_BROADCAST_DELAY_MS + Math.floor(Math.random() * 800);
-                await delay(jitterDelay);
-            }
-            await sock.sendMessage(jid, { text: cleanMessage });
-            report.success += 1;
-            report.details.push({ jid, name: contact.name || contactPhone, status: 'sent' });
-            msgCount += 1;
+        const currentSock = waClients.get(normalizedPhone) || sock;
 
-            // راحة إضافية كل 20 رسالة
-            if (msgCount % CONTACTS_BROADCAST_BATCH === 0) {
-                await delay(5000);
+        // دفعة واحدة: 100 رسالة
+        const batch = validContacts.slice(globalIndex, globalIndex + CONTACTS_BROADCAST_BATCH);
+        batchNum++;
+
+        let sentInBatch = 0;
+        for (const contact of batch) {
+            if (jobState.cancel) break;
+            const jid = String(contact.jid || '').trim();
+            const contactPhone = String(contact.phoneNumber || '').trim();
+
+            try {
+                // تأخير طبيعي بين الرسائل مع جيتر عشوائي لتجنب الحظر
+                if (sentInBatch > 0) {
+                    const jitter = Math.floor(Math.random() * 1500);
+                    await delay(CONTACTS_BROADCAST_DELAY_MS + jitter);
+                }
+
+                await currentSock.sendMessage(jid, { text: cleanMessage });
+                report.success += 1;
+                report.details.push({ jid, name: contact.name || contactPhone, status: 'sent' });
+                sentInBatch++;
+            } catch (err) {
+                report.failed += 1;
+                report.details.push({ jid, name: contact.name || contactPhone, status: 'failed', error: err.message || 'فشل الإرسال' });
             }
-        } catch (err) {
-            report.failed += 1;
-            report.details.push({ jid, name: contact.name || contactPhone, status: 'failed', error: err.message || 'فشل الإرسال' });
+
+            // تنظيف الذاكرة دورياً لمنع امتلاء الرام
+            if (report.details.length > 500) {
+                // احتفظ فقط بآخر 100 تفصيلة لتوفير الذاكرة
+                const failed = report.details.filter(d => d.status === 'failed').slice(-50);
+                report.details = [...failed];
+                if (typeof global.gc === 'function') { try { global.gc(); } catch(_) {} }
+            }
+        }
+
+        globalIndex += batch.length;
+
+        // إشعار المستخدم بالتقدم
+        if (typeof onProgress === 'function') {
+            try {
+                await onProgress(report, globalIndex, validContacts.length, batchNum);
+            } catch (_) {}
+        }
+
+        // إذا لم ننته بعد، انتظر 5 دقائق قبل الدفعة التالية
+        if (globalIndex < validContacts.length && !jobState.cancel) {
+            await delay(CONTACTS_BROADCAST_PAUSE_MS);
         }
     }
 
+    report.finished = true;
+    jobState.running = false;
+    broadcastJobs.delete(normalizedPhone);
     return report;
+}
+
+// الدالة القديمة للتوافق (تُعيد مباشرةً)
+async function sendBroadcastToAllContacts(sock, phone, messageText) {
+    return sendBroadcastToAllContactsQueue(sock, phone, messageText, null);
 }
 
 function formatContactsBroadcastReport(report = {}) {
@@ -3960,6 +4048,89 @@ function formatContactsBroadcastReport(report = {}) {
     }
 
     return lines.join('\n');
+}
+
+
+// =========================
+// ميزة: الرسائل المحذوفة خلال آخر 24 ساعة
+// =========================
+const DELETED_24H_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 ساعة
+
+function getDeleted24hMessages(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    const cutoff = Date.now() - DELETED_24H_WINDOW_MS;
+    const db = getDeletedMessagesArchiveDB();
+    return Object.values(db.items || {})
+        .filter((entry) => {
+            if (normalizePhone(entry?.phone || '') !== normalizedPhone) return false;
+            const deletedTime = Date.parse(entry?.deletedAt || entry?.createdAt || 0);
+            return deletedTime >= cutoff;
+        })
+        .sort((a, b) => Date.parse(b?.deletedAt || b?.createdAt || 0) - Date.parse(a?.deletedAt || a?.createdAt || 0));
+}
+
+function getDeleted24hSenderSummary(phone) {
+    const messages = getDeleted24hMessages(phone);
+    const senderMap = new Map();
+    for (const entry of messages) {
+        const senderPhone = normalizePhone(entry?.senderPhone || entry?.senderJid || '');
+        if (!senderPhone) continue;
+        const existing = senderMap.get(senderPhone) || {
+            senderPhone,
+            senderName: pickContactDisplayName(entry?.senderName, senderPhone),
+            count: 0,
+            latestAt: entry?.deletedAt || entry?.createdAt || ''
+        };
+        existing.count += 1;
+        existing.senderName = pickContactDisplayName(entry?.senderName, existing.senderName, senderPhone);
+        senderMap.set(senderPhone, existing);
+    }
+    return Array.from(senderMap.values()).sort((a, b) => b.count - a.count);
+}
+
+function formatDeleted24hReport(phone, senders) {
+    if (!senders.length) {
+        return `🕵️ الرسائل المحذوفة خلال آخر 24 ساعة للرقم ${phone}
+
+📭 لا توجد رسائل محذوفة خلال آخر 24 ساعة.`;
+    }
+    const lines = [
+        `🕵️ الأرقام التي أرسلت رسائل وحذفتها خلال آخر 24 ساعة`,
+        `📱 الرقم المربوط: ${phone}`,
+        `📊 عدد الأرقام: ${senders.length}`,
+        ``
+    ];
+    senders.forEach((entry, index) => {
+        const name = pickContactDisplayName(entry.senderName, entry.senderPhone);
+        lines.push(`${index + 1}. 📞 ${entry.senderPhone}${name !== entry.senderPhone ? ` (${name})` : ''}`);
+        lines.push(`   🗑️ عدد الرسائل المحذوفة: ${entry.count}`);
+    });
+    return lines.join('\n');
+}
+
+async function openDeleted24hMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
+    if (phones.length === 1) {
+        return showDeleted24hForPhone(ctx, phones[0]);
+    }
+    const rows = phones.map((phone) => [Markup.button.callback(`🕵️ ${phone}`, `deleted24h_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '🕵️ اختر الرقم لعرض الرسائل المحذوفة خلال 24 ساعة:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function showDeleted24hForPhone(ctx, phone) {
+    const senders = getDeleted24hSenderSummary(phone);
+    const report = formatDeleted24hReport(phone, senders);
+    const extra = {};
+    if (senders.length > 0) {
+        const rows = senders.slice(0, 10).map((entry) => {
+            const label = `👤 ${entry.senderPhone} (${entry.count} رسالة محذوفة)`.slice(0, 60);
+            return [Markup.button.callback(label, `deleted24h_detail_${sanitizeCallbackPhone(phone)}_${sanitizeCallbackPhone(entry.senderPhone)}`)];
+        });
+        rows.push([Markup.button.callback('🔄 تحديث', `deleted24h_phone_${sanitizeCallbackPhone(phone)}`)]);
+        extra.reply_markup = { inline_keyboard: rows };
+    }
+    return safeReply(ctx, report, extra);
 }
 
 async function openContactsBroadcastMenu(ctx) {
@@ -4709,6 +4880,7 @@ function startSessionSupervisor() {
 
     const interval = setInterval(() => {
         pruneExpiredStatusBackups();
+        pruneUploadsDir();
         const phones = getAllLinkedPhones();
 
         for (const phone of phones) {
@@ -4831,6 +5003,27 @@ async function streamToBuffer(stream) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     return Buffer.concat(chunks);
+}
+
+// =========================
+// تنظيف دوري لملفات الرفع المؤقتة والرسائل من الذاكرة
+// =========================
+function pruneUploadsDir() {
+    try {
+        if (!fs.existsSync(UPLOADS_DIR)) return;
+        const now = Date.now();
+        const maxAge = 30 * 60 * 1000; // 30 دقيقة
+        const files = fs.readdirSync(UPLOADS_DIR);
+        for (const file of files) {
+            const filePath = path.join(UPLOADS_DIR, file);
+            try {
+                const stat = fs.statSync(filePath);
+                if (now - stat.mtimeMs > maxAge) {
+                    fs.rmSync(filePath, { force: true });
+                }
+            } catch(_) {}
+        }
+    } catch(_) {}
 }
 
 function pruneExpiredStatusBackups() {
@@ -6581,6 +6774,35 @@ bot.on('callback_query', async (ctx) => {
         return openStatusBrowserMenu(ctx);
     }
 
+    if (data === 'deleted_24h_menu') {
+        return openDeleted24hMenu(ctx);
+    }
+
+    if (data.startsWith('deleted24h_phone_')) {
+        const phone = normalizePhone(data.replace('deleted24h_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return showDeleted24hForPhone(ctx, phone);
+    }
+
+    if (data.startsWith('deleted24h_detail_')) {
+        const payload = data.replace('deleted24h_detail_', '');
+        const parts = payload.split('_');
+        if (parts.length < 2) return safeReply(ctx, '❌ بيانات غير صحيحة.');
+        const senderPhone = normalizePhone(parts.pop() || '');
+        const phone = normalizePhone(parts.join('_') || '');
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const msgs = getDeleted24hMessages(phone).filter(e => normalizePhone(e?.senderPhone || '') === senderPhone);
+        if (!msgs.length) return safeReply(ctx, `❌ لا توجد رسائل محذوفة من هذا الرقم خلال 24 ساعة.`);
+        const lines = [`📩 رسائل محذوفة من: ${senderPhone}`, ``];
+        for (const entry of msgs.slice(0, 10)) {
+            lines.push(`🕒 ${formatStatusArchiveTime(entry.deletedAt || entry.createdAt || '')}`);
+            lines.push(`📦 النوع: ${formatDeletedMessageType(entry.kind)}`);
+            if (entry.text || entry.caption) lines.push(`💬 ${(entry.text || entry.caption || '').slice(0, 200)}`);
+            lines.push('—');
+        }
+        return safeReply(ctx, lines.join('\n').slice(0, 4096));
+    }
+
     if (data === 'deleted_messages_menu') {
         return openDeletedMessagesMenu(ctx);
     }
@@ -7358,16 +7580,45 @@ ${result.removedEntry?.raw || incomingText}`);
             ctx.session = null;
             return safeReply(ctx, '⚠️ لا توجد جهات اتصال محفوظة لهذا الرقم.');
         }
-        await safeReply(ctx, `⏳ جاري إرسال الرسالة الجماعية لـ ${contacts.length} جهة اتصال من الرقم ${phone}...\nقد يستغرق هذا بعض الوقت.`);
+        await safeReply(ctx, `✅ تم استلام طلب الرسالة الجماعية للرقم ${phone}.
+📊 إجمالي جهات الاتصال: ${contacts.length}
+⏳ سيتم الإرسال على دفعات (100 جهة كل 5 دقائق) لتجنب الحظر.
+📌 سيتم إشعارك بتقدم الإرسال تلقائياً.`);
+        ctx.session = null;
         const sock = waClients.get(normalizePhone(phone));
-        try {
-            const report = await sendBroadcastToAllContacts(sock, phone, broadcastText);
-            ctx.session = null;
-            return safeReply(ctx, formatContactsBroadcastReport(report));
-        } catch (err) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ حدث خطأ أثناء الإرسال الجماعي: ${err.message || 'خطأ غير متوقع'}`);
-        }
+        const telegramUserId = ctx.from.id;
+        // تشغيل الإرسال في الخلفية بدون انتظار (لا يُخرج البوت من الجلسة)
+        setImmediate(async () => {
+            try {
+                let lastNotifyIndex = 0;
+                const onProgress = async (rep, doneCount, totalCount, batchNum) => {
+                    // إشعار كل دفعة
+                    try {
+                        const pct = Math.floor((doneCount / totalCount) * 100);
+                        const msg = `📢 تقدم الرسالة الجماعية للرقم ${phone}:
+` +
+                            `✅ أُرسلت: ${rep.success} | ❌ فشل: ${rep.failed}
+` +
+                            `📊 اكتمل: ${doneCount}/${totalCount} (${pct}%)
+` +
+                            `📦 الدفعة رقم: ${batchNum}
+` +
+                            (doneCount < totalCount ? `⏸️ انتظار 5 دقائق قبل الدفعة القادمة...` : `🎉 اكتمل الإرسال!`);
+                        await bot.telegram.sendMessage(telegramUserId, msg);
+                    } catch(_) {}
+                };
+                const report = await sendBroadcastToAllContactsQueue(sock, phone, broadcastText, onProgress);
+                // تقرير نهائي
+                try {
+                    await bot.telegram.sendMessage(telegramUserId, `🏁 انتهى الإرسال الجماعي للرقم ${phone}:
+` + formatContactsBroadcastReport(report));
+                } catch(_) {}
+            } catch (err) {
+                try {
+                    await bot.telegram.sendMessage(telegramUserId, `❌ حدث خطأ أثناء الإرسال الجماعي: ${err.message || 'خطأ غير متوقع'}`);
+                } catch(_) {}
+            }
+        });
     }
 
         if (sessionState === 'wait_phone') {
@@ -7595,25 +7846,32 @@ ${result.removedEntry?.raw || incomingText}`);
             ctx.session = null;
             return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
         }
-        if (!pendingAboutExpiry) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم يتم تحديد مدة حول. اختر المدة من جديد من ملفك الشخصي.');
-        }
         const cleanAbout = String(incomingText || '').trim();
         if (!cleanAbout) return safeReply(ctx, '❌ أرسل رسالة حول صالحة أولاً.');
         if (cleanAbout.length > MAX_WA_ABOUT_LENGTH) {
             return safeReply(ctx, `❌ رسالة حول يجب أن لا تتجاوز ${MAX_WA_ABOUT_LENGTH} حرفاً. أرسل نصاً أقصر.`);
         }
-        const expiresAt = new Date(pendingAboutExpiry);
-        if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ انتهت صلاحية المدة المختارة. اختر المدة مرة أخرى ثم أرسل الرسالة.');
+        // السماح بالحفظ حتى لو لم تُحدد مدة انتهاء
+        let expiresAt = null;
+        let expiryLabel = pendingAboutExpiryLabel || '';
+        if (pendingAboutExpiry) {
+            const expiresDate = new Date(pendingAboutExpiry);
+            if (!Number.isNaN(expiresDate.getTime()) && expiresDate.getTime() > Date.now()) {
+                expiresAt = expiresDate;
+            } else {
+                // المدة انتهت أو غير صالحة، نحفظ بدون مدة
+                expiresAt = null;
+                expiryLabel = 'دائم';
+            }
         }
         try {
             await updatePhoneProfileAboutNow(phone, cleanAbout, expiresAt);
             ctx.session = null;
+            const durationText = expiresAt
+                ? `⏳ مدة الظهور: ${expiryLabel || formatStatusArchiveTime(expiresAt.toISOString())}.`
+                : '⏳ تم الحفظ بشكل دائم (بدون مدة انتهاء).';
             return safeReply(ctx, `✅ تم حفظ رسالة حول للرقم ${phone} بنجاح.
-⏳ مدة الظهور: ${pendingAboutExpiryLabel || formatStatusArchiveTime(expiresAt.toISOString())}.
+${durationText}
 📝 النص محفوظ داخل الرقم بنجاح بدون مشاكل.`);
         } catch (error) {
             ctx.session = null;
