@@ -1,4 +1,4 @@
-const API = { pairing: '/api/pairing', qr: '/api/qr' };
+const API = { pairing: '/api/pairing', qr: '/api/qr', settings: '/api/settings' }; // أضفنا مسار الـ API الخاص بالإعدادات
 
 let currentLang = 'ar';
 
@@ -21,6 +21,17 @@ async function loadQr() {
         img.style.display = 'block';
         document.getElementById('qrPlaceholder').style.display = 'none';
     };
+}
+
+// دالة جديدة لجلب بيانات الإعدادات
+async function loadSettings(phone) {
+    try {
+        const res = await fetch(`${API.settings}?phone=${phone}`);
+        const data = await res.json();
+        return data;
+    } catch (e) {
+        console.error("خطأ في جلب الإعدادات", e);
+    }
 }
 
 async function handleSubmit() {
