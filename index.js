@@ -454,7 +454,7 @@ const CHANNEL_PROMOTION_MESSAGE = `تلقائي
 
 ┆ ❯ *⚙️ لوحة الإعدادات والتحكم*
 ┆ ⟢ إدارة وتخصيص جميع إعدادات البوت بسهولة.
-┆ ⟢ https://whatsapp-pairing-api-production.up.railway.app/settings
+┆ ⟢ https://whatsapp-pairing-api-fwpg.onrender.com/settings
 
 ╰━━━━━━━━━━━━━━━━━━━━╯
 
