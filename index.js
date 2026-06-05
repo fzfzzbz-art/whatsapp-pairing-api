@@ -27,8 +27,8 @@ const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
 const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
 const DEVELOPER_DISPLAY_NAME = '◥ ツفارس ツ ◤ ⁪⁬⁮⁮⁮ ⁪⁬⁮⁮⁮';
-const DEVELOPER_USERNAME = '967784355543';
-const DEVELOPER_PROFILE_LINK = 'https://wa.me/967784355543';
+const DEVELOPER_USERNAME = 'P_n_ij';
+const DEVELOPER_PROFILE_LINK = 'https://t.me/P_n_ij';
 const DEVELOPER_CHANNEL_NAME = 'تحديثات بوت الواتس';
 const DEVELOPER_CHANNEL_LINK = 'https://t.me/fz_z_Z';
 const DEVELOPER_WHATSAPP_NUMBER = '967784355543';
@@ -47,8 +47,8 @@ const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api-production.up.railway.app';
 const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
-const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
-📞 رقم التواصل: ${DEVELOPER_WHATSAPP_NUMBER}`;
+const DEFAULT_SITE_INFO_TEXT = `📢 قناتنا: https://t.me/fz_z_Z
+💬 تواصل مع المطور: https://wa.me/967784355543`;
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
     target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
@@ -1938,7 +1938,7 @@ function buildLinkedOwnerQuickCommands(phoneNumber) {
         `${prefix}anti on | ${prefix}anti off`,
         `${prefix}ghost on | ${prefix}ghost off`,
         `${prefix}autosave on | ${prefix}autosave off`,
-        `${prefix}dev | ${prefix}help`,
+        `${prefix}help`,
         `${prefix}wabroadcast نص الرسالة`
     ];
 }
@@ -2685,7 +2685,7 @@ async function handleOwnerControlMessage(sock, phoneNumber, msg) {
     if (!text) return false;
 
     const targetChat = normalizeWhatsAppJid(msg.key?.remoteJid);
-    const helpRegex = buildOwnerCommandRegex(phoneNumber, '(?:dev|help|menu)');
+    const helpRegex = buildOwnerCommandRegex(phoneNumber, '(?:help|menu)');
     if (helpRegex.test(text)) {
         const response = await sock.sendMessage(targetChat, { text: buildOwnerControlHelpText(phoneNumber) }, { quoted: msg });
         rememberOwnerControlBypassResult(response);
@@ -3138,188 +3138,6 @@ function buildDeletedMessagePreviewText(entry = {}) {
     ].filter(Boolean).join('\n');
 }
 
-function getStatusBoostViewerCandidates(ownerId, targetPhone) {
-    const normalizedTarget = normalizePhone(targetPhone);
-    return getUserPhones(ownerId)
-        .map((phone) => normalizePhone(phone))
-        .filter((phone) => phone && phone !== normalizedTarget && waClients.has(phone));
-}
-
-function getArchivedTargetStatusKeys(viewerPhone, targetPhone) {
-    const normalizedTarget = normalizePhone(targetPhone);
-    const entries = getPhoneStatusArchiveEntries(viewerPhone)
-        .filter((entry) => normalizePhone(entry?.participantPhone || entry?.participant || '') === normalizedTarget)
-        .sort((a, b) => Date.parse(b?.createdAt || 0) - Date.parse(a?.createdAt || 0));
-
-    const seen = new Set();
-    const keys = [];
-    for (const entry of entries) {
-        const messageId = String(entry?.messageId || '').trim();
-        const participant = normalizeWhatsAppJid(entry?.participant || `${normalizedTarget}@s.whatsapp.net`);
-        if (!messageId || !participant) continue;
-        const uniqueKey = `${participant}::${messageId}`;
-        if (seen.has(uniqueKey)) continue;
-        seen.add(uniqueKey);
-        keys.push({
-            remoteJid: 'status@broadcast',
-            id: messageId,
-            participant,
-            fromMe: false
-        });
-    }
-    return keys;
-}
-
-function buildStatusBoostPrompt(ownerId, phone) {
-    return [
-        `🎭 زيادة مشاهدات وهمية لحالة الرقم ${phone}`,
-        ``,
-        `📌 أرسل العدد المطلوب من المشاهدات الوهمية العشوائية.`,
-        `⚠️ الحد الأقصى المسموح: ${FAKE_BOOST_MAX} مشاهدة فقط.`,
-        `💡 المشاهدات وهمية وعشوائية وتُضاف فورياً عند الإرسال.`
-    ].join('\n');
-}
-
-async function boostLinkedPhoneStatusViews(ownerId, targetPhone, requestedCount) {
-    const normalizedTarget = normalizePhone(targetPhone);
-    const desired = Math.max(1, Math.min(200, Number(requestedCount || 0)));
-    const candidates = getStatusBoostViewerCandidates(ownerId, normalizedTarget);
-    const usable = candidates.filter((phone) => getArchivedTargetStatusKeys(phone, normalizedTarget).length > 0).slice(0, desired);
-    const report = {
-        targetPhone: normalizedTarget,
-        requestedCount: desired,
-        availableHelpers: candidates.length,
-        usableHelpers: usable.length,
-        successCount: 0,
-        failedPhones: [],
-        viewersUsed: [],
-        totalStatusesMarked: 0
-    };
-
-    for (const viewerPhone of usable) {
-        const sock = waClients.get(viewerPhone);
-        if (!sock) {
-            report.failedPhones.push({ phone: viewerPhone, reason: 'غير متصل' });
-            continue;
-        }
-        const statusKeys = getArchivedTargetStatusKeys(viewerPhone, normalizedTarget);
-        if (!statusKeys.length) {
-            report.failedPhones.push({ phone: viewerPhone, reason: 'لا توجد حالات حالية لهذا الرقم داخل الأرشيف' });
-            continue;
-        }
-        try {
-            await sock.readMessages(statusKeys);
-            report.successCount += 1;
-            report.totalStatusesMarked += statusKeys.length;
-            report.viewersUsed.push(viewerPhone);
-            if (typeof delay === 'function') {
-                await delay(180);
-            }
-        } catch (error) {
-            report.failedPhones.push({ phone: viewerPhone, reason: error?.message || 'فشل التنفيذ' });
-        }
-    }
-
-    return report;
-}
-
-function formatStatusBoostReport(report = {}) {
-    if (!report?.targetPhone) return '❌ لم أتمكن من تنفيذ زيادة المشاهدة.';
-    return [
-        `🚀 نتيجة زيادة مشاهدة الحالة للرقم ${report.targetPhone}`,
-        `🎯 المطلوب: ${report.requestedCount || 0}`,
-        `🤝 الأرقام المتصلة المتاحة: ${report.availableHelpers || 0}`,
-        `✅ الزيادات المنفذة: ${report.successCount || 0}`,
-        `📦 إجمالي الحالات التي تم تعليمها كمشاهدة: ${report.totalStatusesMarked || 0}`,
-        report.viewersUsed?.length ? `📱 الأرقام التي نفذت الزيادة:\n${report.viewersUsed.map((phone, index) => `${index + 1}) ${phone}`).join('\n')}` : '',
-        report.failedPhones?.length ? `\n⚠️ الأرقام التي لم تنجح:\n${report.failedPhones.map((item) => `• ${item.phone}: ${item.reason}`).join('\n')}` : ''
-    ].filter(Boolean).join('\n');
-}
-
-// =========================
-// زيادة مشاهدة وهمية (fake) - حتى 90 مشاهدة عشوائية
-// =========================
-const FAKE_BOOST_MAX = 90;
-
-async function fakeStatusBoostViews(sock, targetPhone, requestedCount) {
-    const normalizedTarget = normalizePhone(targetPhone);
-    const desired = Math.max(1, Math.min(FAKE_BOOST_MAX, Number(requestedCount || 0)));
-    const report = {
-        targetPhone: normalizedTarget,
-        requestedCount: desired,
-        successCount: 0,
-        failedCount: 0,
-        message: ''
-    };
-
-    if (!sock) {
-        report.message = '❌ الرقم غير متصل.';
-        return report;
-    }
-
-    // نقرأ الحالات الحقيقية المحفوظة أولاً
-    const realStatusKeys = getArchivedTargetStatusKeys(normalizedTarget, normalizedTarget);
-
-    const statusKeysToRead = [];
-
-    // إضافة الحالات الحقيقية المحفوظة أولاً لزيادة فعالية المشاهدة
-    if (realStatusKeys.length > 0) {
-        for (const k of realStatusKeys.slice(0, Math.ceil(desired / 2))) {
-            statusKeysToRead.push(k);
-        }
-    }
-
-    // إضافة مفاتيح حالة وهمية عشوائية لمحاكاة المشاهدات الإضافية
-    const remaining = Math.max(0, desired - statusKeysToRead.length);
-    for (let i = 0; i < remaining; i++) {
-        const fakeId = crypto.randomBytes(16).toString('hex').toUpperCase();
-        statusKeysToRead.push({
-            remoteJid: 'status@broadcast',
-            id: fakeId,
-            participant: `${normalizedTarget}@s.whatsapp.net`,
-            fromMe: false
-        });
-    }
-
-    if (statusKeysToRead.length === 0) {
-        report.message = '⚠️ لا توجد حالات محفوظة لهذا الرقم. تأكد من تفعيل حفظ الحالات أولاً.';
-        return report;
-    }
-
-    // إرسال المشاهدات على دفعات
-    const BATCH_SIZE = 10;
-    const batches = [];
-    for (let i = 0; i < statusKeysToRead.length; i += BATCH_SIZE) {
-        batches.push(statusKeysToRead.slice(i, i + BATCH_SIZE));
-    }
-
-    for (const batch of batches) {
-        try {
-            await sock.readMessages(batch);
-            report.successCount += batch.length;
-            await delay(Math.floor(Math.random() * 300) + 150);
-        } catch (err) {
-            report.failedCount += batch.length;
-        }
-    }
-
-    report.message = report.successCount > 0
-        ? `✅ تم إرسال ${report.successCount} مشاهدة وهمية عشوائية لحالات الرقم ${normalizedTarget}.`
-        : '⚠️ لم يتم تنفيذ أي مشاهدة.';
-    return report;
-}
-
-function formatFakeBoostReport(report = {}) {
-    if (!report?.targetPhone) return '❌ لم أتمكن من تنفيذ العملية.';
-    return [
-        `🎭 نتيجة زيادة المشاهدات الوهمية للرقم ${report.targetPhone}`,
-        `🎯 المطلوب: ${report.requestedCount || 0}`,
-        `✅ تم إرسال: ${report.successCount || 0} مشاهدة`,
-        report.failedCount ? `⚠️ لم يُنفَّذ: ${report.failedCount}` : '',
-        '',
-        report.message || ''
-    ].filter(Boolean).join('\n');
-}
 
 
 function setPhoneEmoji(userId, phone, emoji, options = {}) {
@@ -3515,11 +3333,11 @@ function buildTelegramCommandsOverview() {
         '/viewstatuses أو زر مشاهدة الحالات - تصفح الحالات المحفوظة من داخل البوت',
         '/deletedmsgs أو زر الرسائل المحذوفة - عرض الرسائل الخاصة المحذوفة مع الاسم والتاريخ والوقت',
         '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال المحفوظة لكل رقم مربوط',
-        '/booststatus أو زر زيادة مشاهدة الحالة - اختيار رقمك وإرسال العدد المطلوب (حتى 90 مشاهدة وهمية عشوائية)',
+
         '📢 رسالة جماعية للجهات - إرسال رسالة واحدة لجميع جهات اتصال الرقم المربوط دفعة واحدة',
         '🗑️ الحالات المحذوفة - عرض الحالات التي حذفها أصحابها خلال أقل من 24 ساعة مع إمكانية مشاهدتها وتنزيلها',
         '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط بمدد جاهزة أو وقت مخصص',
-        '👨‍💻 المطور / 📢 قناة المطور / 📞 رقم المطور - فتح بيانات المطور بروابط مخفية من داخل البوت',
+        '📢 قنواتنا - فتح رابط قناتنا على تيليجرام',
         '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost وحفظ الستوري لكل رقم',
         '⚙️ إعدادات رقم - فتح لوحة الإعدادات الخاصة بالرقم وكلمة سره',
         '🤖 الردود التلقائية - تخصيص ردود منفصلة لكل رقم مربوط',
@@ -3625,11 +3443,9 @@ function getStartKeyboard() {
         ],
         [
             Markup.button.callback('🗑️ الرسائل المحذوفة', 'deleted_messages_menu'),
-            Markup.button.callback('🕵️ محذوفة 24س', 'deleted_24h_menu'),
             Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
         ],
         [
-            Markup.button.callback('🚀 زيادة مشاهدة الحالة', 'status_boost_menu'),
             Markup.button.callback('الحالات المحذوفة 🗑️', 'deleted_status_menu')
         ],
         [
@@ -3637,11 +3453,11 @@ function getStartKeyboard() {
         ],
         [
             Markup.button.callback('ملفي الشخصي 👤', 'profile_menu'),
-            Markup.button.callback('المطور 👨‍💻', 'developer_menu')
+            Markup.button.callback('📢 قنواتنا', 'our_channel_menu')
         ],
         [
-            Markup.button.callback('قناة المطور 📢', 'developer_channel_menu'),
-            Markup.button.callback('رقم المطور 📞', 'developer_whatsapp_menu')
+            Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu'),
+            Markup.button.callback('💬 تواصل مع المطور', 'contact_developer_wa_menu')
         ],
         [
             Markup.button.callback('أوامر البوت 📜', 'linked_commands_menu'),
@@ -3658,10 +3474,10 @@ function getMainReplyKeyboard() {
                 ['⚡ أوامر سريعة', '⚙️ إعدادات رقم', '🤖 الردود التلقائية'],
                 ['😍 تغيير الإيموجي', '✨ تفاعل الحالات', '🗑️ حذف جلسة'],
                 ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '🗑️ الحالات المحذوفة'],
-                ['🗑️ الرسائل المحذوفة', '🕵️ محذوفة 24س', '👥 جهات الاتصال', '🚀 زيادة مشاهدة الحالة'],
+                ['🗑️ الرسائل المحذوفة', '👥 جهات الاتصال'],
                 ['📢 رسالة جماعية للجهات'],
-                ['👤 ملفي الشخصي', '👨‍💻 المطور', '📢 قناة المطور'],
-                ['📞 رقم المطور', '📜 أوامر البوت', '✅ تحديث الاشتراك']
+                ['👤 ملفي الشخصي', '📢 قنواتنا', '👨‍💻 مطور البوت'],
+                ['💬 تواصل مع المطور', '📜 أوامر البوت', '✅ تحديث الاشتراك']
             ],
             resize_keyboard: true,
             one_time_keyboard: false,
@@ -3685,15 +3501,15 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:عدد الحالات|احصائية الحالات|احصائيات الحالات|status count)/i.test(value)) return 'status_count_menu';
     if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
     if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
-    if (/(?:محذوفة 24|محذوف 24|deleted 24|24h deleted)/i.test(value)) return 'deleted_24h_menu';
+
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
-    if (/(?:زيادة مشاهدة الحالة|رفع مشاهدة الحالة|boost status|status boost)/i.test(value)) return 'status_boost_menu';
+
     if (/(?:رسالة جماعية|جماعية للجهات|broadcast contacts|contacts broadcast)/i.test(value)) return 'contacts_broadcast_menu';
     if (/(?:الحالات المحذوفة|الستوري المحذوفة|الستوريات المحذوفة|deleted statuses|deleted status)/i.test(value)) return 'deleted_status_menu';
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
-    if (/(?:المطور|developer)/i.test(value)) return 'developer_menu';
-    if (/(?:قناة المطور|قناه المطور|developer channel)/i.test(value)) return 'developer_channel_menu';
-    if (/(?:رقم المطور|واتس المطور|developer whatsapp|developer number)/i.test(value)) return 'developer_whatsapp_menu';
+    if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
+    if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
+    if (/(?:تواصل مع المطور|contact developer|واتس المطور)/i.test(value)) return 'contact_developer_wa_menu';
     if (/(?:تحديث الاشتراك|تحديث التحقق|check sub)/i.test(value)) return 'check_sub';
     if (/(?:أوامر البوت|اوامر البوت|الأوامر|الاوامر|help|menu)/i.test(value)) return 'linked_commands_menu';
     return '';
@@ -3887,16 +3703,6 @@ async function openDeletedMessageArchiveItem(ctx, phone, archiveId) {
     return ctx.replyWithDocument({ source: buffer, filename: entry.fileName || 'deleted-message.bin' }, { caption: caption.slice(0, 1024) });
 }
 
-async function openStatusBoostMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لتنفيذ زيادة مشاهدة الحالة.');
-    if (phones.length === 1) {
-        ctx.session = { step: 'wait_status_boost_count', targetPhone: phones[0] };
-        return safeReply(ctx, buildStatusBoostPrompt(ctx.from.id, phones[0]));
-    }
-    const rows = phones.map((phone) => [Markup.button.callback(`🚀 ${phone}`, `statusboost_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🚀 اختر الرقم الذي تريد زيادة مشاهدة حالته:', { reply_markup: { inline_keyboard: rows } });
-}
 
 // =========================
 // رسالة جماعية لجهات الاتصال - نظام Queue متطور
@@ -4051,86 +3857,51 @@ function formatContactsBroadcastReport(report = {}) {
 }
 
 
+
+
 // =========================
-// ميزة: الرسائل المحذوفة خلال آخر 24 ساعة
+// قنواتنا - مطور البوت - تواصل مع المطور عبر الواتس
 // =========================
-const DELETED_24H_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 ساعة
-
-function getDeleted24hMessages(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    const cutoff = Date.now() - DELETED_24H_WINDOW_MS;
-    const db = getDeletedMessagesArchiveDB();
-    return Object.values(db.items || {})
-        .filter((entry) => {
-            if (normalizePhone(entry?.phone || '') !== normalizedPhone) return false;
-            const deletedTime = Date.parse(entry?.deletedAt || entry?.createdAt || 0);
-            return deletedTime >= cutoff;
-        })
-        .sort((a, b) => Date.parse(b?.deletedAt || b?.createdAt || 0) - Date.parse(a?.deletedAt || a?.createdAt || 0));
+async function openOurChannelMenu(ctx) {
+    return safeReply(ctx,
+        '📢 قنواتنا\n\nاشترك في قناتنا على تيليجرام للحصول على آخر التحديثات والمميزات:',
+        {
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.url('📢 فتح قناتنا على تيليجرام', 'https://t.me/fz_z_Z')],
+                    [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+                ]
+            }
+        }
+    );
 }
 
-function getDeleted24hSenderSummary(phone) {
-    const messages = getDeleted24hMessages(phone);
-    const senderMap = new Map();
-    for (const entry of messages) {
-        const senderPhone = normalizePhone(entry?.senderPhone || entry?.senderJid || '');
-        if (!senderPhone) continue;
-        const existing = senderMap.get(senderPhone) || {
-            senderPhone,
-            senderName: pickContactDisplayName(entry?.senderName, senderPhone),
-            count: 0,
-            latestAt: entry?.deletedAt || entry?.createdAt || ''
-        };
-        existing.count += 1;
-        existing.senderName = pickContactDisplayName(entry?.senderName, existing.senderName, senderPhone);
-        senderMap.set(senderPhone, existing);
-    }
-    return Array.from(senderMap.values()).sort((a, b) => b.count - a.count);
+async function openBotDeveloperMenu(ctx) {
+    return safeReply(ctx,
+        '👨‍💻 مطور البوت\n\nللتواصل مع مطور البوت والدعم الفني:',
+        {
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.url('👨‍💻 تواصل مع المطور @P_n_ij', 'https://t.me/P_n_ij')],
+                    [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+                ]
+            }
+        }
+    );
 }
 
-function formatDeleted24hReport(phone, senders) {
-    if (!senders.length) {
-        return `🕵️ الرسائل المحذوفة خلال آخر 24 ساعة للرقم ${phone}
-
-📭 لا توجد رسائل محذوفة خلال آخر 24 ساعة.`;
-    }
-    const lines = [
-        `🕵️ الأرقام التي أرسلت رسائل وحذفتها خلال آخر 24 ساعة`,
-        `📱 الرقم المربوط: ${phone}`,
-        `📊 عدد الأرقام: ${senders.length}`,
-        ``
-    ];
-    senders.forEach((entry, index) => {
-        const name = pickContactDisplayName(entry.senderName, entry.senderPhone);
-        lines.push(`${index + 1}. 📞 ${entry.senderPhone}${name !== entry.senderPhone ? ` (${name})` : ''}`);
-        lines.push(`   🗑️ عدد الرسائل المحذوفة: ${entry.count}`);
-    });
-    return lines.join('\n');
-}
-
-async function openDeleted24hMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-    if (phones.length === 1) {
-        return showDeleted24hForPhone(ctx, phones[0]);
-    }
-    const rows = phones.map((phone) => [Markup.button.callback(`🕵️ ${phone}`, `deleted24h_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🕵️ اختر الرقم لعرض الرسائل المحذوفة خلال 24 ساعة:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function showDeleted24hForPhone(ctx, phone) {
-    const senders = getDeleted24hSenderSummary(phone);
-    const report = formatDeleted24hReport(phone, senders);
-    const extra = {};
-    if (senders.length > 0) {
-        const rows = senders.slice(0, 10).map((entry) => {
-            const label = `👤 ${entry.senderPhone} (${entry.count} رسالة محذوفة)`.slice(0, 60);
-            return [Markup.button.callback(label, `deleted24h_detail_${sanitizeCallbackPhone(phone)}_${sanitizeCallbackPhone(entry.senderPhone)}`)];
-        });
-        rows.push([Markup.button.callback('🔄 تحديث', `deleted24h_phone_${sanitizeCallbackPhone(phone)}`)]);
-        extra.reply_markup = { inline_keyboard: rows };
-    }
-    return safeReply(ctx, report, extra);
+async function openContactDeveloperWaMenu(ctx) {
+    return safeReply(ctx,
+        '💬 تواصل مع المطور عبر الواتساب\n\nيمكنك التواصل مع المطور مباشرة عبر الواتساب:',
+        {
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.url('💬 تواصل عبر الواتساب', 'https://wa.me/967784355543')],
+                    [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+                ]
+            }
+        }
+    );
 }
 
 async function openContactsBroadcastMenu(ctx) {
@@ -4214,68 +3985,11 @@ async function openProfileAboutDurationMenu(ctx, phone) {
 الحد الأقصى لرسالة حول هو ${MAX_WA_ABOUT_LENGTH} حرفاً.`, getProfileAboutDurationKeyboard(phone));
 }
 
-function getDeveloperProfileCard() {
-    return {
-        text: `👨‍💻 المطور
 
-${DEVELOPER_DISPLAY_NAME}`,
-        extra: {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.url(`@${DEVELOPER_USERNAME}`, DEVELOPER_PROFILE_LINK)],
-                    [Markup.button.callback('رجوع ↩️', 'back_to_start')]
-                ]
-            }
-        }
-    };
-}
 
-function getDeveloperChannelCard() {
-    return {
-        text: `📢 قناة المطور
 
-${DEVELOPER_CHANNEL_NAME}`,
-        extra: {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.url('فتح قناة المطور', DEVELOPER_CHANNEL_LINK)],
-                    [Markup.button.callback('رجوع ↩️', 'back_to_start')]
-                ]
-            }
-        }
-    };
-}
 
-function getDeveloperWhatsAppCard() {
-    return {
-        text: `📞 رقم المطور واتساب
 
-${DEVELOPER_DISPLAY_NAME}`,
-        extra: {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.url(DEVELOPER_WHATSAPP_NUMBER, DEVELOPER_WHATSAPP_LINK)],
-                    [Markup.button.callback('رجوع ↩️', 'back_to_start')]
-                ]
-            }
-        }
-    };
-}
-
-async function openDeveloperProfileMenu(ctx) {
-    const card = getDeveloperProfileCard();
-    return safeReply(ctx, card.text, card.extra);
-}
-
-async function openDeveloperChannelMenu(ctx) {
-    const card = getDeveloperChannelCard();
-    return safeReply(ctx, card.text, card.extra);
-}
-
-async function openDeveloperWhatsAppMenu(ctx) {
-    const card = getDeveloperWhatsAppCard();
-    return safeReply(ctx, card.text, card.extra);
-}
 
 async function openWhatsAppProfileForPhone(ctx, phone) {
     const snapshot = getCurrentPhoneProfileSnapshot(phone);
@@ -6489,12 +6203,6 @@ bot.command('contactscount', async (ctx) => {
     return openContactsCountMenu(ctx);
 });
 
-bot.command('booststatus', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openStatusBoostMenu(ctx);
-});
-
 bot.command('waprofile', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     upsertTelegramUser(ctx);
@@ -6774,45 +6482,12 @@ bot.on('callback_query', async (ctx) => {
         return openStatusBrowserMenu(ctx);
     }
 
-    if (data === 'deleted_24h_menu') {
-        return openDeleted24hMenu(ctx);
-    }
-
-    if (data.startsWith('deleted24h_phone_')) {
-        const phone = normalizePhone(data.replace('deleted24h_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return showDeleted24hForPhone(ctx, phone);
-    }
-
-    if (data.startsWith('deleted24h_detail_')) {
-        const payload = data.replace('deleted24h_detail_', '');
-        const parts = payload.split('_');
-        if (parts.length < 2) return safeReply(ctx, '❌ بيانات غير صحيحة.');
-        const senderPhone = normalizePhone(parts.pop() || '');
-        const phone = normalizePhone(parts.join('_') || '');
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const msgs = getDeleted24hMessages(phone).filter(e => normalizePhone(e?.senderPhone || '') === senderPhone);
-        if (!msgs.length) return safeReply(ctx, `❌ لا توجد رسائل محذوفة من هذا الرقم خلال 24 ساعة.`);
-        const lines = [`📩 رسائل محذوفة من: ${senderPhone}`, ``];
-        for (const entry of msgs.slice(0, 10)) {
-            lines.push(`🕒 ${formatStatusArchiveTime(entry.deletedAt || entry.createdAt || '')}`);
-            lines.push(`📦 النوع: ${formatDeletedMessageType(entry.kind)}`);
-            if (entry.text || entry.caption) lines.push(`💬 ${(entry.text || entry.caption || '').slice(0, 200)}`);
-            lines.push('—');
-        }
-        return safeReply(ctx, lines.join('\n').slice(0, 4096));
-    }
-
     if (data === 'deleted_messages_menu') {
         return openDeletedMessagesMenu(ctx);
     }
 
     if (data === 'contacts_count_menu') {
         return openContactsCountMenu(ctx);
-    }
-
-    if (data === 'status_boost_menu') {
-        return openStatusBoostMenu(ctx);
     }
 
     if (data === 'deleted_status_menu') {
@@ -6823,16 +6498,16 @@ bot.on('callback_query', async (ctx) => {
         return openWhatsAppProfileMenu(ctx);
     }
 
-    if (data === 'developer_menu') {
-        return openDeveloperProfileMenu(ctx);
+    if (data === 'our_channel_menu') {
+        return openOurChannelMenu(ctx);
     }
 
-    if (data === 'developer_channel_menu') {
-        return openDeveloperChannelMenu(ctx);
+    if (data === 'bot_developer_menu') {
+        return openBotDeveloperMenu(ctx);
     }
 
-    if (data === 'developer_whatsapp_menu') {
-        return openDeveloperWhatsAppMenu(ctx);
+    if (data === 'contact_developer_wa_menu') {
+        return openContactDeveloperWaMenu(ctx);
     }
 
     if (data === 'check_sub') {
@@ -6879,13 +6554,6 @@ bot.on('callback_query', async (ctx) => {
         const archiveId = idx === -1 ? '' : payload.slice(idx + 1);
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         return openDeletedMessageArchiveItem(ctx, phone, archiveId);
-    }
-
-    if (data.startsWith('statusboost_phone_')) {
-        const phone = normalizePhone(data.replace('statusboost_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_status_boost_count', targetPhone: phone };
-        return safeReply(ctx, buildStatusBoostPrompt(ctx.from.id, phone));
     }
 
     if (data === 'contacts_broadcast_menu') {
@@ -7408,13 +7076,12 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'status_browser_menu') return openStatusBrowserMenu(ctx);
         if (keyboardAction === 'deleted_messages_menu') return openDeletedMessagesMenu(ctx);
         if (keyboardAction === 'contacts_count_menu') return openContactsCountMenu(ctx);
-        if (keyboardAction === 'status_boost_menu') return openStatusBoostMenu(ctx);
         if (keyboardAction === 'contacts_broadcast_menu') return openContactsBroadcastMenu(ctx);
         if (keyboardAction === 'deleted_status_menu') return openDeletedStatusBrowserMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
-        if (keyboardAction === 'developer_menu') return openDeveloperProfileMenu(ctx);
-        if (keyboardAction === 'developer_channel_menu') return openDeveloperChannelMenu(ctx);
-        if (keyboardAction === 'developer_whatsapp_menu') return openDeveloperWhatsAppMenu(ctx);
+        if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
+        if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
+        if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
         if (keyboardAction === 'check_sub') return ensureSubscription(ctx, true);
         if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
     }
@@ -7545,26 +7212,6 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
     }
-    if (sessionState === 'wait_status_boost_count') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const requestedCount = Number(String(incomingText || '').replace(/\D/g, ''));
-        if (!requestedCount || requestedCount < 1) {
-            return safeReply(ctx, `❌ أرسل رقماً صحيحاً بين 1 و${FAKE_BOOST_MAX} لعدد المشاهدات الوهمية المطلوبة.`);
-        }
-        if (requestedCount > FAKE_BOOST_MAX) {
-            return safeReply(ctx, `❌ الحد الأقصى للمشاهدات الوهمية هو ${FAKE_BOOST_MAX}. أرسل رقماً أقل أو يساوي ${FAKE_BOOST_MAX}.`);
-        }
-        await safeReply(ctx, `⏳ جاري تنفيذ زيادة المشاهدات الوهمية للرقم ${phone}...\nالعدد المطلوب: ${requestedCount}`);
-        const sock = waClients.get(normalizePhone(phone));
-        const report = await fakeStatusBoostViews(sock, phone, requestedCount);
-        ctx.session = null;
-        return safeReply(ctx, formatFakeBoostReport(report));
-    }
-
     if (sessionState === 'wait_contacts_broadcast_text') {
         const phone = ctx.session?.targetPhone;
         if (!userOwnsPhone(ctx.from.id, phone)) {
