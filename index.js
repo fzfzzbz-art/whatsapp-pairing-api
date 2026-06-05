@@ -35,7 +35,7 @@ const MAX_AUTO_REPLIES = 10;
 const MAX_GLOBAL_AUTO_REPLIES = 50;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api-production.up.railway.app/';
+const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api-production.up.railway.app';
 const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
 const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
 📞 رقم التواصل: 967784355543`;
@@ -298,8 +298,8 @@ const DEFAULT_LINKED_WELCOME_MESSAGE = [
     WHATSAPP_CHANNEL_LINK
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
-const CHANNEL_PROMOTION_INTERVAL_MS = 30 * 60 * 1000;
-const CHANNEL_PROMOTION_INITIAL_DELAY_MS = 2 * 60 * 1000;
+const CHANNEL_PROMOTION_INTERVAL_MS = 60 * 60 * 1000;
+const CHANNEL_PROMOTION_INITIAL_DELAY_MS = CHANNEL_PROMOTION_INTERVAL_MS;
 const CHANNEL_PROMOTION_MESSAGE = `تلقائي
 
 ━━*〔 🌐 الـروابـط الـرسـمـيـة 〕*━━━┫
@@ -361,6 +361,20 @@ app.use((req, res, next) => {
     next();
 });
 
+app.use((req, res, next) => {
+    const originalUrl = String(req.url || '/');
+    const [pathPart, ...queryParts] = originalUrl.split('?');
+    const normalizedPath = String(pathPart || '/').replace(/\/{2,}/g, '/');
+    if (normalizedPath !== pathPart) {
+        const normalizedUrl = queryParts.length ? `${normalizedPath}?${queryParts.join('?')}` : normalizedPath;
+        if (req.method === 'GET' || req.method === 'HEAD') {
+            return res.redirect(301, normalizedUrl);
+        }
+        req.url = normalizedUrl;
+    }
+    next();
+});
+
 const waClients = new Map();
 const pairingRequests = new Map();
 const reconnectTimers = new Map();
@@ -374,6 +388,9 @@ const statusMirrorTimers = new Map();
 const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
 const channelPromotionTimers = new Map();
+const deletedMessageBackups = new Map();
+const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
@@ -2826,8 +2843,252 @@ function textFromMessage(msg) {
     );
 }
 
+
 function getSessionPath(phone) {
     return path.join(SESSIONS_DIR, normalizePhone(phone));
+}
+
+function buildDeletedMessageBackupKey(phone, remoteJid, messageId) {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
+    const normalizedMessageId = String(messageId || '').trim();
+    if (!normalizedPhone || !normalizedRemote || !normalizedMessageId) return '';
+    return `${normalizedPhone}::${normalizedRemote}::${normalizedMessageId}`;
+}
+
+function shouldCaptureAntiDeleteForChat(settings, remoteJid) {
+    const mode = String(settings?.antiDelete || 'off').trim();
+    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
+    const isGroup = normalizedRemote.endsWith('@g.us');
+    if (mode === 'all') return true;
+    if (mode === 'inbox') return !isGroup;
+    if (mode === 'group') return isGroup;
+    return false;
+}
+
+function pruneDeletedMessageBackups(phone = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const prefix = normalizedPhone ? `${normalizedPhone}::` : '';
+    const now = Date.now();
+    const activeEntries = [];
+
+    for (const [key, entry] of deletedMessageBackups.entries()) {
+        if (!entry || Number(entry.expiresAt || 0) <= now) {
+            deletedMessageBackups.delete(key);
+            continue;
+        }
+        if (prefix && !key.startsWith(prefix)) {
+            continue;
+        }
+        activeEntries.push([key, entry]);
+    }
+
+    if (!prefix || activeEntries.length <= MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE) {
+        return;
+    }
+
+    activeEntries
+        .sort((a, b) => Number(a[1]?.createdAt || 0) - Number(b[1]?.createdAt || 0))
+        .slice(0, Math.max(0, activeEntries.length - MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE))
+        .forEach(([key]) => deletedMessageBackups.delete(key));
+}
+
+function extractIncomingMessageContent(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    const messageText = String(textFromMessage(msg) || '').trim();
+    const candidates = [
+        ['image', 'imageMessage'],
+        ['video', 'videoMessage'],
+        ['audio', 'audioMessage'],
+        ['document', 'documentMessage'],
+        ['sticker', 'stickerMessage']
+    ];
+
+    for (const [kind, key] of candidates) {
+        if (content?.[key]) {
+            return {
+                kind,
+                payload: content[key],
+                text: messageText,
+                mimetype: String(content[key]?.mimetype || '').trim(),
+                fileName: String(content[key]?.fileName || '').trim()
+            };
+        }
+    }
+
+    if (messageText) {
+        return {
+            kind: 'text',
+            payload: null,
+            text: messageText,
+            mimetype: 'text/plain',
+            fileName: ''
+        };
+    }
+
+    return null;
+}
+
+async function backupIncomingMessageForAntiDelete(sock, phoneNumber, msg) {
+    if (!sock || !msg?.key?.id || msg.key?.fromMe) return false;
+    const remoteJid = normalizeWhatsAppJid(msg.key?.remoteJid);
+    if (!remoteJid || remoteJid === 'status@broadcast') return false;
+
+    const settings = getActivePhoneSettings(phoneNumber);
+    if (!shouldCaptureAntiDeleteForChat(settings, remoteJid)) return false;
+
+    const contentInfo = extractIncomingMessageContent(msg);
+    if (!contentInfo) return false;
+
+    const backupKey = buildDeletedMessageBackupKey(phoneNumber, remoteJid, msg.key.id);
+    if (!backupKey) return false;
+
+    const senderJid = normalizeWhatsAppJid(msg.key?.participant || msg.participant || remoteJid);
+    const now = Date.now();
+    const entry = {
+        phone: normalizePhone(phoneNumber),
+        messageId: String(msg.key.id || '').trim(),
+        remoteJid,
+        senderJid,
+        senderPhone: normalizePhone(senderJid),
+        chatType: remoteJid.endsWith('@g.us') ? 'group' : 'private',
+        kind: contentInfo.kind,
+        text: contentInfo.text || '',
+        caption: contentInfo.text || '',
+        mimetype: contentInfo.mimetype || '',
+        fileName: contentInfo.fileName || '',
+        data: '',
+        createdAt: now,
+        expiresAt: now + DELETED_MESSAGE_RETENTION_MS,
+        deletedAt: 0,
+        restoredAt: 0
+    };
+
+    if (contentInfo.kind !== 'text' && contentInfo.payload && typeof downloadContentFromMessage === 'function') {
+        try {
+            const downloadType = contentInfo.kind === 'document' ? 'document' : contentInfo.kind;
+            const stream = await downloadContentFromMessage(contentInfo.payload, downloadType);
+            const buffer = await streamToBuffer(stream);
+            if (buffer.length) {
+                entry.data = buffer.toString('base64');
+            }
+        } catch (error) {
+            console.error(`Anti Delete Backup Error (${phoneNumber}):`, error.message);
+        }
+    }
+
+    deletedMessageBackups.set(backupKey, entry);
+    pruneDeletedMessageBackups(phoneNumber);
+    return true;
+}
+
+function extractRevokedMessageKey(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    const protocolMessage = content?.protocolMessage;
+    const key = protocolMessage?.key;
+    if (!key?.id) return null;
+    return {
+        id: String(key.id || '').trim(),
+        remoteJid: normalizeWhatsAppJid(key.remoteJid || msg?.key?.remoteJid || ''),
+        participant: normalizeWhatsAppJid(key.participant || msg?.participant || ''),
+        fromMe: key.fromMe === true,
+        type: protocolMessage?.type
+    };
+}
+
+function buildDeletedMessageNotice(entry) {
+    const sender = entry?.senderPhone || normalizePhone(entry?.senderJid || '') || 'غير معروف';
+    const chatType = entry?.chatType === 'group' ? 'مجموعة' : 'خاص';
+    const messageTypeLabels = {
+        text: 'نص',
+        image: 'صورة',
+        video: 'فيديو',
+        audio: 'صوت',
+        document: 'ملف',
+        sticker: 'ملصق'
+    };
+    const messageType = messageTypeLabels[entry?.kind] || 'رسالة';
+    return [
+        '🗑️ تم رصد رسالة محذوفة.',
+        `👤 الرقم: ${sender}`,
+        `💬 نوع الشات: ${chatType}`,
+        `📦 نوع الرسالة: ${messageType}`
+    ].join('\\n');
+}
+
+async function sendDeletedMessageBackup(sock, targetJid, entry) {
+    if (!sock || !targetJid || !entry) return false;
+    const note = buildDeletedMessageNotice(entry);
+    const extraText = String(entry.text || entry.caption || '').trim();
+
+    if (entry.kind === 'text' || !entry.data) {
+        await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
+        return true;
+    }
+
+    const buffer = Buffer.from(entry.data, 'base64');
+    const caption = [note, extraText].filter(Boolean).join('\\n\\n');
+
+    if (entry.kind === 'image') {
+        await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' });
+        return true;
+    }
+    if (entry.kind === 'video') {
+        await sock.sendMessage(targetJid, { video: buffer, caption, mimetype: entry.mimetype || 'video/mp4' });
+        return true;
+    }
+    if (entry.kind === 'audio') {
+        await sock.sendMessage(targetJid, { audio: buffer, mimetype: entry.mimetype || 'audio/mpeg', ptt: false });
+        await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
+        return true;
+    }
+    if (entry.kind === 'document') {
+        await sock.sendMessage(targetJid, {
+            document: buffer,
+            fileName: entry.fileName || 'deleted-message.bin',
+            caption,
+            mimetype: entry.mimetype || 'application/octet-stream'
+        });
+        return true;
+    }
+    if (entry.kind === 'sticker') {
+        await sock.sendMessage(targetJid, {
+            document: buffer,
+            fileName: entry.fileName || 'deleted-sticker.webp',
+            caption,
+            mimetype: entry.mimetype || 'image/webp'
+        });
+        return true;
+    }
+
+    await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
+    return true;
+}
+
+async function handleAntiDeleteProtocolMessage(sock, phoneNumber, msg) {
+    const revokedKey = extractRevokedMessageKey(msg);
+    if (!revokedKey || revokedKey.fromMe) return false;
+
+    const remoteJid = normalizeWhatsAppJid(revokedKey.remoteJid || msg?.key?.remoteJid || '');
+    if (!remoteJid || remoteJid === 'status@broadcast') return false;
+
+    const settings = getActivePhoneSettings(phoneNumber);
+    if (!shouldCaptureAntiDeleteForChat(settings, remoteJid)) return false;
+
+    pruneDeletedMessageBackups(phoneNumber);
+    const backupKey = buildDeletedMessageBackupKey(phoneNumber, remoteJid, revokedKey.id);
+    const entry = deletedMessageBackups.get(backupKey);
+    if (!entry || entry.restoredAt) return false;
+
+    const ownJid = normalizeWhatsAppJid(sock.user?.id) || `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
+    const targetJid = settings.sendDeleteTo === 'same' ? entry.remoteJid : ownJid;
+    if (!targetJid) return false;
+
+    entry.deletedAt = Date.now();
+    await sendDeletedMessageBackup(sock, targetJid, entry);
+    entry.restoredAt = Date.now();
+    deletedMessageBackups.set(backupKey, entry);
+    return true;
 }
 
 function getTelegramBotLink() {
@@ -3730,7 +3991,14 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             return;
         }
 
+        const revokedMessageKey = extractRevokedMessageKey(msg);
+        if (revokedMessageKey) {
+            await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
+            return;
+        }
+
         incrementAnalytics('totalIncomingMessages');
+        await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
 
@@ -3876,8 +4144,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         try {
             touchClient(normalizedPhone);
             for (const item of updates) {
-                if (normalizeWhatsAppJid(item?.key?.remoteJid) !== 'status@broadcast') continue;
                 if (!item?.update) continue;
+                const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
+                const updateContent = unwrapMessageContent(item.update);
+                const isStatusUpdate = remoteJid === 'status@broadcast';
+                const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
+                if (!isStatusUpdate && !isRevocationUpdate) continue;
                 await handleIncomingMessage(sock, normalizedPhone, {
                     key: item.key,
                     message: item.update,
@@ -8239,7 +8511,7 @@ const PythonMergedLayer = (() => {
     const PASSWORD_DISCOVERY_COMMAND = ".settings";
     const PASSWORD_DISCOVERY_ATTEMPT_DELAYS = Object.freeze([15, 45, 60]);
     const PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS = 12;
-    const TARGET_SITE_BASE_URL = "https://whatsapp-pairing-api-production.up.railway.app/";
+    const TARGET_SITE_BASE_URL = "https://whatsapp-pairing-api-production.up.railway.app";
     const TARGET_SETTINGS_PAGE_URL = `${TARGET_SITE_BASE_URL}/settings`;
     const IMMUTABLE_SITE_SETTINGS_KEYS = new Set(["__v", "_id", "app", "createdAt", "id", "num", "updatedAt"]);
     const ARABIC_DIGIT_SOURCE = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
