@@ -364,6 +364,8 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const BOT_ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const STATUS_BACKUPS_FILE = path.join(DATA_DIR, 'status-backups.json');
 const STATUS_MEDIA_DIR = path.join(DATA_DIR, 'status-media');
+const STATUS_ARCHIVE_FILE = path.join(DATA_DIR, 'status-archive.json');
+const PROFILE_SCHEDULE_FILE = path.join(DATA_DIR, 'profile-schedules.json');
 const DEFAULT_ADMINS = Array.from(
     new Set(
         [...BUILTIN_ADMIN_IDS, ...(process.env.ADMIN_IDS || '').split(',')]
@@ -687,6 +689,8 @@ function bootStorage() {
         lastBootAt: ''
     });
     ensureFile(STATUS_BACKUPS_FILE, { items: {} });
+    ensureFile(STATUS_ARCHIVE_FILE, { items: {} });
+    ensureFile(PROFILE_SCHEDULE_FILE, { phones: {} });
 }
 
 bootStorage();
@@ -3043,13 +3047,16 @@ function buildTelegramCommandsOverview() {
         '/mywa أو زر أرقامي - عرض الأرقام المربوطة بحسابك',
         '/unlink أو زر حذف جلسة - حذف جلسة أي رقم من أرقامك',
         '/setemoji أو زر تغيير الإيموجي - تغيير إيموجي التفاعل لكل رقم',
+        '/statuscount أو زر عدد الحالات - معرفة عدد الحالات المحفوظة لكل رقم',
+        '/viewstatuses أو زر مشاهدة الحالات - تصفح الحالات المحفوظة من داخل البوت',
+        '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط',
         '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost وحفظ الستوري لكل رقم',
         '⚙️ إعدادات رقم - فتح لوحة الإعدادات الخاصة بالرقم وكلمة سره',
         '🤖 الردود التلقائية - تخصيص ردود منفصلة لكل رقم مربوط',
         '✨ تفاعل الحالات - تشغيل وإدارة التفاعل على الحالات لكل رقم',
         '',
         '🔐 كل رقم مربوط يملك كلمة سر خاصة به فقط، ويتم إنشاء مجلد إعدادات مستقل له داخل المشروع تلقائياً.'
-    ].join('\n');
+    ].join('\\n');
 }
 
 function buildNumberManagerMessage(phone) {
@@ -3156,7 +3163,8 @@ function getMainReplyKeyboard() {
                 ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
                 ['⚡ أوامر سريعة', '⚙️ إعدادات رقم', '🤖 الردود التلقائية'],
                 ['😍 تغيير الإيموجي', '✨ تفاعل الحالات', '🗑️ حذف جلسة'],
-                ['📜 أوامر البوت']
+                ['📊 عدد الحالات', '👁️ مشاهدة الحالات'],
+                ['👤 ملفي الشخصي', '📜 أوامر البوت']
             ],
             resize_keyboard: true,
             one_time_keyboard: false,
@@ -3177,6 +3185,9 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:تغيير الإيموجي|تغيير الايموجي|emoji)/i.test(value)) return 'change_emoji';
     if (/(?:تفاعل الحالات|status react)/i.test(value)) return 'emoji_react_menu';
     if (/(?:حذف جلسة|حذف الجلسة|unlink|delete session)/i.test(value)) return 'delete_session';
+    if (/(?:عدد الحالات|احصائية الحالات|احصائيات الحالات|status count)/i.test(value)) return 'status_count_menu';
+    if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
+    if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
     if (/(?:أوامر البوت|اوامر البوت|الأوامر|الاوامر|help|menu)/i.test(value)) return 'linked_commands_menu';
     return '';
 }
@@ -3231,6 +3242,94 @@ async function openLinkedCommandsMenu(ctx) {
 
     const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
     return safeReply(ctx, '📜 اختر الرقم الذي تريد عرض أوامره الخاصة به:', { reply_markup: { inline_keyboard: rows } });
+}
+
+
+async function openStatusCountMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض عدد الحالات.');
+    if (phones.length === 1) return safeReply(ctx, buildStatusCountMessage(phones[0]));
+    const rows = phones.map((phone) => [Markup.button.callback(`📊 ${phone}`, `statuscount_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '📊 اختر الرقم الذي تريد معرفة عدد الحالات المحفوظة له:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openStatusBrowserMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض الحالات.');
+    if (phones.length === 1) return openStatusBrowserForPhone(ctx, phones[0]);
+    const rows = phones.map((phone) => [Markup.button.callback(`👁️ ${phone}`, `statusbrowse_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '👁️ اختر الرقم الذي تريد مشاهدة حالاته من داخل البوت:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openStatusBrowserForPhone(ctx, phone) {
+    const entries = getPhoneStatusArchiveEntries(phone).slice(0, 20);
+    if (!entries.length) return safeReply(ctx, `📭 لا توجد حالات محفوظة حالياً للرقم ${phone}.`);
+    const rows = entries.map((entry, index) => {
+        const icon = entry.kind === 'video' ? '🎥' : entry.kind === 'image' ? '🖼️' : entry.kind === 'text' ? '📝' : '📦';
+        return [Markup.button.callback(`${icon} ${index + 1}. ${formatStatusArchiveOwner(entry)}`.slice(0, 60), `status_open_${sanitizeCallbackPhone(phone)}_${entry.id}`)];
+    });
+    rows.push([Markup.button.callback('🔄 تحديث القائمة', `statusbrowse_phone_${sanitizeCallbackPhone(phone)}`)]);
+    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+    return safeReply(ctx, `👁️ الحالات المحفوظة للرقم ${phone}
+📥 الإجمالي: ${getPhoneStatusArchiveEntries(phone).length}
+اختر الحالة التي تريد فتحها:`, { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openStatusArchiveItem(ctx, phone, statusId) {
+    const entry = getStatusArchiveEntry(phone, statusId);
+    if (!entry) return safeReply(ctx, '❌ لم أجد هذه الحالة أو تم حذفها من الأرشيف.');
+    const caption = buildStatusPreviewCaption(entry);
+    const buttons = buildStatusEntryButtons(phone, entry);
+    if (entry.kind === 'text') return safeReply(ctx, caption, buttons);
+    if (!entry.filePath || !fs.existsSync(entry.filePath)) return safeReply(ctx, '❌ ملف الحالة غير موجود حالياً على الخادم.');
+    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
+    if (entry.kind === 'video') return ctx.replyWithVideo({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
+    if (entry.kind === 'audio') {
+        await ctx.replyWithAudio({ source: entry.filePath }, buttons);
+        return safeReply(ctx, caption, buttons);
+    }
+    await ctx.replyWithDocument({ source: entry.filePath, filename: entry.fileName || 'status.bin' }, buttons);
+    return safeReply(ctx, caption, buttons);
+}
+
+async function sendStatusArchiveDownload(ctx, phone, statusId) {
+    const entry = getStatusArchiveEntry(phone, statusId);
+    if (!entry) return safeReply(ctx, '❌ لم أجد هذه الحالة أو تم حذفها.');
+    if (entry.kind === 'text') return safeReply(ctx, `📋 نص الحالة جاهز للنسخ:
+
+${String(entry.text || entry.caption || '').trim() || 'لا يوجد نص.'}`);
+    if (!entry.filePath || !fs.existsSync(entry.filePath)) return safeReply(ctx, '❌ ملف الحالة غير متوفر للتنزيل حالياً.');
+    const caption = `👤 صاحب الحالة: ${formatStatusArchiveOwner(entry)}`;
+    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: entry.filePath }, { caption });
+    if (entry.kind === 'video') return ctx.replyWithVideo({ source: entry.filePath }, { caption });
+    if (entry.kind === 'audio') return ctx.replyWithAudio({ source: entry.filePath }, { caption });
+    return ctx.replyWithDocument({ source: entry.filePath, filename: entry.fileName || 'status.bin' }, { caption });
+}
+
+async function openWhatsAppProfileMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الملف الشخصي.');
+    if (phones.length === 1) return openWhatsAppProfileForPhone(ctx, phones[0]);
+    const rows = phones.map((phone) => [Markup.button.callback(`👤 ${phone}`, `profile_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '👤 اختر الرقم الذي تريد فتح ملفه الشخصي على واتساب:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openWhatsAppProfileForPhone(ctx, phone) {
+    const snapshot = getCurrentPhoneProfileSnapshot(phone);
+    const scheduleLine = snapshot.schedule?.active && snapshot.schedule?.expiresAt ? `
+⏳ انتهاء حول المجدول: ${formatStatusArchiveTime(snapshot.schedule.expiresAt)}` : '';
+    return safeReply(ctx, `👤 الملف الشخصي للرقم ${phone}
+
+📛 الاسم: ${snapshot.name}
+📝 حول: ${snapshot.about}${scheduleLine}`, {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('الاسم ✏️', `profile_edit_name_${sanitizeCallbackPhone(phone)}`)],
+                [Markup.button.callback('حول 📝', `profile_edit_about_${sanitizeCallbackPhone(phone)}`)],
+                [Markup.button.callback('تحديث العرض 🔄', `profile_phone_${sanitizeCallbackPhone(phone)}`)]
+            ]
+        }
+    });
 }
 
 async function openAutoRepliesMenu(ctx) {
@@ -3634,7 +3733,7 @@ async function handleAntiDeleteProtocolMessage(sock, phoneNumber, msg) {
     if (!entry || entry.restoredAt) return false;
 
     const ownJid = normalizeWhatsAppJid(sock.user?.id) || `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
-    const targetJid = settings.sendDeleteTo === 'same' ? entry.remoteJid : ownJid;
+    const targetJid = entry.chatType === 'private' ? ownJid : (settings.sendDeleteTo === 'same' ? entry.remoteJid : ownJid);
     if (!targetJid) return false;
 
     entry.deletedAt = Date.now();
@@ -4432,18 +4531,18 @@ async function autoSaveIncomingStatusToOwner(sock, phoneNumber, msg) {
     const statusData = getStatusMessagePayload(msg);
     if (!statusData) return false;
 
-    const note = `📸 ستوري جديد تم حفظه تلقائياً
-👤 المصدر: ${participantPhone || participant || 'غير معروف'}`;
     const textBody = String(statusData.text || '').trim();
-    const caption = [note, textBody].filter(Boolean).join('\n\n');
+    const caption = textBody;
 
     if (statusData.kind === 'text') {
-        await sock.sendMessage(targetJid, { text: caption || note });
+        if (!caption) return false;
+        await sock.sendMessage(targetJid, { text: caption });
         return true;
     }
 
     if (!statusData.payload || typeof downloadContentFromMessage !== 'function') {
-        await sock.sendMessage(targetJid, { text: caption || note });
+        if (!caption) return false;
+        await sock.sendMessage(targetJid, { text: caption });
         return true;
     }
 
@@ -4451,7 +4550,8 @@ async function autoSaveIncomingStatusToOwner(sock, phoneNumber, msg) {
     const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
     const buffer = await streamToBuffer(stream);
     if (!buffer.length) {
-        await sock.sendMessage(targetJid, { text: caption || note });
+        if (!caption) return false;
+        await sock.sendMessage(targetJid, { text: caption });
         return true;
     }
 
@@ -4473,7 +4573,8 @@ async function autoSaveIncomingStatusToOwner(sock, phoneNumber, msg) {
         return true;
     }
 
-    await sock.sendMessage(targetJid, { text: caption || note });
+    if (!caption) return false;
+    await sock.sendMessage(targetJid, { text: caption });
     return true;
 }
 
@@ -4492,6 +4593,12 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             } catch (backupError) {
                 console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
             }
+        }
+
+        try {
+            await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
+        } catch (archiveError) {
+            console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
         }
 
         if (settings.autoSave === 'on') {
@@ -4891,13 +4998,326 @@ async function startAllSavedSessions() {
     }
 }
 
+
+function getDefaultStatusArchiveDB() {
+    return { items: {} };
+}
+
+function getStatusArchiveDB() {
+    const db = readJSON(STATUS_ARCHIVE_FILE, getDefaultStatusArchiveDB());
+    db.items = db.items || {};
+    return db;
+}
+
+function saveStatusArchiveDB(db) {
+    db.items = db.items || {};
+    writeJSON(STATUS_ARCHIVE_FILE, db);
+}
+
+function getDefaultProfileScheduleDB() {
+    return { phones: {} };
+}
+
+function getProfileScheduleDB() {
+    const db = readJSON(PROFILE_SCHEDULE_FILE, getDefaultProfileScheduleDB());
+    db.phones = db.phones || {};
+    return db;
+}
+
+function saveProfileScheduleDB(db) {
+    db.phones = db.phones || {};
+    writeJSON(PROFILE_SCHEDULE_FILE, db);
+}
+
+function getPhoneProfileState(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return {};
+    const db = getProfileScheduleDB();
+    return db.phones[normalizedPhone] || {};
+}
+
+function savePhoneProfileState(phone, patch = {}) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return {};
+    const db = getProfileScheduleDB();
+    db.phones[normalizedPhone] = {
+        ...(db.phones[normalizedPhone] || {}),
+        ...patch,
+        updatedAt: new Date().toISOString()
+    };
+    saveProfileScheduleDB(db);
+    return db.phones[normalizedPhone];
+}
+
+function buildStatusArchiveId(phone, participant, messageId) {
+    const seed = [normalizePhone(phone), normalizeWhatsAppJid(participant), String(messageId || '').trim()].join('|');
+    return crypto.createHash('sha1').update(seed).digest('hex').slice(0, 24);
+}
+
+function pruneStatusArchive(phone = '') {
+    const targetPhone = normalizePhone(phone);
+    const db = getStatusArchiveDB();
+    const grouped = new Map();
+
+    for (const [key, entry] of Object.entries(db.items || {})) {
+        const entryPhone = normalizePhone(entry?.phone || '');
+        if (!entryPhone) continue;
+        if (targetPhone && entryPhone !== targetPhone) continue;
+        if (!grouped.has(entryPhone)) grouped.set(entryPhone, []);
+        grouped.get(entryPhone).push([key, entry]);
+    }
+
+    let changed = false;
+    for (const [, items] of grouped.entries()) {
+        items.sort((a, b) => Date.parse(b[1]?.createdAt || 0) - Date.parse(a[1]?.createdAt || 0));
+        const overflow = items.slice(120);
+        for (const [key, entry] of overflow) {
+            if (entry?.filePath && fs.existsSync(entry.filePath)) {
+                try { fs.rmSync(entry.filePath, { force: true }); } catch (_) {}
+            }
+            delete db.items[key];
+            changed = true;
+        }
+    }
+
+    if (changed) saveStatusArchiveDB(db);
+}
+
+function getPhoneStatusArchiveEntries(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return [];
+    const db = getStatusArchiveDB();
+    return Object.values(db.items || {})
+        .filter((entry) => normalizePhone(entry?.phone || '') === normalizedPhone)
+        .sort((a, b) => Date.parse(b?.createdAt || 0) - Date.parse(a?.createdAt || 0));
+}
+
+function getStatusArchiveEntry(phone, statusId) {
+    const normalizedPhone = normalizePhone(phone);
+    const id = String(statusId || '').trim();
+    if (!normalizedPhone || !id) return null;
+    const db = getStatusArchiveDB();
+    const entry = db.items[id];
+    if (!entry) return null;
+    return normalizePhone(entry.phone || '') === normalizedPhone ? entry : null;
+}
+
+function formatStatusArchiveOwner(entry = {}) {
+    return String(entry.participantName || entry.participantPhone || normalizePhone(entry.participant || '') || 'غير معروف');
+}
+
+function formatStatusArchiveType(kind = '') {
+    return ({ text: 'نص', image: 'صورة', video: 'فيديو', document: 'ملف', audio: 'صوت' }[String(kind || '').toLowerCase()] || 'غير معروف');
+}
+
+function formatStatusArchiveTime(value = '') {
+    const time = Date.parse(value || 0);
+    if (!time) return 'غير معروف';
+    try {
+        return new Date(time).toLocaleString('ar-EG', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    } catch (_) {
+        return new Date(time).toISOString();
+    }
+}
+
+async function archiveIncomingStatusForTelegram(sock, phoneNumber, msg) {
+    if (!hasStatusContent(msg)) return null;
+    const participant = extractStatusParticipant(msg);
+    const ownPhone = normalizePhone(phoneNumber);
+    const participantPhone = normalizePhone(participant);
+    if (!participant || (participantPhone && participantPhone === ownPhone)) return null;
+
+    const statusData = getStatusMessagePayload(msg);
+    const messageId = String(msg?.key?.id || '').trim();
+    if (!statusData || !messageId) return null;
+
+    const archiveId = buildStatusArchiveId(phoneNumber, participant, messageId);
+    const db = getStatusArchiveDB();
+    if (db.items[archiveId]) return db.items[archiveId];
+
+    const entry = {
+        id: archiveId,
+        phone: ownPhone,
+        participant,
+        participantPhone,
+        participantName: String(msg?.pushName || participantPhone || participant || 'غير معروف').trim(),
+        messageId,
+        kind: statusData.kind,
+        text: String(statusData.text || '').trim(),
+        caption: String(statusData.text || '').trim(),
+        mimetype: String(statusData.payload?.mimetype || '').trim(),
+        fileName: '',
+        filePath: '',
+        createdAt: new Date().toISOString()
+    };
+
+    if (statusData.kind !== 'text' && statusData.payload && typeof downloadContentFromMessage === 'function') {
+        const downloadKind = statusData.kind === 'document' ? 'document' : statusData.kind;
+        const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
+        const buffer = await streamToBuffer(stream);
+        if (buffer.length) {
+            const ext = getStatusBackupExtension(statusData.kind, statusData.payload);
+            const fileName = `${sanitizeFileFragment(archiveId)}.${ext}`;
+            const filePath = path.join(STATUS_MEDIA_DIR, fileName);
+            fs.writeFileSync(filePath, buffer);
+            entry.fileName = fileName;
+            entry.filePath = filePath;
+        }
+    }
+
+    db.items[archiveId] = entry;
+    saveStatusArchiveDB(db);
+    pruneStatusArchive(phoneNumber);
+    return entry;
+}
+
+function buildStatusCountMessage(phone) {
+    const entries = getPhoneStatusArchiveEntries(phone);
+    const latest = entries[0];
+    return [
+        `📊 إحصائية الحالات للرقم ${phone}`,
+        `📥 عدد الحالات المحفوظة: ${entries.length}`,
+        `🕒 آخر حالة محفوظة: ${latest ? formatStatusArchiveTime(latest.createdAt) : 'لا يوجد'}`
+    ].join('\\n');
+}
+
+function buildStatusPreviewCaption(entry) {
+    const lines = [
+        `👤 صاحب الحالة: ${formatStatusArchiveOwner(entry)}`,
+        `🗂️ النوع: ${formatStatusArchiveType(entry?.kind)}`,
+        `🕒 الوقت: ${formatStatusArchiveTime(entry?.createdAt)}`
+    ];
+    const textBody = String(entry?.text || entry?.caption || '').trim();
+    if (textBody) lines.push('', textBody.slice(0, 900));
+    return lines.join('\\n').trim();
+}
+
+function buildStatusEntryButtons(phone, entry) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const statusId = String(entry?.id || '').trim();
+    const actionButton = entry?.kind === 'text'
+        ? Markup.button.callback('نسخ النص 📋', `status_copy_${cleanPhone}_${statusId}`)
+        : Markup.button.callback('تنزيل الوسائط ⬇️', `status_download_${cleanPhone}_${statusId}`);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [actionButton],
+                [Markup.button.callback(`👤 ${formatStatusArchiveOwner(entry)}`.slice(0, 55), `status_owner_${cleanPhone}_${statusId}`)],
+                [Markup.button.callback('رجوع للحالات ↩️', `statusbrowse_phone_${cleanPhone}`)]
+            ]
+        }
+    };
+}
+
+function parseProfileExpiryInput(value = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const normalized = raw.replace(/T/, ' ').replace(/\//g, '-').replace(/\s+/g, ' ').trim();
+    let match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
+    if (match) {
+        const [, y, m, d, hh, mm] = match;
+        const date = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), 0, 0);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    match = normalized.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})$/);
+    if (match) {
+        const [, d, m, y, hh, mm] = match;
+        const date = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), 0, 0);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return null;
+}
+
+async function processScheduledProfileUpdates() {
+    const db = getProfileScheduleDB();
+    let changed = false;
+    const now = Date.now();
+
+    for (const [phone, state] of Object.entries(db.phones || {})) {
+        const schedule = state?.aboutSchedule;
+        if (!schedule?.active || !schedule?.expiresAt) continue;
+        const expiresAt = Date.parse(schedule.expiresAt);
+        if (!expiresAt || expiresAt > now) continue;
+
+        const sock = waClients.get(normalizePhone(phone));
+        if (!sock || typeof sock.updateProfileStatus !== 'function') continue;
+
+        try {
+            await sock.updateProfileStatus(String(schedule.previousText || '').trim());
+            db.phones[phone] = {
+                ...(db.phones[phone] || {}),
+                currentAbout: String(schedule.previousText || '').trim(),
+                lastAppliedAbout: String(schedule.previousText || '').trim(),
+                lastKnownAbout: String(schedule.previousText || '').trim(),
+                aboutSchedule: null,
+                updatedAt: new Date().toISOString()
+            };
+            changed = true;
+        } catch (_) {}
+    }
+
+    if (changed) saveProfileScheduleDB(db);
+}
+
+let profileScheduleTicker = null;
+function startProfileScheduleTicker() {
+    if (profileScheduleTicker) return;
+    profileScheduleTicker = setInterval(() => {
+        Promise.resolve(processScheduledProfileUpdates()).catch(() => {});
+    }, 30 * 1000);
+    if (typeof profileScheduleTicker?.unref === 'function') profileScheduleTicker.unref();
+}
+
+startProfileScheduleTicker();
+
+function getCurrentPhoneProfileSnapshot(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    const sock = waClients.get(normalizedPhone);
+    const state = getPhoneProfileState(normalizedPhone);
+    return {
+        name: String(sock?.user?.name || sock?.user?.verifiedName || sock?.user?.notify || state.lastKnownName || normalizedPhone || 'غير معروف').trim(),
+        about: String(state.currentAbout || state.lastAppliedAbout || state.lastKnownAbout || 'غير مضبوط').trim() || 'غير مضبوط',
+        schedule: state.aboutSchedule || null
+    };
+}
+
+async function updatePhoneProfileNameNow(phone, nextName) {
+    const normalizedPhone = normalizePhone(phone);
+    const cleanName = String(nextName || '').trim().slice(0, 80);
+    if (!normalizedPhone || !cleanName) throw new Error('الاسم غير صالح.');
+    const sock = waClients.get(normalizedPhone);
+    if (!sock || typeof sock.updateProfileName !== 'function') throw new Error('الرقم غير متصل حالياً ولا يمكن تحديث الاسم الآن.');
+    await sock.updateProfileName(cleanName);
+    savePhoneProfileState(normalizedPhone, { lastKnownName: cleanName });
+    return cleanName;
+}
+
+async function updatePhoneProfileAboutNow(phone, aboutText, expiresAt) {
+    const normalizedPhone = normalizePhone(phone);
+    const cleanAbout = String(aboutText || '').trim().slice(0, 139);
+    if (!normalizedPhone || !cleanAbout) throw new Error('رسالة حول غير صالحة.');
+    const sock = waClients.get(normalizedPhone);
+    if (!sock || typeof sock.updateProfileStatus !== 'function') throw new Error('الرقم غير متصل حالياً ولا يمكن تحديث حول الآن.');
+    const state = getPhoneProfileState(normalizedPhone);
+    const previousText = String(state.currentAbout || state.lastAppliedAbout || state.lastKnownAbout || '').trim();
+    await sock.updateProfileStatus(cleanAbout);
+    savePhoneProfileState(normalizedPhone, {
+        currentAbout: cleanAbout,
+        lastAppliedAbout: cleanAbout,
+        lastKnownAbout: cleanAbout,
+        aboutSchedule: expiresAt ? { text: cleanAbout, previousText, expiresAt: new Date(expiresAt).toISOString(), active: true } : null
+    });
+    return cleanAbout;
+}
+
 // =========================
 // تيليجرام - الواجهات العامة
 // =========================
 async function sendStartMessage(ctx) {
     upsertTelegramUser(ctx);
-    await safeReply(ctx, buildStartMessage(ctx), getMainReplyKeyboard());
-    return safeReply(ctx, 'اختر الخدمة المطلوبة من القائمة السفلية أو من الأزرار التالية:', getStartKeyboard());
+    return safeReply(ctx, `${buildStartMessage(ctx)}
+
+اختر الخدمة المطلوبة من الكيبورد السفلي فقط.`, getMainReplyKeyboard());
 }
 
 bot.start(async (ctx) => {
@@ -4944,6 +5364,25 @@ bot.command('setemoji', async (ctx) => {
 
     const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
     await safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
+});
+
+
+bot.command('statuscount', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    upsertTelegramUser(ctx);
+    return openStatusCountMenu(ctx);
+});
+
+bot.command('viewstatuses', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    upsertTelegramUser(ctx);
+    return openStatusBrowserMenu(ctx);
+});
+
+bot.command('waprofile', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    upsertTelegramUser(ctx);
+    return openWhatsAppProfileMenu(ctx);
 });
 
 bot.on('callback_query', async (ctx) => {
@@ -5208,6 +5647,94 @@ bot.on('callback_query', async (ctx) => {
         }
         ctx.session = { step: 'wait_setting_value', targetPhone: phone, fieldKey };
         return safeReply(ctx, buildPhoneSettingEditPrompt(phone, fieldKey));
+    }
+
+
+    if (data === 'status_count_menu') {
+        return openStatusCountMenu(ctx);
+    }
+
+    if (data === 'status_browser_menu') {
+        return openStatusBrowserMenu(ctx);
+    }
+
+    if (data === 'profile_menu') {
+        return openWhatsAppProfileMenu(ctx);
+    }
+
+    if (data.startsWith('statuscount_phone_')) {
+        const phone = normalizePhone(data.replace('statuscount_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return safeReply(ctx, buildStatusCountMessage(phone));
+    }
+
+    if (data.startsWith('statusbrowse_phone_')) {
+        const phone = normalizePhone(data.replace('statusbrowse_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return openStatusBrowserForPhone(ctx, phone);
+    }
+
+    if (data.startsWith('status_open_')) {
+        const payload = data.replace('status_open_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return openStatusArchiveItem(ctx, phone, statusId);
+    }
+
+    if (data.startsWith('status_download_')) {
+        const payload = data.replace('status_download_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return sendStatusArchiveDownload(ctx, phone, statusId);
+    }
+
+    if (data.startsWith('status_copy_')) {
+        const payload = data.replace('status_copy_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const entry = getStatusArchiveEntry(phone, statusId);
+        if (!entry) return safeReply(ctx, '❌ لم أجد نص الحالة المطلوب نسخه.');
+        return safeReply(ctx, `📋 نص الحالة:
+
+${String(entry.text || entry.caption || '').trim() || 'لا يوجد نص.'}`);
+    }
+
+    if (data.startsWith('status_owner_')) {
+        const payload = data.replace('status_owner_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const entry = getStatusArchiveEntry(phone, statusId);
+        if (!entry) return safeReply(ctx, '❌ لم أجد بيانات صاحب الحالة.');
+        return safeReply(ctx, `👤 صاحب الحالة: ${formatStatusArchiveOwner(entry)}`);
+    }
+
+    if (data.startsWith('profile_phone_')) {
+        const phone = normalizePhone(data.replace('profile_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return openWhatsAppProfileForPhone(ctx, phone);
+    }
+
+    if (data.startsWith('profile_edit_name_')) {
+        const phone = normalizePhone(data.replace('profile_edit_name_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_profile_name', targetPhone: phone };
+        return safeReply(ctx, `✏️ أرسل الآن الاسم الجديد الذي تريد أن يظهر لجهات الاتصال للرقم ${phone}.`);
+    }
+
+    if (data.startsWith('profile_edit_about_')) {
+        const phone = normalizePhone(data.replace('profile_edit_about_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_profile_about_text', targetPhone: phone };
+        return safeReply(ctx, `📝 أرسل الآن رسالة حول الجديدة للرقم ${phone}.
+بعدها سأطلب منك تاريخ ووقت انتهاء ظهورها.`);
     }
 
     if (data === 'admin_stats' && isAdmin(ctx.from.id)) {
@@ -5608,6 +6135,9 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'change_emoji') return openChangeEmojiMenu(ctx);
         if (keyboardAction === 'emoji_react_menu') return openEmojiReactMenu(ctx);
         if (keyboardAction === 'delete_session') return openDeleteSessionMenu(ctx);
+        if (keyboardAction === 'status_count_menu') return openStatusCountMenu(ctx);
+        if (keyboardAction === 'status_browser_menu') return openStatusBrowserMenu(ctx);
+        if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
         if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
     }
 
@@ -5910,6 +6440,60 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         const section = getPhoneSettingsSectionByField(fieldKey);
         return safeReply(ctx, buildPhoneSettingsSectionMessage(phone, section.key), getPhoneSettingsSectionKeyboard(phone, section.key));
+    }
+
+
+    if (sessionState === 'wait_profile_name') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        const cleanName = String(incomingText || '').trim().slice(0, 80);
+        if (!cleanName) return safeReply(ctx, '❌ أرسل اسماً صالحاً أولاً.');
+        try {
+            await updatePhoneProfileNameNow(phone, cleanName);
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم حفظ اسم الملف الشخصي للرقم ${phone} بنجاح.`);
+        } catch (error) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ تعذر تحديث الاسم الآن: ${error.message || 'حدث خطأ غير متوقع.'}`);
+        }
+    }
+
+    if (sessionState === 'wait_profile_about_text') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        const cleanAbout = String(incomingText || '').trim().slice(0, 139);
+        if (!cleanAbout) return safeReply(ctx, '❌ أرسل رسالة حول صالحة أولاً.');
+        ctx.session = { step: 'wait_profile_about_expiry', targetPhone: phone, pendingAboutText: cleanAbout };
+        return safeReply(ctx, '⏳ أرسل الآن تاريخ ووقت انتهاء ظهور رسالة حول بهذه الصيغة:\nYYYY-MM-DD HH:MM\nمثال: 2026-06-05 23:30');
+    }
+
+    if (sessionState === 'wait_profile_about_expiry') {
+        const phone = ctx.session?.targetPhone;
+        const pendingAboutText = String(ctx.session?.pendingAboutText || '').trim();
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        if (!pendingAboutText) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ حصل خلل في حفظ نص حول. أعد المحاولة من جديد.');
+        }
+        const expiresAt = parseProfileExpiryInput(incomingText);
+        if (!expiresAt || expiresAt.getTime() <= Date.now()) return safeReply(ctx, '❌ أرسل تاريخاً ووقتاً مستقبلياً صحيحاً بصيغة YYYY-MM-DD HH:MM');
+        try {
+            await updatePhoneProfileAboutNow(phone, pendingAboutText, expiresAt);
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم حفظ رسالة حول للرقم ${phone} بنجاح حتى ${formatStatusArchiveTime(expiresAt.toISOString())}.`);
+        } catch (error) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ تعذر تحديث حول الآن: ${error.message || 'حدث خطأ غير متوقع.'}`);
+        }
     }
 
     if (sessionState === 'wait_new_start_message') {
