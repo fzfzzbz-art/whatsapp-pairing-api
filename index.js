@@ -359,6 +359,7 @@ const SESSIONS_DIR = path.join(STORAGE_ROOT, 'sessions');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PHONE_SETTINGS_FILE = path.join(DATA_DIR, 'phone-settings.json');
+const PHONE_PROFILES_DIR = path.join(DATA_DIR, 'phone-profiles');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const BOT_ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const STATUS_BACKUPS_FILE = path.join(DATA_DIR, 'status-backups.json');
@@ -556,9 +557,109 @@ function writeJSON(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }
 
+function removeDirRecursive(dirPath) {
+    if (!dirPath || !fs.existsSync(dirPath)) return;
+    fs.rmSync(dirPath, { recursive: true, force: true });
+}
+
+function listPhoneProfileDirectories() {
+    try {
+        ensureDir(PHONE_PROFILES_DIR);
+        return fs.readdirSync(PHONE_PROFILES_DIR, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name);
+    } catch (error) {
+        console.error('Phone Profile Directory Read Error:', error.message);
+        return [];
+    }
+}
+
+function getPhoneProfileDir(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    return normalizedPhone ? path.join(PHONE_PROFILES_DIR, normalizedPhone) : PHONE_PROFILES_DIR;
+}
+
+function getPhoneProfileSettingsFile(phone) {
+    return path.join(getPhoneProfileDir(phone), 'settings.json');
+}
+
+function getPhoneProfileCredentialsFile(phone) {
+    return path.join(getPhoneProfileDir(phone), 'credentials.json');
+}
+
+function getPhoneProfileMetaFile(phone) {
+    return path.join(getPhoneProfileDir(phone), 'meta.json');
+}
+
+function syncPhoneProfileToDirectory(phone, profile = {}) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return;
+    const dirPath = getPhoneProfileDir(normalizedPhone);
+    const apps = profile?.apps || {};
+    const credentials = profile?.credentials || {};
+    const activeAppId = normalizeAppId(profile?.activeAppId || Object.keys(apps)[0] || 'default');
+
+    ensureDir(dirPath);
+    writeJSON(getPhoneProfileSettingsFile(normalizedPhone), {
+        phone: normalizedPhone,
+        activeAppId,
+        apps,
+        updatedAt: new Date().toISOString()
+    });
+    writeJSON(getPhoneProfileCredentialsFile(normalizedPhone), {
+        phone: normalizedPhone,
+        activeAppId,
+        credentials,
+        updatedAt: new Date().toISOString()
+    });
+    writeJSON(getPhoneProfileMetaFile(normalizedPhone), {
+        phone: normalizedPhone,
+        activeAppId,
+        ownerId: getPhoneOwner(normalizedPhone) || '',
+        apps: Object.keys(apps),
+        updatedAt: new Date().toISOString()
+    });
+}
+
+function hydratePhoneSettingsFromDirectories(db) {
+    db.profiles = db.profiles || {};
+
+    for (const dirName of listPhoneProfileDirectories()) {
+        const normalizedPhone = normalizePhone(dirName);
+        if (!normalizedPhone) continue;
+
+        const settingsData = readJSON(getPhoneProfileSettingsFile(normalizedPhone), {});
+        const credentialsData = readJSON(getPhoneProfileCredentialsFile(normalizedPhone), {});
+        const metaData = readJSON(getPhoneProfileMetaFile(normalizedPhone), {});
+        const activeAppId = normalizeAppId(
+            metaData.activeAppId || settingsData.activeAppId || credentialsData.activeAppId || db.profiles?.[normalizedPhone]?.activeAppId || 'default'
+        );
+
+        db.profiles[normalizedPhone] = db.profiles[normalizedPhone] || { activeAppId, apps: {}, credentials: {} };
+        db.profiles[normalizedPhone].apps = {
+            ...(db.profiles[normalizedPhone].apps || {}),
+            ...((settingsData && typeof settingsData.apps === 'object' && settingsData.apps) || {})
+        };
+        db.profiles[normalizedPhone].credentials = {
+            ...(db.profiles[normalizedPhone].credentials || {}),
+            ...((credentialsData && typeof credentialsData.credentials === 'object' && credentialsData.credentials) || {})
+        };
+        db.profiles[normalizedPhone].activeAppId = activeAppId;
+    }
+
+    return db;
+}
+
+function deletePhoneProfileDirectory(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return;
+    removeDirRecursive(getPhoneProfileDir(normalizedPhone));
+}
+
 function bootStorage() {
     ensureDir(DATA_DIR);
     ensureDir(SESSIONS_DIR);
+    ensureDir(PHONE_PROFILES_DIR);
     ensureDir(UPLOADS_DIR);
     ensureDir(STATUS_MEDIA_DIR);
     ensureFile(USERS_FILE, { users: {}, phoneOwners: {} });
@@ -747,11 +848,15 @@ function cloneDefaultPhoneSettings() {
 function getPhoneSettingsDB() {
     const db = readJSON(PHONE_SETTINGS_FILE, { profiles: {} });
     db.profiles = db.profiles || {};
-    return db;
+    return hydratePhoneSettingsFromDirectories(db);
 }
 
 function savePhoneSettingsDB(db) {
+    db.profiles = db.profiles || {};
     writeJSON(PHONE_SETTINGS_FILE, db);
+    for (const [phone, profile] of Object.entries(db.profiles)) {
+        syncPhoneProfileToDirectory(phone, profile);
+    }
 }
 
 function generateSettingsPassword(length = 10) {
@@ -920,6 +1025,10 @@ function updatePhoneSettings(phone, patch = {}) {
 
 function savePhoneSettings(phone, appId, incomingSettings = {}) {
     const normalizedPhone = normalizePhone(phone);
+    if (appId && typeof appId === 'object' && !Array.isArray(appId)) {
+        incomingSettings = appId;
+        appId = getActivePhoneAppId(normalizedPhone);
+    }
     const normalizedAppId = normalizeAppId(appId);
     if (!normalizedPhone) return cloneDefaultPhoneSettings();
 
@@ -1100,6 +1209,7 @@ function deletePhoneSettings(phone) {
         delete db.profiles[normalizedPhone];
         savePhoneSettingsDB(db);
     }
+    deletePhoneProfileDirectory(normalizedPhone);
 }
 
 function normalizeStatusEmojiList(value, fallback = '') {
@@ -2920,13 +3030,26 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '.bot - إرسال رابط البوت',
         ...buildLinkedOwnerQuickCommands(phone),
         '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.',
+        '⚡ من القائمة السفلية > أوامر سريعة يمكنك تشغيل أو إيقاف Anti-Delete و Ghost وحفظ الستوري لهذا الرقم.',
+        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت ولكل رقم إعداداته المستقلة.',
         '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
     ].join('\n');
 }
 
 function buildTelegramCommandsOverview() {
-    return '';
+    return [
+        '📜 أوامر البوت المتاحة للجميع بعد ربط الرقم:',
+        '/start أو زر القائمة الرئيسية - فتح الواجهة الرئيسية',
+        '/mywa أو زر أرقامي - عرض الأرقام المربوطة بحسابك',
+        '/unlink أو زر حذف جلسة - حذف جلسة أي رقم من أرقامك',
+        '/setemoji أو زر تغيير الإيموجي - تغيير إيموجي التفاعل لكل رقم',
+        '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost وحفظ الستوري لكل رقم',
+        '⚙️ إعدادات رقم - فتح لوحة الإعدادات الخاصة بالرقم وكلمة سره',
+        '🤖 الردود التلقائية - تخصيص ردود منفصلة لكل رقم مربوط',
+        '✨ تفاعل الحالات - تشغيل وإدارة التفاعل على الحالات لكل رقم',
+        '',
+        '🔐 كل رقم مربوط يملك كلمة سر خاصة به فقط، ويتم إنشاء مجلد إعدادات مستقل له داخل المشروع تلقائياً.'
+    ].join('\n');
 }
 
 function buildNumberManagerMessage(phone) {
@@ -3008,16 +3131,192 @@ function getStartKeyboard() {
             Markup.button.callback('أرقامي المربوطة 📋', 'my_numbers')
         ],
         [
-            Markup.button.callback('إدارة الرسائل ⚙️', 'auto_replies'),
+            Markup.button.callback('⚡ أوامر سريعة', 'quick_controls'),
             Markup.button.callback('الإعدادات ⚙️', 'settings_menu')
         ],
         [
-            Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji'),
-            Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu')
+            Markup.button.callback('إدارة الرسائل 🤖', 'auto_replies'),
+            Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji')
         ],
-        [Markup.button.callback('حذف جلسة 🗑️', 'delete_session')],
-        [Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')]
+        [
+            Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu'),
+            Markup.button.callback('حذف جلسة 🗑️', 'delete_session')
+        ],
+        [
+            Markup.button.callback('أوامر البوت 📜', 'linked_commands_menu'),
+            Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')
+        ]
     ]);
+}
+
+function getMainReplyKeyboard() {
+    return {
+        reply_markup: {
+            keyboard: [
+                ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
+                ['⚡ أوامر سريعة', '⚙️ إعدادات رقم', '🤖 الردود التلقائية'],
+                ['😍 تغيير الإيموجي', '✨ تفاعل الحالات', '🗑️ حذف جلسة'],
+                ['📜 أوامر البوت']
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: false,
+            is_persistent: true
+        }
+    };
+}
+
+function detectReplyKeyboardAction(text = '') {
+    const value = String(text || '').trim();
+    if (!value) return '';
+    if (/(?:القائمة الرئيسية|القائمه الرئيسية|القائمه الرئيسيه|القائمة الرئيسيه|^\/start$|^start$)/i.test(value)) return 'back_to_start';
+    if (/(?:ربط رقم|ربط واتساب|pair)/i.test(value)) return 'pair_wa';
+    if (/(?:أرقامي|ارقامي|mywa|my numbers)/i.test(value)) return 'my_numbers';
+    if (/(?:أوامر سريعة|اوامر سريعة|quick)/i.test(value)) return 'quick_controls';
+    if (/(?:إعدادات رقم|اعدادات رقم|الإعدادات|الاعدادات|settings)/i.test(value)) return 'settings_menu';
+    if (/(?:الردود التلقائية|إدارة الرسائل|ادارة الرسائل|auto repl)/i.test(value)) return 'auto_replies';
+    if (/(?:تغيير الإيموجي|تغيير الايموجي|emoji)/i.test(value)) return 'change_emoji';
+    if (/(?:تفاعل الحالات|status react)/i.test(value)) return 'emoji_react_menu';
+    if (/(?:حذف جلسة|حذف الجلسة|unlink|delete session)/i.test(value)) return 'delete_session';
+    if (/(?:أوامر البوت|اوامر البوت|الأوامر|الاوامر|help|menu)/i.test(value)) return 'linked_commands_menu';
+    return '';
+}
+
+function buildQuickControlsMessage(phone) {
+    const settings = getActivePhoneSettings(phone);
+    return [
+        `⚡ الأوامر السريعة للرقم ${phone}`,
+        `🛡️ Anti-Delete: ${settings.antiDelete === 'off' ? 'متوقف ⛔' : 'مفعل ✅'}`,
+        `👻 Ghost Mode: ${settings.ghostMode === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        `📸 حفظ الستوري التلقائي: ${settings.autoSave === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        '',
+        'كل زر بالأسفل يفعّل أو يوقف الإعداد مباشرة على الرقم المربوط فقط.'
+    ].join('\n');
+}
+
+function getQuickControlsKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const settings = getActivePhoneSettings(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    Markup.button.callback(settings.antiDelete === 'off' ? 'تشغيل Anti-Delete ✅' : 'إيقاف Anti-Delete ⛔', `quick_toggle_anti_${cleanPhone}`)
+                ],
+                [
+                    Markup.button.callback(settings.ghostMode === 'on' ? 'إيقاف Ghost ⛔' : 'تشغيل Ghost ✅', `quick_toggle_ghost_${cleanPhone}`),
+                    Markup.button.callback(settings.autoSave === 'on' ? 'إيقاف حفظ الستوري ⛔' : 'تشغيل حفظ الستوري ✅', `quick_toggle_autosave_${cleanPhone}`)
+                ],
+                [
+                    Markup.button.callback('فتح الإعدادات التفصيلية ⚙️', `settings_phone_${cleanPhone}`),
+                    Markup.button.callback('رجوع ↩️', 'back_to_start')
+                ]
+            ]
+        }
+    };
+}
+
+async function openMyNumbersMenu(ctx) {
+    return safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
+}
+
+async function openLinkedCommandsMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, buildTelegramCommandsOverview());
+    }
+
+    if (phones.length === 1) {
+        return safeReply(ctx, `${buildTelegramCommandsOverview()}\n\n${buildLinkedNumberCommandsOverview(phones[0])}`);
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '📜 اختر الرقم الذي تريد عرض أوامره الخاصة به:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openAutoRepliesMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإضافة الردود التلقائية.');
+    }
+
+    if (phones.length === 1) {
+        ctx.session = { step: 'wait_auto_reply_response', targetPhone: phones[0] };
+        return safeReply(
+            ctx,
+            `🤖 أرسل الآن نص الرد للرقم ${phones[0]}.\nبعدها سأطلب منك الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nلإيقاف جميع الردود أرسل: off`
+        );
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`🤖 ${phone}`, `auto_reply_pick_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '🤖 اختر الرقم الذي تريد تعديل ردوده التلقائية:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openSettingsMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الإعدادات.');
+    }
+
+    if (phones.length === 1) {
+        ctx.session = { step: 'wait_settings_password', targetPhone: phones[0] };
+        return safeReply(ctx, buildPhoneSettingsLockMessage(phones[0]), getPhoneSettingsAuthKeyboard(phones[0]));
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`⚙️ ${phone}`, `settings_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته، وبعدها سأطلب منك كلمة السر الخاصة به:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openEmojiReactMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة التفاعل على الحالات.');
+    }
+
+    if (phones.length === 1) {
+        return safeReply(ctx, buildEmojiReactManagerMessage(phones[0]), getEmojiReactManagerKeyboard(phones[0]));
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`✨ ${phone}`, `emoji_react_pick_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '✨ اختر الرقم الذي تريد إدارة التفاعل على الحالات له:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openChangeEmojiMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لتغيير الإيموجي.');
+    }
+
+    if (phones.length === 1) {
+        ctx.session = { step: 'wait_emoji', targetPhone: phones[0] };
+        return safeReply(ctx, `😍 أرسل الآن الإيموجي الجديد للرقم ${phones[0]}`);
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openDeleteSessionMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك جلسات لحذفها.');
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`حذف ${phone}`, `delete_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '🗑️ اختر الرقم الذي تريد حذف جلسته:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openQuickControlsMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) {
+        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض الأوامر السريعة.');
+    }
+
+    if (phones.length === 1) {
+        return safeReply(ctx, buildQuickControlsMessage(phones[0]), getQuickControlsKeyboard(phones[0]));
+    }
+
+    const rows = phones.map((phone) => [Markup.button.callback(`⚡ ${phone}`, `quick_pick_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '⚡ اختر الرقم الذي تريد إدارة أوامره السريعة:', { reply_markup: { inline_keyboard: rows } });
 }
 
 function unwrapMessageContent(message) {
@@ -4536,7 +4835,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
                 await notifyTelegramUser(
                     finalOwnerId,
-                    `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.\nإيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}`
+                    `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.\nإيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}\n🔐 تم إنشاء كلمة سر ومجلد إعدادات خاصين بهذا الرقم فقط.`
                 );
                 if (settingsAccessMessage) {
                     await notifyTelegramUser(finalOwnerId, settingsAccessMessage);
@@ -4597,7 +4896,8 @@ async function startAllSavedSessions() {
 // =========================
 async function sendStartMessage(ctx) {
     upsertTelegramUser(ctx);
-    return safeReply(ctx, buildStartMessage(ctx), getStartKeyboard());
+    await safeReply(ctx, buildStartMessage(ctx), getMainReplyKeyboard());
+    return safeReply(ctx, 'اختر الخدمة المطلوبة من القائمة السفلية أو من الأزرار التالية:', getStartKeyboard());
 }
 
 bot.start(async (ctx) => {
@@ -4606,10 +4906,15 @@ bot.start(async (ctx) => {
 });
 
 
+bot.command('menu', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    await sendStartMessage(ctx);
+});
+
 bot.command('mywa', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     upsertTelegramUser(ctx);
-    await safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
+    await openMyNumbersMenu(ctx);
 });
 
 bot.command('unlink', async (ctx) => {
@@ -4668,55 +4973,18 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'my_numbers') {
-        return safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
+        return openMyNumbersMenu(ctx);
     }
     if (data === 'linked_commands_menu') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) {
-            return safeReply(ctx, `📜 أوامر البوت:
-
-${buildTelegramCommandsOverview()}`);
-        }
-
-        if (phones.length === 1) {
-            return safeReply(ctx, `${buildTelegramCommandsOverview()}\n\n${buildLinkedNumberCommandsOverview(phones[0])}`);
-        }
-
-        const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '⚙️ لم يعد هناك أوامر داخل الرقم المربوط؛ الإدارة من البوت فقط.', { reply_markup: { inline_keyboard: rows } });
+        return openLinkedCommandsMenu(ctx);
     }
 
     if (data === 'auto_replies') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) {
-            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإضافة الردود التلقائية.');
-        }
-
-        if (phones.length === 1) {
-            ctx.session = { step: 'wait_auto_reply_response', targetPhone: phones[0] };
-            return safeReply(
-                ctx,
-                `🤖 أرسل الآن نص الرد للرقم ${phones[0]}.\nبعدها سأطلب منك الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nلإيقاف جميع الردود أرسل: off`
-            );
-        }
-
-        const rows = phones.map((phone) => [Markup.button.callback(`🤖 ${phone}`, `auto_reply_pick_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '🤖 اختر الرقم الذي تريد تعديل ردوده التلقائية:', { reply_markup: { inline_keyboard: rows } });
+        return openAutoRepliesMenu(ctx);
     }
 
     if (data === 'settings_menu') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) {
-            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الإعدادات.');
-        }
-
-        if (phones.length === 1) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phones[0] };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phones[0]), getPhoneSettingsAuthKeyboard(phones[0]));
-        }
-
-        const rows = phones.map((phone) => [Markup.button.callback(`⚙️ ${phone}`, `settings_phone_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته، وبعدها سأطلب منك كلمة السر الخاصة به:', { reply_markup: { inline_keyboard: rows } });
+        return openSettingsMenu(ctx);
     }
 
     if (data.startsWith('settings_phone_')) {
@@ -4748,17 +5016,7 @@ ${buildTelegramCommandsOverview()}`);
     }
 
     if (data === 'emoji_react_menu') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) {
-            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة التفاعل على الحالات.');
-        }
-
-        if (phones.length === 1) {
-            return safeReply(ctx, buildEmojiReactManagerMessage(phones[0]), getEmojiReactManagerKeyboard(phones[0]));
-        }
-
-        const rows = phones.map((phone) => [Markup.button.callback(`✨ ${phone}`, `emoji_react_pick_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '✨ اختر الرقم الذي تريد إدارة التفاعل على الحالات له:', { reply_markup: { inline_keyboard: rows } });
+        return openEmojiReactMenu(ctx);
     }
 
     if (data.startsWith('emoji_react_pick_')) {
@@ -4781,18 +5039,7 @@ ${buildTelegramCommandsOverview()}`);
     }
 
     if (data === 'change_emoji') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) {
-            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لتغيير الإيموجي.');
-        }
-
-        if (phones.length === 1) {
-            ctx.session = { step: 'wait_emoji', targetPhone: phones[0] };
-            return safeReply(ctx, `😍 أرسل الآن الإيموجي الجديد للرقم ${phones[0]}`);
-        }
-
-        const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
+        return openChangeEmojiMenu(ctx);
     }
 
     if (data.startsWith('emoji_pick_')) {
@@ -4805,12 +5052,43 @@ ${buildTelegramCommandsOverview()}`);
     }
 
     if (data === 'delete_session') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) {
-            return safeReply(ctx, '❌ لا يوجد لديك جلسات لحذفها.');
+        return openDeleteSessionMenu(ctx);
+    }
+
+    if (data === 'quick_controls') {
+        return openQuickControlsMenu(ctx);
+    }
+
+    if (data.startsWith('quick_pick_')) {
+        const phone = normalizePhone(data.replace('quick_pick_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         }
-        const rows = phones.map((phone) => [Markup.button.callback(`حذف ${phone}`, `delete_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '🗑️ اختر الرقم الذي تريد حذف جلسته:', { reply_markup: { inline_keyboard: rows } });
+        return safeReply(ctx, buildQuickControlsMessage(phone), getQuickControlsKeyboard(phone));
+    }
+
+    if (data.startsWith('quick_toggle_')) {
+        const payload = data.replace('quick_toggle_', '');
+        const separatorIndex = payload.indexOf('_');
+        const action = separatorIndex === -1 ? '' : payload.slice(0, separatorIndex);
+        const phone = normalizePhone(separatorIndex === -1 ? '' : payload.slice(separatorIndex + 1));
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        }
+
+        if (action === 'anti') {
+            const settings = getActivePhoneSettings(phone);
+            updatePhoneSettings(phone, { antiDelete: settings.antiDelete === 'off' ? 'all' : 'off' });
+        } else if (action === 'ghost') {
+            const settings = getActivePhoneSettings(phone);
+            updatePhoneSettings(phone, { ghostMode: settings.ghostMode === 'on' ? 'off' : 'on' });
+        } else if (action === 'autosave') {
+            const settings = getActivePhoneSettings(phone);
+            updatePhoneSettings(phone, { autoSave: settings.autoSave === 'on' ? 'off' : 'on' });
+        }
+
+        await applyLivePhoneSettingsSideEffects(phone);
+        return safeReply(ctx, buildQuickControlsMessage(phone), getQuickControlsKeyboard(phone));
     }
 
     if (data.startsWith('delete_')) {
@@ -5314,6 +5592,24 @@ bot.on('text', async (ctx) => {
 
     const incomingText = String(ctx.message.text || '').trim();
     const sessionState = ctx.session?.step;
+    const keyboardAction = !sessionState ? detectReplyKeyboardAction(incomingText) : '';
+
+    if (keyboardAction) {
+        if (!(await ensureSubscription(ctx))) return;
+        if (keyboardAction === 'back_to_start') return sendStartMessage(ctx);
+        if (keyboardAction === 'pair_wa') {
+            ctx.session = { step: 'wait_phone' };
+            return safeReply(ctx, '📱 أرسل رقم الواتساب مع مفتاح الدولة، مثال: 967771163825');
+        }
+        if (keyboardAction === 'my_numbers') return openMyNumbersMenu(ctx);
+        if (keyboardAction === 'quick_controls') return openQuickControlsMenu(ctx);
+        if (keyboardAction === 'settings_menu') return openSettingsMenu(ctx);
+        if (keyboardAction === 'auto_replies') return openAutoRepliesMenu(ctx);
+        if (keyboardAction === 'change_emoji') return openChangeEmojiMenu(ctx);
+        if (keyboardAction === 'emoji_react_menu') return openEmojiReactMenu(ctx);
+        if (keyboardAction === 'delete_session') return openDeleteSessionMenu(ctx);
+        if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
+    }
 
     if (!sessionState && incomingText.startsWith('/')) return;
 
