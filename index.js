@@ -26,6 +26,7 @@ let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
 const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
+const SETTINGS_IMAGE_URL = 'https://www.genspark.ai/api/files/s/CLggRDjS';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v';
 const DAILY_GIFT_POINTS = 300;
 const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -138,9 +139,9 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     gaTimezone: 'Asia/Colombo',
     gaCloseTime: '15:00',
     gaOpenTime: '05:00',
-    menu: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
-    alive: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
-    owner: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
+    menu: SETTINGS_IMAGE_URL,
+    alive: SETTINGS_IMAGE_URL,
+    owner: SETTINGS_IMAGE_URL,
     statusCustomReact: '❤️',
     antiBug: 'off',
     antiBot: 'off',
@@ -187,9 +188,9 @@ const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     autoStatusReact: 'on',
     keepDeletedStatus: 'on',
     statusCustomReact: '❤️',
-    menu: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/Media/Image/Menu.jpg',
-    alive: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/Media/Image/Alive.jpg',
-    owner: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/Media/Image/OwnerMenu.jpg',
+    menu: SETTINGS_IMAGE_URL,
+    alive: SETTINGS_IMAGE_URL,
+    owner: SETTINGS_IMAGE_URL,
     language: 'arabic',
     antiViewOnce: 'off',
     antiLinkList: 'wa.me,whatsapp.com',
@@ -1794,6 +1795,26 @@ function buildPhoneSettingsLockMessage(phone) {
     ].join('\n');
 }
 
+
+function getLinkedOwnerCommandPrefix(phoneNumber = '') {
+    const normalizedPhone = normalizePhone(phoneNumber);
+    if (!normalizedPhone) return '.';
+    const settings = getActivePhoneSettings(normalizedPhone);
+    return String(settings.prefix || '.').trim() || '.';
+}
+
+function buildLinkedOwnerQuickCommands(phoneNumber) {
+    const prefix = getLinkedOwnerCommandPrefix(phoneNumber);
+    return [
+        '⚡ أوامر واتساب السريعة:',
+        `${prefix}anti on | ${prefix}anti off`,
+        `${prefix}ghost on | ${prefix}ghost off`,
+        `${prefix}autosave on | ${prefix}autosave off`,
+        `${prefix}dev | ${prefix}help`,
+        `${prefix}wabroadcast نص الرسالة`
+    ];
+}
+
 function buildPhoneSettingsMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     const repliesCount = parseAutoReplies(settings.customAutoReplies).length;
@@ -1810,6 +1831,8 @@ function buildPhoneSettingsMessage(phone) {
         `👻 وضع الشبح: ${formatPhoneSettingValue(phone, 'ghostMode', settings.ghostMode)}`,
         `🎭 الإيموجيات: ${formatPhoneSettingValue(phone, 'statusCustomReact', settings.statusCustomReact)}`,
         `🤖 الردود التلقائية: ${repliesCount}/${MAX_AUTO_REPLIES}`,
+        '',
+        ...buildLinkedOwnerQuickCommands(phone),
         '',
         'اختر القسم الذي تريد تعديله من الأزرار بالأسفل.'
     ].join('\n');
@@ -2436,16 +2459,16 @@ function rememberOwnerControlBypassResult(result = null) {
 }
 
 function buildOwnerControlHelpText(phoneNumber) {
-    const settings = getActivePhoneSettings(phoneNumber);
-    const prefix = String(settings.prefix || '.').trim() || '.';
+    const prefix = getLinkedOwnerCommandPrefix(phoneNumber);
     return [
-        '🛠️ أوامر المطور داخل واتساب',
+        '🛠️ أوامر التحكم داخل واتساب',
         '',
-        `${prefix}dev`,
-        `${prefix}help`,
-        `${prefix}wabroadcast نص الرسالة`,
+        ...buildLinkedOwnerQuickCommands(phoneNumber),
         '',
-        '📣 يرسل الرسالة بشكل خاص لكل رقم مربوط ومتصّل حالياً داخل واتساب.',
+        '📌 anti: تشغيل أو إيقاف مكافحة حذف الرسائل داخل الخاص والمجموعات.',
+        '📌 ghost: تشغيل أو إيقاف وضع الشبح بدون إيصالات قراءة.',
+        '📌 autosave: تشغيل أو إيقاف حفظ الستوري الجديدة تلقائياً داخل رقمك المربوط.',
+        '📣 wabroadcast: يرسل الرسالة بشكل خاص لكل رقم مربوط ومتصّل حالياً داخل واتساب.',
         '📝 الأرقام غير المتصلة سيتم تجاوزها وإظهارها في التقرير.'
     ].join('\n');
 }
@@ -2543,13 +2566,43 @@ async function handleOwnerControlMessage(sock, phoneNumber, msg) {
 
     const settings = getActivePhoneSettings(phoneNumber);
     const prefix = escapeRegExp(settings.prefix || '.');
-    const broadcastRegex = new RegExp(`^(?:${prefix}|\\.)?(?:wabroadcast|broadcastwa|اذاعة|اذاعه)(?:\\s+([\\s\\S]+))?$`, 'i');
+    const toggleRegex = new RegExp(`^(?:${prefix}|\.)?(anti|ghost|autosave)\s+(on|off)$`, 'i');
+    const toggleMatch = text.match(toggleRegex);
+    if (toggleMatch) {
+        const command = String(toggleMatch[1] || '').toLowerCase();
+        const mode = String(toggleMatch[2] || '').toLowerCase();
+        const nextSettings = { ...settings };
+        let confirmation = '';
+
+        if (command === 'anti') {
+            nextSettings.antiDelete = mode === 'on' ? 'all' : 'off';
+            confirmation = mode === 'on' ? '✅ تم تفعيل Anti-Delete لكل المحادثات.' : '❌ تم تعطيل Anti-Delete.';
+        } else if (command === 'ghost') {
+            nextSettings.ghostMode = mode;
+            confirmation = mode === 'on' ? '✅ تم تفعيل Ghost Mode.' : '❌ تم تعطيل Ghost Mode.';
+        } else if (command === 'autosave') {
+            nextSettings.autoSave = mode;
+            confirmation = mode === 'on' ? '✅ تم تفعيل حفظ الستوري التلقائي.' : '❌ تم تعطيل حفظ الستوري التلقائي.';
+        }
+
+        savePhoneSettings(phoneNumber, nextSettings);
+        await applyLivePhoneSettingsSideEffects(phoneNumber);
+        const response = await sock.sendMessage(targetChat, { text: `${confirmation}
+
+${buildOwnerControlHelpText(phoneNumber)}` }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const broadcastRegex = new RegExp(`^(?:${prefix}|\.)?(?:wabroadcast|broadcastwa|اذاعة|اذاعه)(?:\s+([\s\S]+))?$`, 'i');
     const broadcastMatch = text.match(broadcastRegex);
     if (!broadcastMatch) return false;
 
     const messageText = String(broadcastMatch[1] || '').trim();
     if (!messageText) {
-        const response = await sock.sendMessage(targetChat, { text: `❌ اكتب الرسالة بعد الأمر.\n\n${buildOwnerControlHelpText(phoneNumber)}` }, { quoted: msg });
+        const response = await sock.sendMessage(targetChat, { text: `❌ اكتب الرسالة بعد الأمر.
+
+${buildOwnerControlHelpText(phoneNumber)}` }, { quoted: msg });
         rememberOwnerControlBypassResult(response);
         return true;
     }
@@ -2865,6 +2918,7 @@ function buildLinkedNumberCommandsOverview(phone = '') {
     return [
         '📲 أوامر الرقم المربوط:',
         '.bot - إرسال رابط البوت',
+        ...buildLinkedOwnerQuickCommands(phone),
         '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
         '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.',
         '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
@@ -2961,7 +3015,6 @@ function getStartKeyboard() {
             Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji'),
             Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu')
         ],
-        [Markup.button.callback('🪙 التفاعل التلقائي والعملات المجانية', 'coins_access')],
         [Markup.button.callback('حذف جلسة 🗑️', 'delete_session')],
         [Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')]
     ]);
@@ -4063,6 +4116,68 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     return false;
 }
 
+
+async function autoSaveIncomingStatusToOwner(sock, phoneNumber, msg) {
+    const settings = getActivePhoneSettings(phoneNumber);
+    if (settings.autoSave !== 'on') return false;
+    if (!hasStatusContent(msg)) return false;
+
+    const targetJid = normalizeWhatsAppJid(sock.user?.id) || `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
+    if (!targetJid) return false;
+
+    const participant = extractStatusParticipant(msg);
+    const ownPhone = normalizePhone(phoneNumber);
+    const participantPhone = normalizePhone(participant);
+    if (participantPhone && ownPhone && participantPhone === ownPhone) return false;
+
+    const statusData = getStatusMessagePayload(msg);
+    if (!statusData) return false;
+
+    const note = `📸 ستوري جديد تم حفظه تلقائياً
+👤 المصدر: ${participantPhone || participant || 'غير معروف'}`;
+    const textBody = String(statusData.text || '').trim();
+    const caption = [note, textBody].filter(Boolean).join('\n\n');
+
+    if (statusData.kind === 'text') {
+        await sock.sendMessage(targetJid, { text: caption || note });
+        return true;
+    }
+
+    if (!statusData.payload || typeof downloadContentFromMessage !== 'function') {
+        await sock.sendMessage(targetJid, { text: caption || note });
+        return true;
+    }
+
+    const downloadKind = statusData.kind === 'document' ? 'document' : statusData.kind;
+    const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
+    const buffer = await streamToBuffer(stream);
+    if (!buffer.length) {
+        await sock.sendMessage(targetJid, { text: caption || note });
+        return true;
+    }
+
+    if (statusData.kind === 'image') {
+        await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: statusData.payload?.mimetype || 'image/jpeg' });
+        return true;
+    }
+    if (statusData.kind === 'video') {
+        await sock.sendMessage(targetJid, { video: buffer, caption, mimetype: statusData.payload?.mimetype || 'video/mp4' });
+        return true;
+    }
+    if (statusData.kind === 'document') {
+        await sock.sendMessage(targetJid, {
+            document: buffer,
+            fileName: statusData.payload?.fileName || 'status.bin',
+            caption,
+            mimetype: statusData.payload?.mimetype || 'application/octet-stream'
+        });
+        return true;
+    }
+
+    await sock.sendMessage(targetJid, { text: caption || note });
+    return true;
+}
+
 async function handleStatusReaction(sock, phoneNumber, msg) {
     try {
         const settings = getActivePhoneSettings(phoneNumber);
@@ -4077,6 +4192,14 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
                 await backupStatusMessage(sock, phoneNumber, msg);
             } catch (backupError) {
                 console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
+            }
+        }
+
+        if (settings.autoSave === 'on') {
+            try {
+                await autoSaveIncomingStatusToOwner(sock, phoneNumber, msg);
+            } catch (autoSaveError) {
+                console.error(`Status Auto Save Error (${phoneNumber}):`, autoSaveError.message);
             }
         }
 
@@ -4839,19 +4962,6 @@ ${buildTelegramCommandsOverview()}`);
         ctx.session = { step: 'wait_wa_broadcast_message' };
         return safeReply(ctx, '📲 أرسل الآن الرسالة التي تريد إرسالها خاص داخل واتساب لكل الأرقام المربوطة والمتصلة.');
     }
-
-    // =========================
-    // زر العملات المجانية والتفاعل التلقائي
-    // =========================
-    if (data === 'coins_access') {
-        upsertTelegramUser(ctx);
-        ctx.session = { step: 'wait_coins_phone' };
-        return safeReply(ctx,
-            '🪙 *التفاعل التلقائي والعملات المجانية*\n\n' +
-            'أرسل الآن رقمك المربوط في البوت مع مفتاح الدولة\n' +
-            'مثال: 966XXXXXXXXX'
-        );
-    }
 });
 
 // =========================
@@ -5430,53 +5540,6 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, `✅ تم حفظ الرد التلقائي للرقم ${phone}.\n\n${formatAutoRepliesList(phone)}`);
     }
-
-    // =========================
-    // معالجة خطوات العملات المجانية
-    // =========================
-    if (sessionState === 'wait_coins_phone') {
-        const rawPhone = normalizePhone(incomingText);
-        if (!rawPhone || rawPhone.length < 8) {
-            return safeReply(ctx, '❌ رقم غير صحيح. أرسل الرقم مع مفتاح الدولة مثال: 966XXXXXXXXX');
-        }
-        if (!getPhoneOwner(rawPhone)) {
-            return safeReply(ctx, '❌ هذا الرقم غير مربوط في البوت. تأكد من الرقم وأعد المحاولة.');
-        }
-        if (!userOwnsPhone(ctx.from.id, rawPhone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس مربوطاً بحسابك في البوت.');
-        }
-        ctx.session = { step: 'wait_coins_password', coinsTargetPhone: rawPhone };
-        return safeReply(ctx,
-            `✅ الرقم: ${rawPhone}\n\n` +
-            '🔑 الآن أرسل كلمة السر الخاصة بهذا الرقم لفتح صفحة العملات.'
-        );
-    }
-
-    if (sessionState === 'wait_coins_password') {
-        const phone = ctx.session?.coinsTargetPhone;
-        if (!phone || !userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ حصل خلل في البيانات. ابدأ من جديد.');
-        }
-        const auth = authenticateSettingsUser(phone, incomingText);
-        if (!auth.ok) {
-            return safeReply(ctx,
-                '❌ كلمة السر غير صحيحة. أعد المحاولة أو راجع كلمة السر من إعدادات الرقم.'
-            );
-        }
-        ctx.session = null;
-        const coinsUrl = `https://new.redqueen.online/minibot/coin?num=${encodeURIComponent(phone)}&pass=${encodeURIComponent(incomingText)}`;
-        return safeReply(ctx,
-            `🪙 *تم التحقق بنجاح!*\n\n` +
-            `✅ الرقم: ${phone}\n\n` +
-            `اضغط على الزر أدناه لفتح صفحة العملات والتحكم الكامل:`,
-            Markup.inlineKeyboard([
-                [Markup.button.url('🪙 فتح صفحة العملات والتفاعل التلقائي', coinsUrl)],
-                [Markup.button.callback('🔙 رجوع للقائمة', 'back_to_start')]
-            ])
-        );
-    }
-
     if (sessionState === 'wait_settings_password') {
         const phone = ctx.session?.targetPhone;
         if (!userOwnsPhone(ctx.from.id, phone)) {
@@ -8766,7 +8829,7 @@ const PythonMergedLayer = (() => {
     const DEFAULT_CONTACT_NUMBER = "967784355543";
     const DEFAULT_SITE_BRAND_NAME = "fares";
     const DEFAULT_SITE_FOOTER = "fares";
-    const DEFAULT_LINKED_MESSAGE_IMAGE_URL = "https://www.genspark.ai/api/files/s/18UAzOdi";
+    const DEFAULT_LINKED_MESSAGE_IMAGE_URL = SETTINGS_IMAGE_URL;
     const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${DEFAULT_AUTO_REPLY_CHANNEL_URL}\n📞 رقم التواصل: ${DEFAULT_CONTACT_NUMBER}`;
     const DEFAULT_AUTO_REPLY_MESSAGE_TEMPLATE = `🔗 هذا رابط القناة الخاصة بنا\n{channel_url}\n\n📞 رقم التواصل: ${DEFAULT_CONTACT_NUMBER}`;
     const DEFAULT_WHATSAPP_ALIVE_MESSAGE = "✅ *Golden Queen is active now*\n\n👑 *Owner:* Golden Queen\n🤖 *Status:* Ready";
@@ -8788,8 +8851,8 @@ const PythonMergedLayer = (() => {
     ];
     const USER_EMOJI_TRIGGERS = new Set(["تغيير ايموجي الحاله", "تغيير إيموجي الحاله", "تغيير ايموجي الحالة", "تغيير إيموجي الحالة", "غير الايموجي", "غيّر الايموجي", "غير الإيموجي", "غيّر الإيموجي"]);
     const DRF_TEXT_TRIGGERS = new Set(["اعدادات الموقع", "إعدادات الموقع", "اعدادات الموقع /drf", "إعدادات الموقع /drf", "drf", "/drf"]);
-    const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": "https://www.genspark.ai/api/files/s/18UAzOdi", "alive": "https://www.genspark.ai/api/files/s/18UAzOdi", "owner": "https://www.genspark.ai/api/files/s/18UAzOdi", "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
-    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "ownerNumber": "967784355543", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "alive": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "owner": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
+    const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
+    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "ownerNumber": "967784355543", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
     const ALL_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "load_dotenv_file", "get_green_api_authorization_url", "get_url_base", "get_pairing_api_profile", "normalize_ascii_digits", "normalize_phone_number", "get_pair_language_code", "get_pair_language_pack", "get_drf_language_pack", "normalize_settings_url", "parse_drf_credentials_message", "load_registered_users", "save_registered_users", "load_user_emoji_settings", "save_user_emoji_settings", "load_linked_whatsapp_users", "save_linked_whatsapp_users", "load_pending_pairings", "save_pending_pairings", "load_auto_reply_log", "save_auto_reply_log", "get_effective_user_emoji", "load_settings", "save_settings", "register_user", "is_admin", "normalize_channel_reference", "build_force_subscription_url", "build_main_keyboard", "build_status_emoji_keyboard", "build_pair_language_keyboard", "build_dev_keyboard", "build_pair_api_keyboard", "build_force_sub_keyboard", "build_whatsapp_messages_keyboard", "build_whatsapp_message_preview", "whatsapp_messages_text", "build_subscription_keyboard", "normalize_start_message_template", "fill_known_placeholders", "build_start_manual_login_hint", "render_start_message", "build_pairing_confirmation_keyboard", "update_number_records", "show_user_status_react_prompt", "prompt_user_status_custom_react_input", "admin_status_text", "settings_text", "force_sub_settings_text", "normalize_chat_id", "build_auto_reply_message", "build_alive_channel_message", "build_bot_channel_message", "build_settings_channel_message", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "render_whatsapp_pair_code_message", "build_whatsapp_command_reply", "build_pairing_success_instruction_message", "build_password_wait_message", "register_pending_pairing", "store_manual_site_login", "update_linked_user_emoji", "find_user_whatsapp_record", "find_linked_number_for_user", "get_all_user_whatsapp_records", "get_user_primary_whatsapp_record", "build_user_linked_summary", "build_owned_numbers_text", "build_owned_numbers_keyboard", "unlink_user_number", "resolve_user_record", "show_owned_numbers_panel", "send_password_for_user_number", "record_belongs_to_user", "extract_site_password_from_record", "extract_numeric_tokens_from_text", "extract_site_password_from_message_text", "upsert_site_metadata_for_number", "find_user_record_for_number", "has_invalid_header_characters", "extract_cookie_dict", "apply_cookie_records", "parse_auth_config", "apply_auth_config", "build_sync_headers", "extract_site_api_error", "ensure_site_api_success", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "is_settings_not_found_error", "build_site_app_id_candidates", "load_site_settings_from_session", "login_to_settings_site", "sync_user_emoji_to_settings_site", "sync_user_emoji_to_site", "sync_user_status_react_emojis_to_site", "build_site_settings_urls", "humanize_site_setting_label", "format_site_setting_value", "get_linked_site_credentials", "load_site_settings_sync", "coerce_site_setting_value", "save_site_settings_sync", "build_drf_keyboard", "render_drf_settings_text", "show_drf_panel", "drf_command", "get_green_api_send_message_url", "send_whatsapp_message_sync", "send_whatsapp_message", "get_green_api_send_file_url", "send_whatsapp_image_by_url_sync", "send_whatsapp_image_by_url", "build_linked_number_private_message", "deliver_linked_number_private_bundle", "get_green_api_logout_url", "logout_whatsapp_instance_sync", "logout_whatsapp_instance", "track_background_task", "get_record_for_number", "build_auto_stop_prefix_value", "schedule_pairing_confirmation_prompt", "apply_confirmed_pairing_updates", "process_pairing_confirmation_yes", "auto_request_site_password", "iter_nested_values", "extract_scalar_from_payload", "normalize_site_password", "derive_site_app_id_from_password", "extract_pairing_site_metadata", "merge_site_metadata", "apply_site_metadata", "build_pair_code_result", "extract_telegram_user_id", "extract_number_from_payload", "resolve_pairing_target_number", "payload_indicates_pairing_success", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_private_whatsapp_command", "payload_indicates_status_interaction", "mark_event_processed", "notify_site_password_detected", "notify_successful_pairing", "process_external_webhook", "build_number_variants", "find_code_in_payload", "resolve_pair_code_api_url", "start_healthcheck_server", "build_pairing_headers", "build_pairing_attempts", "request_pair_code_sync", "request_pair_code", "is_user_subscribed", "prompt_force_subscription", "ensure_subscription", "start", "menu", "user_emoji_command", "dev_command", "ping", "handle_buttons", "broadcast_message_to_all", "handle_text", "help_command", "post_init", "ensure_embedded_companion_files", "main"]);
     const IMPLEMENTED_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "normalize_ascii_digits", "normalize_phone_number", "normalize_channel_reference", "normalize_start_message_template", "fill_known_placeholders", "normalize_chat_id", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "extract_numeric_tokens_from_text", "build_sync_headers", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "humanize_site_setting_label", "format_site_setting_value", "coerce_site_setting_value", "normalize_site_password", "derive_site_app_id_from_password", "iter_nested_values", "extract_scalar_from_payload", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_number_from_payload", "build_number_variants", "find_code_in_payload", "resolve_pairing_target_number", "extract_private_whatsapp_command"]);
 
