@@ -75,8 +75,10 @@ const SITE_SETTINGS_FIELD_LABELS = {
     alwaysOnline: 'دائمًا أونلاين',
     autoStatusRead: 'مشاهدة الحالة تلقائيًا',
     autoStatusReact: 'التفاعل مع الحالة تلقائيًا',
+    statusReactionNotice: 'إظهار التفاعل لصاحب الرقم',
     keepDeletedStatus: 'حفظ الحالة عند حذفها',
     ghostMode: 'تفعيل الشبح',
+    autoPrivateReact: 'التفاعل التلقائي للخاص',
     autoRead: 'قراءة تلقائية',
     autoBlock: 'حظر تلقائي',
     autoReact: 'تفاعل تلقائي',
@@ -128,9 +130,11 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     alwaysOnline: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
+    statusReactionNotice: 'on',
     keepDeletedStatus: 'off',
     ghostMode: 'off',
     autoRead: 'off',
+    autoPrivateReact: 'off',
     autoBlock: 'off',
     autoReact: 'off',
     autoVoice: 'off',
@@ -171,7 +175,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
 const DEFAULT_PHONE_SETTINGS = {
     ...DEFAULT_SITE_SETTINGS_PAYLOAD,
     customAutoReplies: '',
-    autoSave: 'on'
+    autoSave: 'off'
 };
 const IMPORTED_REDQUEEN_PHONE = '966597127141';
 const IMPORTED_REDQUEEN_PASSWORD = 'D4PRHM45';
@@ -195,6 +199,8 @@ const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     antiBot: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
+    statusReactionNotice: 'on',
+    autoPrivateReact: 'off',
     keepDeletedStatus: 'off',
     statusCustomReact: '❤️',
     menu: SETTINGS_IMAGE_URL,
@@ -233,7 +239,7 @@ const PHONE_SETTINGS_SECTIONS = [
     {
         key: 'automation',
         label: 'الحالة والخيارات التلقائية',
-        fields: ['autoStatusRead', 'autoStatusReact', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
+        fields: ['autoStatusRead', 'autoStatusReact', 'statusReactionNotice', 'autoPrivateReact', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact']
     },
     {
         key: 'protection',
@@ -258,7 +264,7 @@ const PHONE_SETTINGS_SECTIONS = [
 ];
 const PHONE_SETTINGS_TOGGLE_FIELDS = new Set([
     'antiBad', 'antiLink', 'autoRecording', 'autoTyping', 'alwaysOnline', 'autoStatusRead', 'autoStatusReact',
-'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave', 'antiMention'
+    'statusReactionNotice', 'autoPrivateReact', 'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'antiMention'
 ]);
 const PHONE_SETTINGS_SELECT_OPTIONS = {
     mode: [
@@ -540,7 +546,7 @@ const PAIRING_API_METHODS = ['GET', 'POST'];
 const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 180000);
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const HEALTH_CHECK_INTERVAL_MS = Number(process.env.HEALTH_CHECK_INTERVAL_MS || 60000);
-const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 180000);
+const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 900000);
 let sessionSupervisorStarted = false;
 
 // =========================
@@ -986,8 +992,12 @@ function getPhoneSettings(phone, appId = null) {
     }
     const mergedSettings = { ...cloneDefaultPhoneSettings(), ...profile.apps[resolvedAppId] };
     mergedSettings.autoReact = 'off';
+    mergedSettings.autoSave = 'off';
+    mergedSettings.keepDeletedStatus = 'off';
     mergedSettings.autoStatusRead = ['on', 'off'].includes(String(mergedSettings.autoStatusRead)) ? String(mergedSettings.autoStatusRead) : DEFAULT_PHONE_SETTINGS.autoStatusRead;
     mergedSettings.autoStatusReact = ['on', 'off'].includes(String(mergedSettings.autoStatusReact)) ? String(mergedSettings.autoStatusReact) : DEFAULT_PHONE_SETTINGS.autoStatusReact;
+    mergedSettings.statusReactionNotice = ['on', 'off'].includes(String(mergedSettings.statusReactionNotice)) ? String(mergedSettings.statusReactionNotice) : DEFAULT_PHONE_SETTINGS.statusReactionNotice;
+    mergedSettings.autoPrivateReact = ['on', 'off'].includes(String(mergedSettings.autoPrivateReact)) ? String(mergedSettings.autoPrivateReact) : DEFAULT_PHONE_SETTINGS.autoPrivateReact;
     mergedSettings.statusCustomReact = normalizeStatusEmojiList(mergedSettings.statusCustomReact, getPhoneEmoji(normalizedPhone));
     return mergedSettings;
 }
@@ -1090,7 +1100,7 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
     clean.sendDeleteTo = ['owner', 'same'].includes(clean.sendDeleteTo) ? clean.sendDeleteTo : DEFAULT_PHONE_SETTINGS.sendDeleteTo;
     clean.statusMsgType = ['default', 'custom'].includes(clean.statusMsgType) ? clean.statusMsgType : DEFAULT_PHONE_SETTINGS.statusMsgType;
     clean.antiBotAction = ['delete', 'delete+kick'].includes(clean.antiBotAction) ? clean.antiBotAction : DEFAULT_PHONE_SETTINGS.antiBotAction;
-    clean.autoSave = ['on', 'off'].includes(clean.autoSave) ? clean.autoSave : DEFAULT_PHONE_SETTINGS.autoSave;
+    clean.autoSave = 'off';
     clean.language = ['english', 'sinhala', 'arabic'].includes(clean.language) ? clean.language : DEFAULT_PHONE_SETTINGS.language;
     clean.antiViewOnce = ['off', 'all'].includes(clean.antiViewOnce) ? clean.antiViewOnce : DEFAULT_PHONE_SETTINGS.antiViewOnce;
     clean.antiMention = ['on', 'off'].includes(clean.antiMention) ? clean.antiMention : DEFAULT_PHONE_SETTINGS.antiMention;
@@ -1119,7 +1129,9 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
     clean.voiceFooter = String(clean.voiceFooter || '').trim().slice(0, 500) || DEFAULT_PHONE_SETTINGS.voiceFooter;
     clean.autoStatusRead = ['on', 'off'].includes(clean.autoStatusRead) ? clean.autoStatusRead : DEFAULT_PHONE_SETTINGS.autoStatusRead;
     clean.autoStatusReact = ['on', 'off'].includes(clean.autoStatusReact) ? clean.autoStatusReact : DEFAULT_PHONE_SETTINGS.autoStatusReact;
-    clean.keepDeletedStatus = ['on', 'off'].includes(clean.keepDeletedStatus) ? clean.keepDeletedStatus : DEFAULT_PHONE_SETTINGS.keepDeletedStatus;
+    clean.statusReactionNotice = ['on', 'off'].includes(clean.statusReactionNotice) ? clean.statusReactionNotice : DEFAULT_PHONE_SETTINGS.statusReactionNotice;
+    clean.autoPrivateReact = ['on', 'off'].includes(clean.autoPrivateReact) ? clean.autoPrivateReact : DEFAULT_PHONE_SETTINGS.autoPrivateReact;
+    clean.keepDeletedStatus = 'off';
     clean.ghostMode = ['on', 'off'].includes(clean.ghostMode) ? clean.ghostMode : DEFAULT_PHONE_SETTINGS.ghostMode;
     if (clean.ghostMode === 'on') {
         clean.autoRead = 'off';
@@ -1939,7 +1951,8 @@ function buildLinkedOwnerQuickCommands(phoneNumber) {
         '⚡ أوامر واتساب السريعة:',
         `${prefix}anti on | ${prefix}anti off`,
         `${prefix}ghost on | ${prefix}ghost off`,
-        `${prefix}autosave on | ${prefix}autosave off`,
+        `${prefix}private on | ${prefix}private off`,
+        `${prefix}shownotice on | ${prefix}shownotice off`,
         `${prefix}help`,
         `${prefix}wabroadcast نص الرسالة`
     ];
@@ -1956,6 +1969,8 @@ function buildPhoneSettingsMessage(phone) {
         `🌐 اللغة: ${formatPhoneSettingValue(phone, 'language', settings.language)}`,
         `👀 قراءة الحالات: ${formatPhoneSettingValue(phone, 'autoStatusRead', settings.autoStatusRead)}`,
         `😍 التفاعل على الحالات: ${formatPhoneSettingValue(phone, 'autoStatusReact', settings.autoStatusReact)}`,
+        `👁️ إظهار التفاعل لصاحب الرقم: ${formatPhoneSettingValue(phone, 'statusReactionNotice', settings.statusReactionNotice)}`,
+        `😄 التفاعل التلقائي للخاص: ${formatPhoneSettingValue(phone, 'autoPrivateReact', settings.autoPrivateReact)}`,
         `🤖 الرد الذكي: ${formatPhoneSettingValue(phone, 'aiReplyScope', settings.aiReplyScope)}`,
         `👻 وضع الشبح: ${formatPhoneSettingValue(phone, 'ghostMode', settings.ghostMode)}`,
         `🎭 الإيموجيات: ${formatPhoneSettingValue(phone, 'statusCustomReact', settings.statusCustomReact)}`,
@@ -2695,7 +2710,7 @@ async function handleOwnerControlMessage(sock, phoneNumber, msg) {
 
     const settings = getActivePhoneSettings(phoneNumber);
     const prefix = escapeRegExp(settings.prefix || '.');
-    const toggleRegex = new RegExp(`^(?:${prefix}|\.)?(anti|ghost|autosave)\s+(on|off)$`, 'i');
+    const toggleRegex = new RegExp(`^(?:${prefix}|\.)?(anti|ghost|private|shownotice)\s+(on|off)$`, 'i');
     const toggleMatch = text.match(toggleRegex);
     if (toggleMatch) {
         const command = String(toggleMatch[1] || '').toLowerCase();
@@ -2709,9 +2724,12 @@ async function handleOwnerControlMessage(sock, phoneNumber, msg) {
         } else if (command === 'ghost') {
             nextSettings.ghostMode = mode;
             confirmation = mode === 'on' ? '✅ تم تفعيل Ghost Mode.' : '❌ تم تعطيل Ghost Mode.';
-        } else if (command === 'autosave') {
-            nextSettings.autoSave = mode;
-            confirmation = mode === 'on' ? '✅ تم تفعيل حفظ الستوري التلقائي.' : '❌ تم تعطيل حفظ الستوري التلقائي.';
+        } else if (command === 'private') {
+            nextSettings.autoPrivateReact = mode;
+            confirmation = mode === 'on' ? '✅ تم تفعيل التفاعل التلقائي للخاص.' : '❌ تم تعطيل التفاعل التلقائي للخاص.';
+        } else if (command === 'shownotice') {
+            nextSettings.statusReactionNotice = mode;
+            confirmation = mode === 'on' ? '✅ تم تفعيل إظهار التفاعل لصاحب الرقم.' : '❌ تم تعطيل إظهار التفاعل لصاحب الرقم.';
         }
 
         savePhoneSettings(phoneNumber, nextSettings);
@@ -2986,8 +3004,100 @@ function buildContactsCountMessage(phone) {
         `👥 عدد جهات الاتصال للرقم ${phone}`,
         `📊 الإجمالي: ${contacts.length}`,
         waClients.has(normalizePhone(phone)) ? '🟢 حالة الرقم: متصل الآن' : '🟡 حالة الرقم: غير متصل حالياً',
-        preview ? `\nأول الأسماء المحفوظة:\n${preview}` : '\nلا توجد أسماء محفوظة بعد داخل الأرشيف المحلي لهذا الرقم.'
+        preview ? `\nأول الأسماء المحفوظة:\n${preview}` : '\nلا توجد أسماء محفوظة بعد داخل الأرشيف المحلي لهذا الرقم.',
+        '\nاضغط زر عرض جهات الاتصال لفتح القائمة الكاملة داخل البوت.'
     ].join('\n');
+}
+
+function getContactsCountKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('عرض جهات الاتصال 👥', `contactslist_phone_${cleanPhone}`)],
+                [Markup.button.callback('تحديث 🔄', `contactscount_phone_${cleanPhone}`)],
+                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+            ]
+        }
+    };
+}
+
+function buildContactsListMessage(phone, limit = 120) {
+    const contacts = getPhoneContactEntries(phone);
+    if (!contacts.length) {
+        return `📭 لا توجد جهات اتصال محفوظة حالياً للرقم ${phone}.`;
+    }
+    const rows = contacts.slice(0, limit).map((entry, index) => {
+        const displayName = pickContactDisplayName(entry.name, entry.notify, entry.pushName, entry.phoneNumber, entry.jid);
+        const contactPhone = normalizePhone(entry.phoneNumber || entry.jid || '');
+        return `${index + 1}) ${displayName}${contactPhone ? ` - ${contactPhone}` : ''}`;
+    }).join('\n');
+    const extra = contacts.length > limit ? `\n\n… وتم عرض أول ${limit} جهة فقط من أصل ${contacts.length}.` : '';
+    return [
+        `👥 جهات الاتصال للرقم ${phone}`,
+        `📊 الإجمالي: ${contacts.length}`,
+        '',
+        rows
+    ].join('\n') + extra;
+}
+
+function getPhoneLastActivityTimestamp(phone) {
+    return Number(clientActivity.get(normalizePhone(phone)) || 0);
+}
+
+function buildLastSeenMessage(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    const lastActivity = getPhoneLastActivityTimestamp(normalizedPhone);
+    const isOnline = waClients.has(normalizedPhone);
+    return [
+        `🕓 آخر ظهور للرقم ${normalizedPhone}`,
+        isOnline ? '🟢 الحالة الحالية: متصل الآن' : '🟡 الحالة الحالية: غير متصل حالياً',
+        lastActivity ? `⌚ آخر نشاط مسجل: ${formatStatusArchiveTime(new Date(lastActivity).toISOString())}` : '⌚ لا توجد بيانات نشاط مسجلة بعد.',
+        '',
+        'هذه القراءة تعتمد على آخر نشاط التقطه البوت لهذا الرقم.'
+    ].join('\n');
+}
+
+function buildLoveMatchMessage(phone, entry = null) {
+    const selected = entry || getRandomPhoneContactEntry(phone);
+    if (!selected) {
+        return `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`;
+    }
+    const displayName = pickContactDisplayName(selected.name, selected.notify, selected.pushName, selected.phoneNumber, selected.jid);
+    const contactPhone = normalizePhone(selected.phoneNumber || selected.jid || '');
+    const lovePercent = 35 + Math.floor(Math.random() * 66);
+    const hearts = lovePercent >= 90 ? '💖💖💖' : lovePercent >= 75 ? '💖💖' : lovePercent >= 60 ? '💖' : '🤍';
+    return [
+        `💘 من يحبني | الرقم ${phone}`,
+        `👤 جهة الاتصال المختارة: ${displayName}`,
+        `📱 الرقم: ${contactPhone || 'غير معروف'}`,
+        `❤️ نسبة الحب العشوائية: ${lovePercent}% ${hearts}`,
+        '',
+        'ℹ️ هذه النتيجة للمرح فقط ويتم توليدها بشكل عشوائي داخل البوت.'
+    ].join('\n');
+}
+
+function buildAutoPrivateReactManagerMessage(phone) {
+    const settings = getActivePhoneSettings(phone);
+    return [
+        `😄 إدارة التفاعل التلقائي للخاص للرقم ${phone}`,
+        `الحالة الحالية: ${settings.autoPrivateReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        '',
+        'عند التفعيل سيضع الرقم إعجاباً عشوائياً على كل رسالة خاصة تصله من الأشخاص.'
+    ].join('\n');
+}
+
+function getAutoPrivateReactManagerKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const settings = getActivePhoneSettings(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback(settings.autoPrivateReact === 'on' ? 'إيقاف تفاعل الخاص ⛔' : 'تشغيل تفاعل الخاص ✅', `auto_private_toggle_${cleanPhone}`)],
+                [Markup.button.callback('رجوع ↩️', 'back_to_start')]
+            ]
+        }
+    };
 }
 
 function getDefaultDeletedMessagesArchiveDB() {
@@ -3317,7 +3427,7 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '.bot - إرسال رابط البوت',
         ...buildLinkedOwnerQuickCommands(phone),
         '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        '⚡ من القائمة السفلية > أوامر سريعة يمكنك تشغيل أو إيقاف Anti-Delete و Ghost وحفظ الستوري لهذا الرقم.',
+        '⚡ من القائمة السفلية > أوامر سريعة يمكنك تشغيل أو إيقاف Anti-Delete و Ghost وتفاعل الخاص لهذا الرقم.',
         '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت ولكل رقم إعداداته المستقلة.',
         '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
     ].join('\n');
@@ -3332,21 +3442,23 @@ function buildTelegramCommandsOverview() {
         '/setemoji أو زر تغيير الإيموجي - تغيير إيموجي التفاعل لكل رقم',
         '/statuscount أو زر عدد الحالات - معرفة عدد الحالات المحفوظة لكل رقم',
         '/viewstatuses أو زر مشاهدة الحالات - مشاهدة الحالات المحفوظة واحدة واحدة مع زر التالي',
-        '/createstory أو زر إنشاء ستوري - نشر نص أو صورة أو فيديو كحالة من الرقم المربوط',
         '/deletedmsgs أو زر الرسائل المحذوفة - عرض الرسائل الخاصة المحذوفة مع الاسم والتاريخ والوقت',
-        '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال المحفوظة لكل رقم مربوط',
-
+        '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال وعرضها لكل رقم مربوط',
+        '',
         '📢 رسالة جماعية للجهات - اختيار عدد جهات الاتصال أولاً ثم إرسال الرسالة دفعة واحدة مع إمكانية الإلغاء',
         '💬 مراسلة جهة اتصال - اختيار اسم عشوائي من جهات الاتصال ثم بدء محادثة خاصة من داخل البوت',
+        '😄 تفاعل الخاص التلقائي - تشغيل أو إيقاف الإعجاب العشوائي على رسائل الخاص',
+        '💘 من يحبني - اختيار جهة اتصال عشوائية وإظهار نسبة حب للمرح',
+        '🕓 آخر ظهوري - عرض آخر نشاط سجله البوت للرقم المربوط',
         '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط بمدد جاهزة أو وقت مخصص',
         '📢 قنواتنا - فتح رابط قناتنا على تيليجرام',
-        '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost وحفظ الستوري لكل رقم',
+        '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost لكل رقم',
         '⚙️ إعدادات رقم - فتح لوحة الإعدادات الخاصة بالرقم وكلمة سره',
         '🤖 الردود التلقائية - تخصيص ردود منفصلة لكل رقم مربوط',
         '✨ تفاعل الحالات - تشغيل وإدارة التفاعل على الحالات لكل رقم',
         '',
         '🔐 كل رقم مربوط يملك كلمة سر خاصة به فقط، ويتم إنشاء مجلد إعدادات مستقل له داخل المشروع تلقائياً.'
-    ].join('\\n');
+    ].join('\n');
 }
 
 function buildNumberManagerMessage(phone) {
@@ -3372,6 +3484,7 @@ function buildEmojiReactManagerMessage(phone) {
     return [
         `😍 إدارة التفاعل على الحالات للرقم ${phone}`,
         `الحالة الحالية: ${settings.autoStatusReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        `إظهار التفاعل لصاحب الرقم: ${settings.statusReactionNotice === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
         `الإيموجي المستخدم حالياً: ${pickRandomStatusEmoji(phone)}`,
         '',
         'عند التفعيل سيتفاعل الرقم تلقائياً مع الحالات/الاستوريات فقط باستخدام الإيموجيات المحفوظة لهذا الرقم.',
@@ -3388,6 +3501,9 @@ function getEmojiReactManagerKeyboard(phone) {
             inline_keyboard: [
                 [
                     Markup.button.callback(settings.autoStatusReact === 'on' ? 'إيقاف التفاعل على الحالات ⛔' : 'تشغيل التفاعل على الحالات ✅', `emoji_react_toggle_${cleanPhone}`)
+                ],
+                [
+                    Markup.button.callback(settings.statusReactionNotice === 'on' ? 'إيقاف إظهار التفاعل 👁️' : 'تشغيل إظهار التفاعل 👁️', `emoji_notice_toggle_${cleanPhone}`)
                 ],
                 [Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`)],
                 [Markup.button.callback('رجوع للإعدادات ⚙️', `settings_phone_${cleanPhone}`)]
@@ -3448,7 +3564,11 @@ function getStartKeyboard() {
             Markup.button.callback('💬 مراسلة جهة اتصال', 'direct_contact_message_menu')
         ],
         [
-            Markup.button.callback('➕ إنشاء ستوري', 'create_story_menu'),
+            Markup.button.callback('😄 تفاعل الخاص', 'auto_private_react_menu'),
+            Markup.button.callback('💘 من يحبني', 'love_match_menu')
+        ],
+        [
+            Markup.button.callback('🕓 آخر ظهوري', 'last_seen_menu'),
             Markup.button.callback('👤 ملفي الشخصي', 'profile_menu')
         ],
         [
@@ -3474,9 +3594,9 @@ function getMainReplyKeyboard() {
                 ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
                 ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي', '⚙️ إعدادات رقم'],
                 ['🤖 الردود التلقائية', '⚡ أوامر سريعة', '🗑️ حذف جلسة'],
-                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '➕ إنشاء ستوري'],
-                ['🗑️ الرسائل المحذوفة', '👥 جهات الاتصال'],
-                ['📢 رسالة جماعية للجهات', '💬 مراسلة جهة اتصال'],
+                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '👥 جهات الاتصال'],
+                ['📢 رسالة جماعية للجهات', '💬 مراسلة جهة اتصال', '😄 تفاعل الخاص'],
+                ['💘 من يحبني', '🕓 آخر ظهوري', '🗑️ الرسائل المحذوفة'],
                 ['👤 ملفي الشخصي', '📢 قنواتنا'],
                 ['👨‍💻 مطور البوت', '💬 تواصل مع المطور'],
                 ['📜 أوامر البوت', '✅ تحديث الاشتراك']
@@ -3499,14 +3619,14 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:الردود التلقائية|إدارة الرسائل|ادارة الرسائل|auto repl)/i.test(value)) return 'auto_replies';
     if (/(?:تغيير الإيموجي|تغيير الايموجي|emoji)/i.test(value)) return 'change_emoji';
     if (/(?:الإيموجي والتفاعل|الايموجي والتفاعل|تفاعل الحالات|status react)/i.test(value)) return 'emoji_react_menu';
+    if (/(?:تفاعل الخاص|التفاعل التلقائي للخاص|private react)/i.test(value)) return 'auto_private_react_menu';
+    if (/(?:من يحبني|نسبة الحب|love match)/i.test(value)) return 'love_match_menu';
+    if (/(?:آخر ظهوري|اخر ظهوري|last seen)/i.test(value)) return 'last_seen_menu';
     if (/(?:حذف جلسة|حذف الجلسة|unlink|delete session)/i.test(value)) return 'delete_session';
     if (/(?:عدد الحالات|احصائية الحالات|احصائيات الحالات|status count)/i.test(value)) return 'status_count_menu';
     if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
-    if (/(?:إنشاء ستوري|انشاء ستوري|عمل ستوري|اضافة ستوري|إضافة ستوري|نشر حالة|create story|post story)/i.test(value)) return 'create_story_menu';
     if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
-
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
-
     if (/(?:رسالة جماعية|جماعية للجهات|broadcast contacts|contacts broadcast)/i.test(value)) return 'contacts_broadcast_menu';
     if (/(?:مراسلة جهة اتصال|مراسلة جهات الاتصال|مراسلة جهة|direct contact|contact message)/i.test(value)) return 'direct_contact_message_menu';
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
@@ -3524,7 +3644,7 @@ function buildQuickControlsMessage(phone) {
         `⚡ الأوامر السريعة للرقم ${phone}`,
         `🛡️ Anti-Delete: ${settings.antiDelete === 'off' ? 'متوقف ⛔' : 'مفعل ✅'}`,
         `👻 Ghost Mode: ${settings.ghostMode === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
-        `📸 حفظ الستوري التلقائي: ${settings.autoSave === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        `😄 التفاعل التلقائي للخاص: ${settings.autoPrivateReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
         '',
         'كل زر بالأسفل يفعّل أو يوقف الإعداد مباشرة على الرقم المربوط فقط.'
     ].join('\n');
@@ -3541,7 +3661,7 @@ function getQuickControlsKeyboard(phone) {
                 ],
                 [
                     Markup.button.callback(settings.ghostMode === 'on' ? 'إيقاف Ghost ⛔' : 'تشغيل Ghost ✅', `quick_toggle_ghost_${cleanPhone}`),
-                    Markup.button.callback(settings.autoSave === 'on' ? 'إيقاف حفظ الستوري ⛔' : 'تشغيل حفظ الستوري ✅', `quick_toggle_autosave_${cleanPhone}`)
+                    Markup.button.callback(settings.autoPrivateReact === 'on' ? 'إيقاف تفاعل الخاص ⛔' : 'تشغيل تفاعل الخاص ✅', `quick_toggle_private_${cleanPhone}`)
                 ],
                 [
                     Markup.button.callback('فتح الإعدادات التفصيلية ⚙️', `settings_phone_${cleanPhone}`),
@@ -3715,9 +3835,34 @@ ${String(entry.text || entry.caption || '').trim() || 'لا يوجد نص.'}`);
 async function openContactsCountMenu(ctx) {
     const phones = getUserPhones(ctx.from.id);
     if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض جهات الاتصال.');
-    if (phones.length === 1) return safeReply(ctx, buildContactsCountMessage(phones[0]));
+    if (phones.length === 1) return safeReply(ctx, buildContactsCountMessage(phones[0]), getContactsCountKeyboard(phones[0]));
     const rows = phones.map((phone) => [Markup.button.callback(`👥 ${phone}`, `contactscount_phone_${sanitizeCallbackPhone(phone)}`)]);
     return safeReply(ctx, '👥 اختر الرقم الذي تريد معرفة عدد جهات اتصاله:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openLastSeenMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض آخر ظهور.');
+    if (phones.length === 1) return safeReply(ctx, buildLastSeenMessage(phones[0]));
+    const rows = phones.map((phone) => [Markup.button.callback(`🕓 ${phone}`, `lastseen_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '🕓 اختر الرقم الذي تريد معرفة آخر نشاطه:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openLoveMatchMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لاختيار نسبة حب من جهات الاتصال.');
+    if (phones.length === 1) return safeReply(ctx, buildLoveMatchMessage(phones[0]));
+    const rows = phones.map((phone) => [Markup.button.callback(`💘 ${phone}`, `lovematch_phone_${sanitizeCallbackPhone(phone)}`)]);
+    return safeReply(ctx, '💘 اختر الرقم الذي تريد تشغيل فقرة من يحبني له:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openAutoPrivateReactMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة تفاعل الخاص.');
+    if (phones.length === 1) return safeReply(ctx, buildAutoPrivateReactManagerMessage(phones[0]), getAutoPrivateReactManagerKeyboard(phones[0]));
+    const rows = phones.map((phone) => [Markup.button.callback(`😄 ${phone}`, `auto_private_react_phone_${sanitizeCallbackPhone(phone)}`)]);
+    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+    return safeReply(ctx, '😄 اختر الرقم الذي تريد إدارة التفاعل التلقائي للخاص له:', { reply_markup: { inline_keyboard: rows } });
 }
 
 async function openDeletedMessagesMenu(ctx) {
@@ -4737,6 +4882,36 @@ async function notifyPhoneOwner(phone, text, extra = {}) {
     await notifyTelegramUser(ownerId, text, extra);
 }
 
+function isPermanentDisconnect(lastDisconnect = null) {
+    const statusCode = Number(lastDisconnect?.error?.output?.statusCode || 0);
+    const rawMessage = String(
+        lastDisconnect?.error?.data ||
+        lastDisconnect?.error?.message ||
+        lastDisconnect?.error?.output?.payload?.message ||
+        ''
+    ).toLowerCase();
+    if (statusCode === Number(DisconnectReason.loggedOut)) return true;
+    if ([401, 403, 405].includes(statusCode)) return true;
+    return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced)/i.test(rawMessage);
+}
+
+function purgeSessionData(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return;
+    clearReconnectTimer(normalized);
+    clearPairingRequest(normalized);
+    clearChannelPromotionTimer(normalized);
+    clearPresenceTimer(normalized);
+    clearGhostPendingMessagesForPhone(normalized);
+    stoppedPairings.delete(normalized);
+    clientActivity.delete(normalized);
+    waClients.delete(normalized);
+    try {
+        fs.rmSync(getSessionPath(normalized), { recursive: true, force: true });
+    } catch (_) {}
+    removeLinkedNumber(normalized);
+}
+
 function rememberStatusReactionNotice(phone, participant, messageId) {
     const key = buildStatusBackupKey(phone, participant, messageId || String(Date.now()));
     if (!key) return false;
@@ -4889,6 +5064,12 @@ function startSessionSupervisor() {
 
             if (!sock) {
                 scheduleReconnect(normalized, getPhoneOwner(normalized), 3000);
+                continue;
+            }
+
+            const readyState = Number(sock.ws?.readyState);
+            if (readyState === 0 || readyState === 1) {
+                touchClient(normalized);
                 continue;
             }
 
@@ -5450,12 +5631,12 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     const normalizedParticipant = normalizeWhatsAppJid(participant);
     const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
     if (!sock || !normalizedParticipant || !reactionKey.id) {
-        return false;
+        return '';
     }
 
     const emoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
     if (!emoji) {
-        return false;
+        return '';
     }
 
     reactionEmoji = emoji;
@@ -5505,7 +5686,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
                 await delay(150);
             }
             await attempt();
-            return true;
+            return emoji;
         } catch (error) {
             lastError = error;
         }
@@ -5515,7 +5696,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         throw lastError;
     }
 
-    return false;
+    return '';
 }
 
 
@@ -5596,20 +5777,11 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
         }
 
-        if (settings.autoSave === 'on') {
-            try {
-                await autoSaveIncomingStatusToOwner(sock, phoneNumber, msg);
-            } catch (autoSaveError) {
-                console.error(`Status Auto Save Error (${phoneNumber}):`, autoSaveError.message);
-            }
-        }
-
         if (!hasStatusContent(msg)) return;
 
         const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const reactionKey = buildStatusReactionKey(msg, participant);
-        let reactedToStatus = false;
 
         if (!reactionKey.id) return;
 
@@ -5630,14 +5802,18 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             }
         }
 
+        let reactedEmoji = '';
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
-            if (reactedToStatus) {
+            reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+            if (reactedEmoji) {
                 incrementAnalytics('totalStatusReactions');
-                await notifyOwnerVisibleStatusReaction(phoneNumber, participant, reactionEmoji || pickRandomStatusEmoji(phoneNumber), msg);
+                if (settings.statusReactionNotice === 'on') {
+                    await notifyOwnerVisibleStatusReaction(phoneNumber, participant, reactedEmoji, msg);
+                }
             }
         }
 
+        const reactedToStatus = Boolean(reactedEmoji);
         const globalStatusMessage = reactedToStatus ? getGlobalStatusLikeMessage(phoneNumber) : '';
         const fallbackStatusMessage = settings.statusMsgSend === 'on' && participant && participant !== ownJid ? buildStatusAutoMessage(phoneNumber) : '';
         const messageText = globalStatusMessage || fallbackStatusMessage;
@@ -5726,6 +5902,9 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         incrementAnalytics('totalIncomingMessages');
         if (!from.endsWith('@g.us')) {
             upsertPhoneContact(phoneNumber, from, { name: msg?.pushName, pushName: msg?.pushName });
+            if (settings.autoPrivateReact === 'on') {
+                await reactToIncomingChatMessage(sock, phoneNumber, msg);
+            }
             await relayDirectContactMessageToTelegram(phoneNumber, from, msg);
         }
         await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
@@ -5973,20 +6152,14 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             waClients.delete(normalizedPhone);
             clientActivity.delete(normalizedPhone);
 
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
+            const shouldReconnect = !permanentDisconnect;
 
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log(`Session Logged Out: ${normalizedPhone}`);
+            if (permanentDisconnect) {
+                console.log(`Session Logged Out Or Invalidated: ${normalizedPhone}`);
                 const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
-                clearReconnectTimer(normalizedPhone);
-                clearPairingRequest(normalizedPhone);
-                stoppedPairings.delete(normalizedPhone);
-                removeLinkedNumber(normalizedPhone);
-                try {
-                    fs.rmSync(sessionPath, { recursive: true, force: true });
-                } catch (_) {}
-                await notifyTelegramUser(existingOwnerId, `⚠️ تم تسجيل خروج الرقم ${normalizedPhone} من واتساب، وتم حذف الجلسة من البوت.`);
+                purgeSessionData(normalizedPhone);
+                await notifyTelegramUser(existingOwnerId, `⚠️ خرج الرقم ${normalizedPhone} من واتساب أو تم حظره/إبطال الجلسة، لذلك حذفت الجلسة من البوت تلقائياً.`);
                 return;
             }
 
@@ -6612,12 +6785,6 @@ bot.command('viewstatuses', async (ctx) => {
     return openStatusBrowserMenu(ctx);
 });
 
-bot.command('createstory', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openCreateStoryMenu(ctx);
-});
-
 bot.command('deletedmsgs', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     upsertTelegramUser(ctx);
@@ -6772,9 +6939,9 @@ bot.on('callback_query', async (ctx) => {
         } else if (action === 'ghost') {
             const settings = getActivePhoneSettings(phone);
             updatePhoneSettings(phone, { ghostMode: settings.ghostMode === 'on' ? 'off' : 'on' });
-        } else if (action === 'autosave') {
+        } else if (action === 'private') {
             const settings = getActivePhoneSettings(phone);
-            updatePhoneSettings(phone, { autoSave: settings.autoSave === 'on' ? 'off' : 'on' });
+            updatePhoneSettings(phone, { autoPrivateReact: settings.autoPrivateReact === 'on' ? 'off' : 'on' });
         }
 
         await applyLivePhoneSettingsSideEffects(phone);
@@ -6909,8 +7076,16 @@ bot.on('callback_query', async (ctx) => {
         return openStatusBrowserMenu(ctx);
     }
 
-    if (data === 'create_story_menu') {
-        return openCreateStoryMenu(ctx);
+    if (data === 'auto_private_react_menu') {
+        return openAutoPrivateReactMenu(ctx);
+    }
+
+    if (data === 'love_match_menu') {
+        return openLoveMatchMenu(ctx);
+    }
+
+    if (data === 'last_seen_menu') {
+        return openLastSeenMenu(ctx);
     }
 
     if (data === 'deleted_messages_menu') {
@@ -6953,11 +7128,6 @@ bot.on('callback_query', async (ctx) => {
         return openStatusBrowserForPhone(ctx, phone);
     }
 
-    if (data.startsWith('create_story_phone_')) {
-        const phone = normalizePhone(data.replace('create_story_phone_', ''));
-        return startCreateStoryFlowForPhone(ctx, phone);
-    }
-
     if (data.startsWith('status_next_')) {
         const payload = data.replace('status_next_', '');
         const idx = payload.lastIndexOf('_');
@@ -6982,7 +7152,47 @@ bot.on('callback_query', async (ctx) => {
     if (data.startsWith('contactscount_phone_')) {
         const phone = normalizePhone(data.replace('contactscount_phone_', ''));
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildContactsCountMessage(phone));
+        return safeReply(ctx, buildContactsCountMessage(phone), getContactsCountKeyboard(phone));
+    }
+
+    if (data.startsWith('contactslist_phone_')) {
+        const phone = normalizePhone(data.replace('contactslist_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return safeReply(ctx, buildContactsListMessage(phone), getContactsCountKeyboard(phone));
+    }
+
+    if (data.startsWith('lastseen_phone_')) {
+        const phone = normalizePhone(data.replace('lastseen_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return safeReply(ctx, buildLastSeenMessage(phone));
+    }
+
+    if (data.startsWith('lovematch_phone_')) {
+        const phone = normalizePhone(data.replace('lovematch_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return safeReply(ctx, buildLoveMatchMessage(phone));
+    }
+
+    if (data.startsWith('auto_private_react_phone_')) {
+        const phone = normalizePhone(data.replace('auto_private_react_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return safeReply(ctx, buildAutoPrivateReactManagerMessage(phone), getAutoPrivateReactManagerKeyboard(phone));
+    }
+
+    if (data.startsWith('auto_private_toggle_')) {
+        const phone = normalizePhone(data.replace('auto_private_toggle_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const settings = getActivePhoneSettings(phone);
+        updatePhoneSettings(phone, { autoPrivateReact: settings.autoPrivateReact === 'on' ? 'off' : 'on' });
+        return safeReply(ctx, buildAutoPrivateReactManagerMessage(phone), getAutoPrivateReactManagerKeyboard(phone));
+    }
+
+    if (data.startsWith('emoji_notice_toggle_')) {
+        const phone = normalizePhone(data.replace('emoji_notice_toggle_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const settings = getActivePhoneSettings(phone);
+        updatePhoneSettings(phone, { statusReactionNotice: settings.statusReactionNotice === 'on' ? 'off' : 'on' });
+        return safeReply(ctx, buildEmojiReactManagerMessage(phone), getEmojiReactManagerKeyboard(phone));
     }
 
     if (data.startsWith('deletedmsg_phone_')) {
@@ -7624,7 +7834,9 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'contacts_count_menu') return openContactsCountMenu(ctx);
         if (keyboardAction === 'contacts_broadcast_menu') return openContactsBroadcastMenu(ctx);
         if (keyboardAction === 'direct_contact_message_menu') return openDirectContactMessageMenu(ctx);
-        if (keyboardAction === 'create_story_menu') return openCreateStoryMenu(ctx);
+        if (keyboardAction === 'auto_private_react_menu') return openAutoPrivateReactMenu(ctx);
+        if (keyboardAction === 'love_match_menu') return openLoveMatchMenu(ctx);
+        if (keyboardAction === 'last_seen_menu') return openLastSeenMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
         if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
@@ -7891,8 +8103,8 @@ ${result.removedEntry?.raw || incomingText}`);
             ctx.session = null;
             return safeReply(ctx, '❌ تعذر العثور على جهة الاتصال المطلوبة.');
         }
-        await sock.sendMessage(entry.jid, { text: textToSend });
-        const bridge = setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out' });
+        const sent = await sock.sendMessage(entry.jid, { text: textToSend });
+        const bridge = setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out', lastMessageId: String(sent?.key?.id || '') });
         ctx.session = null;
         return safeReply(ctx, `✅ تم إرسال الرسالة إلى ${bridge?.contactName || contactName || normalizePhone(entry.jid)} من الرقم ${phone}.
 📩 أي رد جديد سيصل لك هنا داخل البوت.`, getDirectContactReplyKeyboard(phone, entry.jid));
@@ -7924,8 +8136,8 @@ ${result.removedEntry?.raw || incomingText}`);
             ctx.session = null;
             return safeReply(ctx, '❌ تعذر العثور على جهة الاتصال المطلوبة.');
         }
-        await sock.sendMessage(entry.jid, { text: textToSend });
-        setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out' });
+        const sent = await sock.sendMessage(entry.jid, { text: textToSend });
+        setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out', lastMessageId: String(sent?.key?.id || '') });
         ctx.session = null;
         return safeReply(ctx, `✅ تم إرسال الرد إلى ${contactName || normalizePhone(entry.jid)}.`, getDirectContactReplyKeyboard(phone, entry.jid));
     }
