@@ -128,7 +128,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     alwaysOnline: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
-    keepDeletedStatus: 'on',
+    keepDeletedStatus: 'off',
     ghostMode: 'off',
     autoRead: 'off',
     autoBlock: 'off',
@@ -195,7 +195,7 @@ const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     antiBot: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
-    keepDeletedStatus: 'on',
+    keepDeletedStatus: 'off',
     statusCustomReact: '❤️',
     menu: SETTINGS_IMAGE_URL,
     alive: SETTINGS_IMAGE_URL,
@@ -233,7 +233,7 @@ const PHONE_SETTINGS_SECTIONS = [
     {
         key: 'automation',
         label: 'الحالة والخيارات التلقائية',
-        fields: ['autoStatusRead', 'autoStatusReact', 'keepDeletedStatus', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
+        fields: ['autoStatusRead', 'autoStatusReact', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
     },
     {
         key: 'protection',
@@ -258,7 +258,7 @@ const PHONE_SETTINGS_SECTIONS = [
 ];
 const PHONE_SETTINGS_TOGGLE_FIELDS = new Set([
     'antiBad', 'antiLink', 'autoRecording', 'autoTyping', 'alwaysOnline', 'autoStatusRead', 'autoStatusReact',
-    'keepDeletedStatus', 'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave', 'antiMention'
+'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave', 'antiMention'
 ]);
 const PHONE_SETTINGS_SELECT_OPTIONS = {
     mode: [
@@ -520,6 +520,8 @@ const presenceTimers = new Map();
 const clientActivity = new Map();
 const stoppedPairings = new Set();
 const ownerReactionFlows = new Map();
+const directContactMessageSessions = new Map();
+const statusReactionNoticeCache = new Map();
 const autoReplyCooldowns = new Map();
 const ghostPendingReads = new Map();
 const statusMirrorTimers = new Map();
@@ -1955,7 +1957,6 @@ function buildPhoneSettingsMessage(phone) {
         `👀 قراءة الحالات: ${formatPhoneSettingValue(phone, 'autoStatusRead', settings.autoStatusRead)}`,
         `😍 التفاعل على الحالات: ${formatPhoneSettingValue(phone, 'autoStatusReact', settings.autoStatusReact)}`,
         `🤖 الرد الذكي: ${formatPhoneSettingValue(phone, 'aiReplyScope', settings.aiReplyScope)}`,
-        `🛡️ حفظ الحالة بعد الحذف: ${formatPhoneSettingValue(phone, 'keepDeletedStatus', settings.keepDeletedStatus)}`,
         `👻 وضع الشبح: ${formatPhoneSettingValue(phone, 'ghostMode', settings.ghostMode)}`,
         `🎭 الإيموجيات: ${formatPhoneSettingValue(phone, 'statusCustomReact', settings.statusCustomReact)}`,
         `🤖 الردود التلقائية: ${repliesCount}/${MAX_AUTO_REPLIES}`,
@@ -3330,12 +3331,13 @@ function buildTelegramCommandsOverview() {
         '/unlink أو زر حذف جلسة - حذف جلسة أي رقم من أرقامك',
         '/setemoji أو زر تغيير الإيموجي - تغيير إيموجي التفاعل لكل رقم',
         '/statuscount أو زر عدد الحالات - معرفة عدد الحالات المحفوظة لكل رقم',
-        '/viewstatuses أو زر مشاهدة الحالات - تصفح الحالات المحفوظة من داخل البوت',
+        '/viewstatuses أو زر مشاهدة الحالات - مشاهدة الحالات المحفوظة واحدة واحدة مع زر التالي',
+        '/createstory أو زر إنشاء ستوري - نشر نص أو صورة أو فيديو كحالة من الرقم المربوط',
         '/deletedmsgs أو زر الرسائل المحذوفة - عرض الرسائل الخاصة المحذوفة مع الاسم والتاريخ والوقت',
         '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال المحفوظة لكل رقم مربوط',
 
-        '📢 رسالة جماعية للجهات - إرسال رسالة واحدة لجميع جهات اتصال الرقم المربوط دفعة واحدة',
-        '🗑️ الحالات المحذوفة - عرض الحالات التي حذفها أصحابها خلال أقل من 24 ساعة مع إمكانية مشاهدتها وتنزيلها',
+        '📢 رسالة جماعية للجهات - اختيار عدد جهات الاتصال أولاً ثم إرسال الرسالة دفعة واحدة مع إمكانية الإلغاء',
+        '💬 مراسلة جهة اتصال - اختيار اسم عشوائي من جهات الاتصال ثم بدء محادثة خاصة من داخل البوت',
         '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط بمدد جاهزة أو وقت مخصص',
         '📢 قنواتنا - فتح رابط قناتنا على تيليجرام',
         '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost وحفظ الستوري لكل رقم',
@@ -3422,47 +3424,46 @@ function buildStartMessage(ctx) {
 function getStartKeyboard() {
     return Markup.inlineKeyboard([
         [
-            Markup.button.callback('ربط واتساب 📱', 'pair_wa'),
-            Markup.button.callback('أرقامي المربوطة 📋', 'my_numbers')
+            Markup.button.callback('📱 ربط واتساب', 'pair_wa'),
+            Markup.button.callback('📋 أرقامي المربوطة', 'my_numbers')
         ],
         [
-            Markup.button.callback('⚡ أوامر سريعة', 'quick_controls'),
-            Markup.button.callback('الإعدادات ⚙️', 'settings_menu')
+            Markup.button.callback('❤️ الإيموجي والتفاعل', 'emoji_react_menu'),
+            Markup.button.callback('⚙️ إعدادات الرقم', 'settings_menu')
         ],
         [
-            Markup.button.callback('إدارة الرسائل 🤖', 'auto_replies'),
-            Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji')
+            Markup.button.callback('🤖 الردود التلقائية', 'auto_replies'),
+            Markup.button.callback('😍 تغيير الإيموجي', 'change_emoji')
         ],
         [
-            Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu'),
-            Markup.button.callback('حذف جلسة 🗑️', 'delete_session')
-        ],
-        [
-            Markup.button.callback('عدد الحالات 📊', 'status_count_menu'),
-            Markup.button.callback('مشاهدة الحالات 👁️', 'status_browser_menu')
+            Markup.button.callback('📊 عدد الحالات', 'status_count_menu'),
+            Markup.button.callback('👁️ مشاهدة الحالات', 'status_browser_menu')
         ],
         [
             Markup.button.callback('🗑️ الرسائل المحذوفة', 'deleted_messages_menu'),
             Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
         ],
         [
-            Markup.button.callback('الحالات المحذوفة 🗑️', 'deleted_status_menu')
+            Markup.button.callback('📢 رسالة جماعية للجهات', 'contacts_broadcast_menu'),
+            Markup.button.callback('💬 مراسلة جهة اتصال', 'direct_contact_message_menu')
         ],
         [
-            Markup.button.callback('📢 رسالة جماعية للجهات', 'contacts_broadcast_menu')
+            Markup.button.callback('➕ إنشاء ستوري', 'create_story_menu'),
+            Markup.button.callback('👤 ملفي الشخصي', 'profile_menu')
         ],
         [
-            Markup.button.callback('ملفي الشخصي 👤', 'profile_menu'),
-            Markup.button.callback('📢 قنواتنا', 'our_channel_menu')
+            Markup.button.callback('⚡ أوامر سريعة', 'quick_controls'),
+            Markup.button.callback('🗑️ حذف جلسة', 'delete_session')
         ],
         [
-            Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu'),
-            Markup.button.callback('💬 تواصل مع المطور', 'contact_developer_wa_menu')
+            Markup.button.callback('📢 قنواتنا', 'our_channel_menu'),
+            Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu')
         ],
         [
-            Markup.button.callback('أوامر البوت 📜', 'linked_commands_menu'),
-            Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')
-        ]
+            Markup.button.callback('💬 تواصل مع المطور', 'contact_developer_wa_menu'),
+            Markup.button.callback('📜 أوامر البوت', 'linked_commands_menu')
+        ],
+        [Markup.button.callback('✅ تحديث الاشتراك', 'check_sub')]
     ]);
 }
 
@@ -3471,13 +3472,14 @@ function getMainReplyKeyboard() {
         reply_markup: {
             keyboard: [
                 ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
-                ['⚡ أوامر سريعة', '⚙️ إعدادات رقم', '🤖 الردود التلقائية'],
-                ['😍 تغيير الإيموجي', '✨ تفاعل الحالات', '🗑️ حذف جلسة'],
-                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '🗑️ الحالات المحذوفة'],
+                ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي', '⚙️ إعدادات رقم'],
+                ['🤖 الردود التلقائية', '⚡ أوامر سريعة', '🗑️ حذف جلسة'],
+                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '➕ إنشاء ستوري'],
                 ['🗑️ الرسائل المحذوفة', '👥 جهات الاتصال'],
-                ['📢 رسالة جماعية للجهات'],
-                ['👤 ملفي الشخصي', '📢 قنواتنا', '👨‍💻 مطور البوت'],
-                ['💬 تواصل مع المطور', '📜 أوامر البوت', '✅ تحديث الاشتراك']
+                ['📢 رسالة جماعية للجهات', '💬 مراسلة جهة اتصال'],
+                ['👤 ملفي الشخصي', '📢 قنواتنا'],
+                ['👨‍💻 مطور البوت', '💬 تواصل مع المطور'],
+                ['📜 أوامر البوت', '✅ تحديث الاشتراك']
             ],
             resize_keyboard: true,
             one_time_keyboard: false,
@@ -3496,16 +3498,17 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:إعدادات رقم|اعدادات رقم|الإعدادات|الاعدادات|settings)/i.test(value)) return 'settings_menu';
     if (/(?:الردود التلقائية|إدارة الرسائل|ادارة الرسائل|auto repl)/i.test(value)) return 'auto_replies';
     if (/(?:تغيير الإيموجي|تغيير الايموجي|emoji)/i.test(value)) return 'change_emoji';
-    if (/(?:تفاعل الحالات|status react)/i.test(value)) return 'emoji_react_menu';
+    if (/(?:الإيموجي والتفاعل|الايموجي والتفاعل|تفاعل الحالات|status react)/i.test(value)) return 'emoji_react_menu';
     if (/(?:حذف جلسة|حذف الجلسة|unlink|delete session)/i.test(value)) return 'delete_session';
     if (/(?:عدد الحالات|احصائية الحالات|احصائيات الحالات|status count)/i.test(value)) return 'status_count_menu';
     if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
+    if (/(?:إنشاء ستوري|انشاء ستوري|عمل ستوري|اضافة ستوري|إضافة ستوري|نشر حالة|create story|post story)/i.test(value)) return 'create_story_menu';
     if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
 
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
 
     if (/(?:رسالة جماعية|جماعية للجهات|broadcast contacts|contacts broadcast)/i.test(value)) return 'contacts_broadcast_menu';
-    if (/(?:الحالات المحذوفة|الستوري المحذوفة|الستوريات المحذوفة|deleted statuses|deleted status)/i.test(value)) return 'deleted_status_menu';
+    if (/(?:مراسلة جهة اتصال|مراسلة جهات الاتصال|مراسلة جهة|direct contact|contact message)/i.test(value)) return 'direct_contact_message_menu';
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
     if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
     if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
@@ -3585,17 +3588,73 @@ async function openStatusBrowserMenu(ctx) {
 }
 
 async function openStatusBrowserForPhone(ctx, phone) {
-    const entries = getPhoneStatusArchiveEntries(phone).slice(0, 20);
+    const entries = getPhoneStatusArchiveEntries(phone);
     if (!entries.length) return safeReply(ctx, `📭 لا توجد حالات محفوظة حالياً للرقم ${phone}.`);
-    const rows = entries.map((entry, index) => {
-        const icon = entry.kind === 'video' ? '🎥' : entry.kind === 'image' ? '🖼️' : entry.kind === 'text' ? '📝' : '📦';
-        return [Markup.button.callback(`${icon} ${index + 1}. ${formatStatusArchiveOwner(entry)}`.slice(0, 60), `status_open_${sanitizeCallbackPhone(phone)}_${entry.id}`)];
-    });
-    rows.push([Markup.button.callback('🔄 تحديث القائمة', `statusbrowse_phone_${sanitizeCallbackPhone(phone)}`)]);
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, `👁️ الحالات المحفوظة للرقم ${phone}
-📥 الإجمالي: ${getPhoneStatusArchiveEntries(phone).length}
-اختر الحالة التي تريد فتحها:`, { reply_markup: { inline_keyboard: rows } });
+    return sendStatusArchiveEntryByIndex(ctx, phone, 0);
+}
+
+function getStatusArchiveIndexById(phone, statusId) {
+    const entries = getPhoneStatusArchiveEntries(phone);
+    return entries.findIndex((entry) => String(entry?.id || '') === String(statusId || ''));
+}
+
+function buildStatusSequenceButtons(phone, entry, index, total) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const statusId = String(entry?.id || '').trim();
+    const ownerButton = Markup.button.callback(`👤 ${formatStatusArchiveOwner(entry)}`.slice(0, 55), `status_owner_${cleanPhone}_${statusId}`);
+    const actionButton = entry?.kind === 'text'
+        ? Markup.button.callback('نسخ النص 📋', `status_copy_${cleanPhone}_${statusId}`)
+        : Markup.button.callback('تنزيل الحالة ⬇️', `status_download_${cleanPhone}_${statusId}`);
+    const nextButton = index + 1 < total
+        ? Markup.button.callback('التالي ⏭️', `status_next_${cleanPhone}_${index + 1}`)
+        : Markup.button.callback('التالي ⏭️', `status_done_${cleanPhone}`);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [ownerButton],
+                [actionButton],
+                [nextButton]
+            ]
+        }
+    };
+}
+
+function getStatusBrowserRestartKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('العودة للحالات السابقة ↩️', `status_restart_${cleanPhone}`)],
+                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+            ]
+        }
+    };
+}
+
+async function sendStatusBrowserFinished(ctx, phone) {
+    return safeReply(ctx, `✅ تم انتهاء مشاهدة الحالات للرقم ${phone}.`, getStatusBrowserRestartKeyboard(phone));
+}
+
+async function sendStatusArchiveEntryByIndex(ctx, phone, index = 0) {
+    const entries = getPhoneStatusArchiveEntries(phone);
+    if (!entries.length) return safeReply(ctx, `📭 لا توجد حالات محفوظة حالياً للرقم ${phone}.`);
+    const safeIndex = Number(index) || 0;
+    if (safeIndex < 0 || safeIndex >= entries.length) {
+        return sendStatusBrowserFinished(ctx, phone);
+    }
+    const entry = entries[safeIndex];
+    const caption = buildStatusPreviewCaption(entry);
+    const buttons = buildStatusSequenceButtons(phone, entry, safeIndex, entries.length);
+    if (entry.kind === 'text') return safeReply(ctx, caption, buttons);
+    if (!entry.filePath || !fs.existsSync(entry.filePath)) return safeReply(ctx, '❌ ملف الحالة غير موجود حالياً على الخادم.', buttons);
+    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
+    if (entry.kind === 'video') return ctx.replyWithVideo({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
+    if (entry.kind === 'audio') {
+        await ctx.replyWithAudio({ source: entry.filePath }, buttons);
+        return safeReply(ctx, caption, buttons);
+    }
+    await ctx.replyWithDocument({ source: entry.filePath, filename: entry.fileName || 'status.bin' }, buttons);
+    return safeReply(ctx, caption, buttons);
 }
 
 async function openDeletedStatusBrowserMenu(ctx) {
@@ -3724,7 +3783,7 @@ function cancelBroadcastJob(phone) {
 }
 
 // إرسال رسالة جماعية بنظام دفعات في الخلفية (background) - 100 رسالة كل 5 دقائق
-async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgress) {
+async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgress, limitCount = 0) {
     const normalizedPhone = normalizePhone(phone);
     const cleanMessage = String(messageText || '').trim();
     const report = { total: 0, success: 0, failed: 0, skipped: 0, details: [], finished: false };
@@ -3752,14 +3811,16 @@ async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgr
         const cPhone = String(c.phoneNumber || '').trim();
         return jid && cPhone;
     });
-    report.total = validContacts.length;
-    report.skipped = contacts.length - validContacts.length;
+    const normalizedLimit = Math.max(0, Math.min(Number(limitCount) || 0, validContacts.length));
+    const targetContacts = normalizedLimit ? validContacts.slice(0, normalizedLimit) : validContacts;
+    report.total = targetContacts.length;
+    report.skipped = contacts.length - validContacts.length + Math.max(0, validContacts.length - targetContacts.length);
 
     let batchNum = 0;
     let globalIndex = 0;
 
     // إرسال الدفعات في loop خلفي
-    while (globalIndex < validContacts.length) {
+    while (globalIndex < targetContacts.length) {
         if (jobState.cancel) break;
 
         // إعادة التحقق من أن الاتصال لا يزال قائماً
@@ -3774,7 +3835,7 @@ async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgr
         const currentSock = waClients.get(normalizedPhone) || sock;
 
         // دفعة واحدة: 100 رسالة
-        const batch = validContacts.slice(globalIndex, globalIndex + CONTACTS_BROADCAST_BATCH);
+        const batch = targetContacts.slice(globalIndex, globalIndex + CONTACTS_BROADCAST_BATCH);
         batchNum++;
 
         let sentInBatch = 0;
@@ -3813,12 +3874,12 @@ async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgr
         // إشعار المستخدم بالتقدم
         if (typeof onProgress === 'function') {
             try {
-                await onProgress(report, globalIndex, validContacts.length, batchNum);
+                await onProgress(report, globalIndex, targetContacts.length, batchNum);
             } catch (_) {}
         }
 
         // إذا لم ننته بعد، انتظر 5 دقائق قبل الدفعة التالية
-        if (globalIndex < validContacts.length && !jobState.cancel) {
+        if (globalIndex < targetContacts.length && !jobState.cancel) {
             await delay(CONTACTS_BROADCAST_PAUSE_MS);
         }
     }
@@ -3910,26 +3971,209 @@ async function openContactsBroadcastMenu(ctx) {
     if (phones.length === 1) {
         const contacts = getPhoneContactEntries(phones[0]);
         if (!contacts.length) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phones[0]} بعد.\nانتظر حتى يتم مزامنة جهات الاتصال مع البوت.`);
-        ctx.session = { step: 'wait_contacts_broadcast_text', targetPhone: phones[0] };
-        return safeReply(ctx, buildContactsBroadcastPrompt(phones[0], contacts.length));
+        ctx.session = { step: 'wait_contacts_broadcast_count', targetPhone: phones[0] };
+        return safeReply(ctx, buildContactsBroadcastPrompt(phones[0], contacts.length), getContactsBroadcastCancelKeyboard(phones[0]));
     }
     const rows = phones.map((phone) => {
         const cnt = getPhoneContactEntries(phone).length;
         return [Markup.button.callback(`📢 ${phone} (${cnt} جهة اتصال)`, `contacts_broadcast_phone_${sanitizeCallbackPhone(phone)}`)];
     });
+    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
     return safeReply(ctx, '📢 اختر الرقم الذي تريد إرسال الرسالة الجماعية منه:', { reply_markup: { inline_keyboard: rows } });
+}
+
+function getContactsBroadcastCancelKeyboard(phone) {
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('إلغاء ❌', `contacts_broadcast_cancel_${sanitizeCallbackPhone(phone)}`)],
+                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+            ]
+        }
+    };
 }
 
 function buildContactsBroadcastPrompt(phone, count) {
     return [
         `📢 إرسال رسالة جماعية من الرقم ${phone}`,
-        ``,
-        `👥 عدد جهات الاتصال المستهدفة: ${count}`,
-        ``,
-        `📝 أرسل الآن نص الرسالة التي تريد إرسالها لجميع جهات الاتصال.`,
-        `⚠️ تنبيه: الرسالة ستُرسل لجميع جهات الاتصال المحفوظة تباعاً.`,
-        `💡 الرسالة تصل حتى لمن لم يحفظ رقمك (شرط أن يكون رقمك محفوظاً لديك).`
+        '',
+        `👥 إجمالي جهات الاتصال المتاحة: ${count}`,
+        '',
+        '🔢 أرسل الآن عدد جهات الاتصال التي تريد أن تصلهم الرسالة.',
+        `مثال: 25 أو ${Math.min(count, 100)}`,
+        'يمكنك الإلغاء في أي وقت من الزر بالأسفل.'
     ].join('\n');
+}
+
+function buildContactsBroadcastTextPrompt(phone, requestedCount, totalCount) {
+    return [
+        `✉️ تم تحديد ${requestedCount} جهة اتصال من أصل ${totalCount} للرقم ${phone}.`,
+        '',
+        '📝 أرسل الآن الرسالة المطلوبة.',
+        'إذا أرسلت كلمة الغاء أو ضغطت زر الإلغاء فلن يتم الإرسال.'
+    ].join('\n');
+}
+
+function findPhoneContactEntry(phone, contactRef = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedJid = normalizeContactJid(contactRef);
+    const normalizedContactPhone = normalizePhone(contactRef);
+    return getPhoneContactEntries(normalizedPhone).find((entry) => {
+        const entryJid = normalizeContactJid(entry?.jid || '');
+        const entryPhone = normalizePhone(entry?.phoneNumber || entry?.jid || '');
+        if (normalizedJid && entryJid === normalizedJid) return true;
+        if (normalizedContactPhone && entryPhone === normalizedContactPhone) return true;
+        return false;
+    }) || null;
+}
+
+function getRandomPhoneContactEntry(phone) {
+    const contacts = getPhoneContactEntries(phone);
+    if (!contacts.length) return null;
+    return contacts[Math.floor(Math.random() * contacts.length)] || contacts[0] || null;
+}
+
+function getDirectContactSessionKey(phone, contactRef = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const entry = findPhoneContactEntry(normalizedPhone, contactRef);
+    const normalizedJid = entry ? normalizeContactJid(entry.jid) : normalizeContactJid(contactRef);
+    if (!normalizedPhone || !normalizedJid) return '';
+    return `${normalizedPhone}::${normalizedJid}`;
+}
+
+function getDirectContactMessageSession(phone, contactRef = '') {
+    const key = getDirectContactSessionKey(phone, contactRef);
+    if (!key) return null;
+    return directContactMessageSessions.get(key) || null;
+}
+
+function setDirectContactMessageSession(phone, contactRef, payload = {}) {
+    const entry = findPhoneContactEntry(phone, contactRef);
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedJid = normalizeContactJid(entry?.jid || contactRef);
+    if (!normalizedPhone || !normalizedJid) return null;
+    const key = `${normalizedPhone}::${normalizedJid}`;
+    const value = {
+        phone: normalizedPhone,
+        contactJid: normalizedJid,
+        contactPhone: normalizePhone(entry?.phoneNumber || normalizedJid),
+        contactName: pickContactDisplayName(entry?.name, entry?.notify, entry?.pushName, normalizePhone(entry?.phoneNumber || normalizedJid), normalizedJid),
+        updatedAt: Date.now(),
+        ...payload
+    };
+    directContactMessageSessions.set(key, value);
+    return value;
+}
+
+function clearDirectContactMessageSession(phone, contactRef = '') {
+    const key = getDirectContactSessionKey(phone, contactRef);
+    if (!key) return false;
+    return directContactMessageSessions.delete(key);
+}
+
+function buildDirectContactCardMessage(phone, entry) {
+    const displayName = pickContactDisplayName(entry?.name, entry?.notify, entry?.pushName, entry?.phoneNumber, entry?.jid);
+    const contactPhone = normalizePhone(entry?.phoneNumber || entry?.jid || '');
+    return [
+        `💬 مراسلة جهة اتصال من الرقم ${phone}`,
+        '',
+        `👤 الاسم العشوائي: ${displayName || 'بدون اسم'}`,
+        `📱 الرقم: ${contactPhone || 'غير معروف'}`,
+        '',
+        'اضغط مراسلة لبدء المحادثة أو اسم آخر لعرض جهة مختلفة.'
+    ].join('\n');
+}
+
+function getDirectContactCardKeyboard(phone, entry) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const contactPhone = sanitizeCallbackPhone(entry?.phoneNumber || entry?.jid || '');
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('مراسلة 💬', `direct_message_pick_${cleanPhone}_${contactPhone}`)],
+                [Markup.button.callback('اسم عشوائي آخر 🎲', `direct_message_random_${cleanPhone}`)],
+                [Markup.button.callback('إلغاء ❌', `direct_message_cancel_${cleanPhone}`)]
+            ]
+        }
+    };
+}
+
+function getDirectContactCancelKeyboard(phone, contactRef = '') {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const cleanContact = sanitizeCallbackPhone(contactRef);
+    const stopAction = cleanContact ? `direct_message_stop_${cleanPhone}_${cleanContact}` : `direct_message_cancel_${cleanPhone}`;
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('إلغاء ❌', stopAction)],
+                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+            ]
+        }
+    };
+}
+
+function getDirectContactReplyKeyboard(phone, contactRef = '') {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const cleanContact = sanitizeCallbackPhone(contactRef);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('رد على الرسالة ↩️', `direct_message_reply_${cleanPhone}_${cleanContact}`)],
+                [Markup.button.callback('إلغاء المراسلة ❌', `direct_message_stop_${cleanPhone}_${cleanContact}`)]
+            ]
+        }
+    };
+}
+
+function extractInboundPrivateMessagePreview(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    const text = String(textFromMessage(msg) || '').trim();
+    if (text) return text.slice(0, 3500);
+    if (content?.imageMessage) return `📷 صورة${content.imageMessage.caption ? `\n${String(content.imageMessage.caption).trim().slice(0, 1000)}` : ''}`;
+    if (content?.videoMessage) return `🎥 فيديو${content.videoMessage.caption ? `\n${String(content.videoMessage.caption).trim().slice(0, 1000)}` : ''}`;
+    if (content?.audioMessage) return '🎤 رسالة صوتية';
+    if (content?.documentMessage) return `📄 ملف: ${String(content.documentMessage.fileName || 'document').trim()}`;
+    if (content?.stickerMessage) return '🧩 ملصق';
+    return '📩 رسالة جديدة';
+}
+
+async function relayDirectContactMessageToTelegram(phone, contactJid, msg) {
+    const session = getDirectContactMessageSession(phone, contactJid);
+    if (!session?.ownerId) return false;
+    const entry = findPhoneContactEntry(phone, contactJid);
+    const displayName = pickContactDisplayName(session.contactName, entry?.name, entry?.notify, normalizePhone(contactJid), contactJid);
+    const preview = extractInboundPrivateMessagePreview(msg);
+    await notifyTelegramUser(
+        session.ownerId,
+        [
+            `📩 رد جديد داخل البوت`,
+            `📱 الرقم المربوط: ${normalizePhone(phone)}`,
+            `👤 جهة الاتصال: ${displayName}`,
+            '',
+            preview
+        ].join('\n'),
+        getDirectContactReplyKeyboard(phone, contactJid)
+    );
+    setDirectContactMessageSession(phone, contactJid, { ...session, ownerId: session.ownerId, lastDirection: 'in' });
+    return true;
+}
+
+async function openDirectContactMessageMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لمراسلة جهة اتصال.');
+    if (phones.length === 1) return openRandomDirectContactPicker(ctx, phones[0]);
+    const rows = phones.map((phone) => {
+        const cnt = getPhoneContactEntries(phone).length;
+        return [Markup.button.callback(`💬 ${phone} (${cnt} جهة)`, `direct_message_phone_${sanitizeCallbackPhone(phone)}`)];
+    });
+    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+    return safeReply(ctx, '💬 اختر الرقم الذي تريد المراسلة منه داخل البوت:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function openRandomDirectContactPicker(ctx, phone) {
+    const entry = getRandomPhoneContactEntry(phone);
+    if (!entry) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`);
+    return safeReply(ctx, buildDirectContactCardMessage(phone, entry), getDirectContactCardKeyboard(phone, entry));
 }
 
 
@@ -4491,6 +4735,45 @@ async function notifyPhoneOwner(phone, text, extra = {}) {
     const ownerId = getPhoneOwner(phone);
     if (!ownerId) return;
     await notifyTelegramUser(ownerId, text, extra);
+}
+
+function rememberStatusReactionNotice(phone, participant, messageId) {
+    const key = buildStatusBackupKey(phone, participant, messageId || String(Date.now()));
+    if (!key) return false;
+    if (statusReactionNoticeCache.has(key)) return false;
+    statusReactionNoticeCache.set(key, Date.now());
+    if (statusReactionNoticeCache.size > 5000) {
+        const firstKey = statusReactionNoticeCache.keys().next().value;
+        if (firstKey) statusReactionNoticeCache.delete(firstKey);
+    }
+    return true;
+}
+
+async function notifyOwnerVisibleStatusReaction(phone, participant, emoji, msg) {
+    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const messageId = String(msg?.key?.id || '').trim();
+    if (!normalizedParticipant || !messageId) return false;
+    if (!rememberStatusReactionNotice(phone, normalizedParticipant, messageId)) return false;
+    const contactName = getStoredContactName(phone, normalizedParticipant, normalizePhone(normalizedParticipant)) || normalizePhone(normalizedParticipant);
+    await notifyPhoneOwner(
+        phone,
+        [
+            '❤️ تم إظهار التفاعل داخل البوت',
+            `📱 الرقم المربوط: ${normalizePhone(phone)}`,
+            `👤 صاحب الحالة: ${contactName}`,
+            `😍 الإيموجي المستخدم: ${String(emoji || DEFAULT_REACTION_EMOJI).trim() || DEFAULT_REACTION_EMOJI}`,
+            '✅ التفاعل على الستوري تم تنفيذه ولن يبقى مخفياً عن المالك داخل البوت.'
+        ].join('\n'),
+        {
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('فتح إدارة التفاعل ❤️', `emoji_react_pick_${sanitizeCallbackPhone(phone)}`)],
+                    [Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${sanitizeCallbackPhone(phone)}`)]
+                ]
+            }
+        }
+    );
+    return true;
 }
 
 function touchClient(phone) {
@@ -5304,16 +5587,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         const settings = getActivePhoneSettings(phoneNumber);
 
         if (extractRevokedStatusId(msg)) {
-            await restoreDeletedStatusIfNeeded(sock, phoneNumber, msg);
             return;
-        }
-
-        if (settings.keepDeletedStatus === 'on') {
-            try {
-                await backupStatusMessage(sock, phoneNumber, msg);
-            } catch (backupError) {
-                console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
-            }
         }
 
         try {
@@ -5360,6 +5634,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedToStatus) {
                 incrementAnalytics('totalStatusReactions');
+                await notifyOwnerVisibleStatusReaction(phoneNumber, participant, reactionEmoji || pickRandomStatusEmoji(phoneNumber), msg);
             }
         }
 
@@ -5451,6 +5726,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         incrementAnalytics('totalIncomingMessages');
         if (!from.endsWith('@g.us')) {
             upsertPhoneContact(phoneNumber, from, { name: msg?.pushName, pushName: msg?.pushName });
+            await relayDirectContactMessageToTelegram(phoneNumber, from, msg);
         }
         await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
         const text = textFromMessage(msg);
@@ -6122,6 +6398,151 @@ async function updatePhoneProfileAboutNow(phone, aboutText, expiresAt) {
     throw new Error(`تعذر تحديث حول بعد ${MAX_ABOUT_ATTEMPTS} محاولات. ${lastError?.message || 'حدث خطأ غير متوقع.'} جرب مجدداً بعد قليل أو تأكد أن الرقم متصل.`);
 }
 
+
+function buildCreateStoryPrompt(phone) {
+    const contactsCount = getPhoneContactEntries(phone).length;
+    return [
+        `➕ إنشاء ستوري للرقم ${phone}`,
+        `👥 جهات الاتصال المتاحة للنشر: ${contactsCount}`,
+        '',
+        'أرسل الآن نص أو صورة أو فيديو.',
+        '• النص = سيتم نشره كحالة نصية',
+        '• الصورة/الفيديو = سيتم نشره كحالة مع الكابشن إن وجد',
+        '',
+        'ملاحظة: سيتم النشر على جهات الاتصال المحفوظة لهذا الرقم داخل البوت.'
+    ].join('\n');
+}
+
+async function openCreateStoryMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإنشاء ستوري.');
+    if (phones.length === 1) return startCreateStoryFlowForPhone(ctx, phones[0]);
+    const rows = phones.map((phone) => {
+        const count = getPhoneContactEntries(phone).length;
+        return [Markup.button.callback(`➕ ${phone} (${count} جهة)`, `create_story_phone_${sanitizeCallbackPhone(phone)}`)];
+    });
+    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+    return safeReply(ctx, '➕ اختر الرقم الذي تريد النشر منه كستوري:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function startCreateStoryFlowForPhone(ctx, phone) {
+    if (!userOwnsPhone(ctx.from.id, phone)) {
+        return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+    }
+    const contacts = getPhoneContactEntries(phone);
+    if (!contacts.length) {
+        return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.
+انتظر حتى تتم مزامنة جهات الاتصال ثم أعد المحاولة.`);
+    }
+    ctx.session = { step: 'wait_story_content', targetPhone: phone };
+    return safeReply(ctx, buildCreateStoryPrompt(phone));
+}
+
+async function downloadTelegramFileBuffer(ctx, fileId) {
+    const fileLink = await ctx.telegram.getFileLink(fileId);
+    const response = await fetch(String(fileLink));
+    if (!response.ok) {
+        throw new Error(`تعذر تنزيل الملف من تيليجرام (${response.status})`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+}
+
+async function publishStatusToAllLinkedContacts(phone, payload) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+        throw new Error('الرقم غير صالح.');
+    }
+    const sock = waClients.get(normalizedPhone);
+    if (!sock) {
+        throw new Error('الرقم غير متصل حالياً على واتساب.');
+    }
+    const ownJid = normalizeWhatsAppJid(sock.user?.id);
+    const recipients = Array.from(new Set(
+        getPhoneContactEntries(normalizedPhone)
+            .map((entry) => normalizeContactJid(entry?.jid || entry?.id || ''))
+            .filter((jid) => jid && jid !== ownJid)
+    ));
+    if (!recipients.length) {
+        throw new Error('لا توجد جهات اتصال صالحة للنشر عليها.');
+    }
+
+    const attempts = [
+        async () => sock.sendMessage('status@broadcast', payload, { broadcast: true, statusJidList: recipients }),
+        async () => sock.sendMessage('status@broadcast', payload, { broadcast: true }),
+        async () => sock.sendMessage('status@broadcast', payload)
+    ];
+
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            const result = await attempt();
+            return { result, recipients: recipients.length };
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError || new Error('تعذر نشر الستوري حالياً.');
+}
+
+async function publishTextStory(phone, text) {
+    const cleanText = String(text || '').trim().slice(0, 1900);
+    if (!cleanText) {
+        throw new Error('نص الحالة فارغ.');
+    }
+    return publishStatusToAllLinkedContacts(phone, {
+        text: cleanText,
+        backgroundColor: '#0B141A',
+        font: 1
+    });
+}
+
+async function handleCreateStoryMediaMessage(ctx, mediaKind) {
+    const sessionPhone = ctx.session?.targetPhone;
+    if (ctx.session?.step !== 'wait_story_content') return false;
+    if (!(await ensureSubscription(ctx))) return true;
+    if (!userOwnsPhone(ctx.from.id, sessionPhone)) {
+        ctx.session = null;
+        await safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        return true;
+    }
+
+    try {
+        let payload = null;
+        if (mediaKind === 'photo') {
+            const photos = Array.isArray(ctx.message?.photo) ? ctx.message.photo : [];
+            const selected = photos[photos.length - 1];
+            if (!selected?.file_id) throw new Error('لم أتمكن من قراءة الصورة المرسلة.');
+            const buffer = await downloadTelegramFileBuffer(ctx, selected.file_id);
+            payload = {
+                image: buffer,
+                caption: String(ctx.message?.caption || '').trim().slice(0, 1024),
+                mimetype: 'image/jpeg'
+            };
+        } else if (mediaKind === 'video') {
+            const video = ctx.message?.video;
+            if (!video?.file_id) throw new Error('لم أتمكن من قراءة الفيديو المرسل.');
+            const buffer = await downloadTelegramFileBuffer(ctx, video.file_id);
+            payload = {
+                video: buffer,
+                caption: String(ctx.message?.caption || '').trim().slice(0, 1024),
+                mimetype: String(video?.mime_type || 'video/mp4') || 'video/mp4'
+            };
+        } else {
+            throw new Error('نوع وسائط غير مدعوم.');
+        }
+
+        const report = await publishStatusToAllLinkedContacts(sessionPhone, payload);
+        ctx.session = null;
+        await safeReply(ctx, `✅ تم نشر الستوري بنجاح للرقم ${sessionPhone}.
+👥 عدد جهات الاتصال المستهدفة: ${report.recipients}`);
+        return true;
+    } catch (error) {
+        await safeReply(ctx, `❌ تعذر نشر الستوري: ${error.message || 'خطأ غير متوقع.'}`);
+        return true;
+    }
+}
+
 // =========================
 // تيليجرام - الواجهات العامة
 // =========================
@@ -6189,6 +6610,12 @@ bot.command('viewstatuses', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     upsertTelegramUser(ctx);
     return openStatusBrowserMenu(ctx);
+});
+
+bot.command('createstory', async (ctx) => {
+    if (!(await ensureSubscription(ctx))) return;
+    upsertTelegramUser(ctx);
+    return openCreateStoryMenu(ctx);
 });
 
 bot.command('deletedmsgs', async (ctx) => {
@@ -6482,16 +6909,16 @@ bot.on('callback_query', async (ctx) => {
         return openStatusBrowserMenu(ctx);
     }
 
+    if (data === 'create_story_menu') {
+        return openCreateStoryMenu(ctx);
+    }
+
     if (data === 'deleted_messages_menu') {
         return openDeletedMessagesMenu(ctx);
     }
 
     if (data === 'contacts_count_menu') {
         return openContactsCountMenu(ctx);
-    }
-
-    if (data === 'deleted_status_menu') {
-        return openDeletedStatusBrowserMenu(ctx);
     }
 
     if (data === 'profile_menu') {
@@ -6524,6 +6951,32 @@ bot.on('callback_query', async (ctx) => {
         const phone = normalizePhone(data.replace('statusbrowse_phone_', ''));
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         return openStatusBrowserForPhone(ctx, phone);
+    }
+
+    if (data.startsWith('create_story_phone_')) {
+        const phone = normalizePhone(data.replace('create_story_phone_', ''));
+        return startCreateStoryFlowForPhone(ctx, phone);
+    }
+
+    if (data.startsWith('status_next_')) {
+        const payload = data.replace('status_next_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const nextIndex = Number(idx === -1 ? -1 : payload.slice(idx + 1));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return sendStatusArchiveEntryByIndex(ctx, phone, nextIndex);
+    }
+
+    if (data.startsWith('status_done_')) {
+        const phone = normalizePhone(data.replace('status_done_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return sendStatusBrowserFinished(ctx, phone);
+    }
+
+    if (data.startsWith('status_restart_')) {
+        const phone = normalizePhone(data.replace('status_restart_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return sendStatusArchiveEntryByIndex(ctx, phone, 0);
     }
 
     if (data.startsWith('contactscount_phone_')) {
@@ -6565,8 +7018,86 @@ bot.on('callback_query', async (ctx) => {
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         const contacts = getPhoneContactEntries(phone);
         if (!contacts.length) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`);
-        ctx.session = { step: 'wait_contacts_broadcast_text', targetPhone: phone };
-        return safeReply(ctx, buildContactsBroadcastPrompt(phone, contacts.length));
+        ctx.session = { step: 'wait_contacts_broadcast_count', targetPhone: phone };
+        return safeReply(ctx, buildContactsBroadcastPrompt(phone, contacts.length), getContactsBroadcastCancelKeyboard(phone));
+    }
+
+    if (data.startsWith('contacts_broadcast_cancel_')) {
+        const phone = normalizePhone(data.replace('contacts_broadcast_cancel_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        cancelBroadcastJob(phone);
+        if (ctx.session?.targetPhone === phone) ctx.session = null;
+        return safeReply(ctx, `✅ تم إلغاء متابعة الرسالة الجماعية للرقم ${phone}.`);
+    }
+
+    if (data === 'direct_contact_message_menu') {
+        return openDirectContactMessageMenu(ctx);
+    }
+
+    if (data.startsWith('direct_message_phone_')) {
+        const phone = normalizePhone(data.replace('direct_message_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return openRandomDirectContactPicker(ctx, phone);
+    }
+
+    if (data.startsWith('direct_message_random_')) {
+        const phone = normalizePhone(data.replace('direct_message_random_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return openRandomDirectContactPicker(ctx, phone);
+    }
+
+    if (data.startsWith('direct_message_cancel_')) {
+        const phone = normalizePhone(data.replace('direct_message_cancel_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        if (ctx.session?.targetPhone === phone) ctx.session = null;
+        return safeReply(ctx, `✅ تم إلغاء اختيار جهة الاتصال للرقم ${phone}.`);
+    }
+
+    if (data.startsWith('direct_message_pick_')) {
+        const payload = data.replace('direct_message_pick_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const contactPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const entry = findPhoneContactEntry(phone, contactPhone);
+        if (!entry?.jid) return safeReply(ctx, '❌ لم أتمكن من العثور على جهة الاتصال المطلوبة.');
+        const displayName = pickContactDisplayName(entry.name, entry.notify, entry.pushName, entry.phoneNumber, entry.jid);
+        ctx.session = {
+            step: 'wait_direct_contact_message_text',
+            targetPhone: phone,
+            targetContactJid: entry.jid,
+            targetContactName: displayName
+        };
+        return safeReply(ctx, `💬 أرسل الآن الرسالة التي تريد إرسالها إلى ${displayName} من الرقم ${phone}.`, getDirectContactCancelKeyboard(phone, contactPhone));
+    }
+
+    if (data.startsWith('direct_message_reply_')) {
+        const payload = data.replace('direct_message_reply_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const contactPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const session = getDirectContactMessageSession(phone, contactPhone);
+        const entry = findPhoneContactEntry(phone, contactPhone);
+        if (!session || !entry?.jid) return safeReply(ctx, '❌ هذه المحادثة متوقفة حالياً. ابدأ مراسلة جديدة أولاً.');
+        ctx.session = {
+            step: 'wait_direct_contact_reply_text',
+            targetPhone: phone,
+            targetContactJid: entry.jid,
+            targetContactName: pickContactDisplayName(session.contactName, entry.name, entry.notify, entry.phoneNumber, entry.jid)
+        };
+        return safeReply(ctx, `↩️ أرسل الآن ردك إلى ${pickContactDisplayName(session.contactName, entry.name, entry.notify, entry.phoneNumber, entry.jid)}.`, getDirectContactCancelKeyboard(phone, contactPhone));
+    }
+
+    if (data.startsWith('direct_message_stop_')) {
+        const payload = data.replace('direct_message_stop_', '');
+        const idx = payload.lastIndexOf('_');
+        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
+        const contactPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        clearDirectContactMessageSession(phone, contactPhone);
+        if (ctx.session?.targetPhone === phone && normalizePhone(ctx.session?.targetContactJid || '') === contactPhone) ctx.session = null;
+        return safeReply(ctx, `✅ تم إيقاف المراسلة داخل البوت للرقم ${phone}.`);
     }
 
     if (data.startsWith('statusdeleted_phone_')) {
@@ -6592,7 +7123,9 @@ bot.on('callback_query', async (ctx) => {
         const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
         const statusId = idx === -1 ? '' : payload.slice(idx + 1);
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openStatusArchiveItem(ctx, phone, statusId, 'all');
+        const statusIndex = getStatusArchiveIndexById(phone, statusId);
+        if (statusIndex === -1) return safeReply(ctx, '❌ لم أجد هذه الحالة.');
+        return sendStatusArchiveEntryByIndex(ctx, phone, statusIndex);
     }
 
     if (data.startsWith('status_download_')) {
@@ -7049,6 +7582,19 @@ bot.command('setstatuslikemsg', async (ctx) => {
 });
 
 // =========================
+// تيليجرام - استقبال وسائط الستوري
+// =========================
+bot.on('photo', async (ctx) => {
+    upsertTelegramUser(ctx);
+    await handleCreateStoryMediaMessage(ctx, 'photo');
+});
+
+bot.on('video', async (ctx) => {
+    upsertTelegramUser(ctx);
+    await handleCreateStoryMediaMessage(ctx, 'video');
+});
+
+// =========================
 // تيليجرام - النصوص والحالات
 // =========================
 bot.on('text', async (ctx) => {
@@ -7077,7 +7623,8 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'deleted_messages_menu') return openDeletedMessagesMenu(ctx);
         if (keyboardAction === 'contacts_count_menu') return openContactsCountMenu(ctx);
         if (keyboardAction === 'contacts_broadcast_menu') return openContactsBroadcastMenu(ctx);
-        if (keyboardAction === 'deleted_status_menu') return openDeletedStatusBrowserMenu(ctx);
+        if (keyboardAction === 'direct_contact_message_menu') return openDirectContactMessageMenu(ctx);
+        if (keyboardAction === 'create_story_menu') return openCreateStoryMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
         if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
@@ -7212,13 +7759,65 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
     }
-    if (sessionState === 'wait_contacts_broadcast_text') {
+    if (sessionState === 'wait_story_content') {
         const phone = ctx.session?.targetPhone;
         if (!userOwnsPhone(ctx.from.id, phone)) {
             ctx.session = null;
             return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
         }
+        const storyText = String(incomingText || '').trim();
+        if (!storyText) {
+            return safeReply(ctx, '❌ أرسل نص الحالة أو أرسل صورة/فيديو مباشرة.');
+        }
+        try {
+            const report = await publishTextStory(phone, storyText);
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم نشر الستوري النصي بنجاح للرقم ${phone}.
+👥 عدد جهات الاتصال المستهدفة: ${report.recipients}`);
+        } catch (error) {
+            return safeReply(ctx, `❌ تعذر نشر الستوري النصي: ${error.message || 'خطأ غير متوقع.'}`);
+        }
+    }
+
+    if (sessionState === 'wait_contacts_broadcast_count') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        const rawCount = String(incomingText || '').trim();
+        if (/^(?:الغاء|إلغاء|cancel)$/i.test(rawCount)) {
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم إلغاء تجهيز الرسالة الجماعية للرقم ${phone}.`);
+        }
+        const contacts = getPhoneContactEntries(phone);
+        if (!contacts.length) {
+            ctx.session = null;
+            return safeReply(ctx, '⚠️ لا توجد جهات اتصال محفوظة لهذا الرقم.');
+        }
+        const requestedCount = normalizeRequestedLikeCount(rawCount);
+        if (!requestedCount) {
+            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من 0.');
+        }
+        if (requestedCount > contacts.length) {
+            return safeReply(ctx, `❌ العدد المطلوب أكبر من المتاح. الحد الأقصى الحالي هو ${contacts.length}.`);
+        }
+        ctx.session = { step: 'wait_contacts_broadcast_text', targetPhone: phone, targetCount: requestedCount };
+        return safeReply(ctx, buildContactsBroadcastTextPrompt(phone, requestedCount, contacts.length), getContactsBroadcastCancelKeyboard(phone));
+    }
+
+    if (sessionState === 'wait_contacts_broadcast_text') {
+        const phone = ctx.session?.targetPhone;
+        const targetCount = Number(ctx.session?.targetCount) || 0;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
         const broadcastText = String(incomingText || '').trim();
+        if (/^(?:الغاء|إلغاء|cancel)$/i.test(broadcastText)) {
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم إلغاء الرسالة الجماعية للرقم ${phone}.`);
+        }
         if (!broadcastText) {
             return safeReply(ctx, '❌ أرسل نص الرسالة أولاً.');
         }
@@ -7227,21 +7826,19 @@ ${result.removedEntry?.raw || incomingText}`);
             ctx.session = null;
             return safeReply(ctx, '⚠️ لا توجد جهات اتصال محفوظة لهذا الرقم.');
         }
+        const finalCount = Math.max(1, Math.min(targetCount || contacts.length, contacts.length));
         await safeReply(ctx, `✅ تم استلام طلب الرسالة الجماعية للرقم ${phone}.
-📊 إجمالي جهات الاتصال: ${contacts.length}
+📊 سيتم الإرسال إلى ${finalCount} من أصل ${contacts.length} جهة اتصال.
 ⏳ سيتم الإرسال على دفعات (100 جهة كل 5 دقائق) لتجنب الحظر.
-📌 سيتم إشعارك بتقدم الإرسال تلقائياً.`);
+📌 يمكنك الإلغاء أثناء التشغيل من زر الإلغاء عند ظهور إشعارات التقدم.`);
         ctx.session = null;
         const sock = waClients.get(normalizePhone(phone));
         const telegramUserId = ctx.from.id;
-        // تشغيل الإرسال في الخلفية بدون انتظار (لا يُخرج البوت من الجلسة)
         setImmediate(async () => {
             try {
-                let lastNotifyIndex = 0;
                 const onProgress = async (rep, doneCount, totalCount, batchNum) => {
-                    // إشعار كل دفعة
                     try {
-                        const pct = Math.floor((doneCount / totalCount) * 100);
+                        const pct = totalCount ? Math.floor((doneCount / totalCount) * 100) : 0;
                         const msg = `📢 تقدم الرسالة الجماعية للرقم ${phone}:
 ` +
                             `✅ أُرسلت: ${rep.success} | ❌ فشل: ${rep.failed}
@@ -7251,11 +7848,10 @@ ${result.removedEntry?.raw || incomingText}`);
                             `📦 الدفعة رقم: ${batchNum}
 ` +
                             (doneCount < totalCount ? `⏸️ انتظار 5 دقائق قبل الدفعة القادمة...` : `🎉 اكتمل الإرسال!`);
-                        await bot.telegram.sendMessage(telegramUserId, msg);
+                        await bot.telegram.sendMessage(telegramUserId, msg, getContactsBroadcastCancelKeyboard(phone));
                     } catch(_) {}
                 };
-                const report = await sendBroadcastToAllContactsQueue(sock, phone, broadcastText, onProgress);
-                // تقرير نهائي
+                const report = await sendBroadcastToAllContactsQueue(sock, phone, broadcastText, onProgress, finalCount);
                 try {
                     await bot.telegram.sendMessage(telegramUserId, `🏁 انتهى الإرسال الجماعي للرقم ${phone}:
 ` + formatContactsBroadcastReport(report));
@@ -7266,6 +7862,72 @@ ${result.removedEntry?.raw || incomingText}`);
                 } catch(_) {}
             }
         });
+        return;
+    }
+
+    if (sessionState === 'wait_direct_contact_message_text') {
+        const phone = ctx.session?.targetPhone;
+        const contactJid = ctx.session?.targetContactJid;
+        const contactName = String(ctx.session?.targetContactName || '').trim();
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        const textToSend = String(incomingText || '').trim();
+        if (/^(?:الغاء|إلغاء|cancel)$/i.test(textToSend)) {
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم إلغاء المراسلة مع ${contactName || normalizePhone(contactJid)}.`);
+        }
+        if (!textToSend) {
+            return safeReply(ctx, '❌ أرسل نص الرسالة أولاً.');
+        }
+        const sock = waClients.get(normalizePhone(phone));
+        if (!sock) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ الرقم ${phone} غير متصل حالياً على واتساب.`);
+        }
+        const entry = findPhoneContactEntry(phone, contactJid);
+        if (!entry?.jid) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ تعذر العثور على جهة الاتصال المطلوبة.');
+        }
+        await sock.sendMessage(entry.jid, { text: textToSend });
+        const bridge = setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out' });
+        ctx.session = null;
+        return safeReply(ctx, `✅ تم إرسال الرسالة إلى ${bridge?.contactName || contactName || normalizePhone(entry.jid)} من الرقم ${phone}.
+📩 أي رد جديد سيصل لك هنا داخل البوت.`, getDirectContactReplyKeyboard(phone, entry.jid));
+    }
+
+    if (sessionState === 'wait_direct_contact_reply_text') {
+        const phone = ctx.session?.targetPhone;
+        const contactJid = ctx.session?.targetContactJid;
+        const contactName = String(ctx.session?.targetContactName || '').trim();
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
+        }
+        const textToSend = String(incomingText || '').trim();
+        if (/^(?:الغاء|إلغاء|cancel)$/i.test(textToSend)) {
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم إلغاء الرد على ${contactName || normalizePhone(contactJid)}.`);
+        }
+        if (!textToSend) {
+            return safeReply(ctx, '❌ أرسل نص الرد أولاً.');
+        }
+        const sock = waClients.get(normalizePhone(phone));
+        if (!sock) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ الرقم ${phone} غير متصل حالياً على واتساب.`);
+        }
+        const entry = findPhoneContactEntry(phone, contactJid);
+        if (!entry?.jid) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ تعذر العثور على جهة الاتصال المطلوبة.');
+        }
+        await sock.sendMessage(entry.jid, { text: textToSend });
+        setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out' });
+        ctx.session = null;
+        return safeReply(ctx, `✅ تم إرسال الرد إلى ${contactName || normalizePhone(entry.jid)}.`, getDirectContactReplyKeyboard(phone, entry.jid));
     }
 
         if (sessionState === 'wait_phone') {
