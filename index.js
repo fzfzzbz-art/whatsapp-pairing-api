@@ -2705,15 +2705,124 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
     };
 }
 
-// Helper: رشق منشور من رقم المالك مع إيموجيات عشوائية
+// دالة رشق منشور من رقم المالك المربوط فقط (بدون أرقام عشوائية أو جلسات أخرى)
+async function runOwnerPhoneChannelReaction(phone, target, requestedCount, emojiChoices) {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
+
+    const sock = waClients.get(normalizedPhone);
+    if (!sock) {
+        return {
+            ok: false,
+            error: 'الرقم المربوط غير متصل حالياً، يرجى إعادة الاتصال ثم المحاولة مجدداً.',
+            requestedCount: normalizedCount,
+            sentCount: 0,
+            scheduledCount: 0,
+            availableSessions: 0,
+            connectedPhones: [],
+            failures: []
+        };
+    }
+
+    // جلب معرف القناة من الرابط إن لزم
+    let resolvedTarget = { ...target };
+    try {
+        resolvedTarget = await resolveNewsletterJidForTarget(sock, target);
+    } catch (resolveErr) {
+        return {
+            ok: false,
+            error: resolveErr.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
+            requestedCount: normalizedCount,
+            sentCount: 0,
+            scheduledCount: 0,
+            availableSessions: 1,
+            connectedPhones: [],
+            failures: [resolveErr.message || 'resolve_failed']
+        };
+    }
+
+    if (!resolvedTarget.newsletterJid || !resolvedTarget.serverId) {
+        return {
+            ok: false,
+            error: 'الرابط غير مكتمل، تأكد من إرسال رابط المنشور كاملاً مع رقم المنشور.',
+            requestedCount: normalizedCount,
+            sentCount: 0,
+            scheduledCount: 0,
+            availableSessions: 1,
+            connectedPhones: [],
+            failures: []
+        };
+    }
+
+    // متابعة القناة قبل الرشق
+    try {
+        await ensureNewsletterFollow(sock, resolvedTarget);
+    } catch (_) {}
+
+    // بناء خطة الإيموجيات
+    const pool = getNewsletterReactionPool({}, Array.isArray(emojiChoices) ? emojiChoices : []);
+    const plan = buildBalancedReactionPlan(normalizedCount, pool);
+    const sequence = Array.isArray(plan.sequence) && plan.sequence.length ? plan.sequence : ['❤️'];
+
+    const actualDistribution = {};
+    const failures = [];
+    let sentCount = 0;
+
+    // إرسال التفاعلات من الرقم المالك فقط
+    for (let i = 0; i < sequence.length; i++) {
+        const liveSock = waClients.get(normalizedPhone) || sock;
+        const currentEmoji = String(sequence[i] || plan.pool?.[i % Math.max(1, (plan.pool || []).length)] || '❤️').trim();
+        try {
+            const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
+            await delay(jitter);
+            const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, currentEmoji);
+            if (reactResult.ok) {
+                sentCount += 1;
+                actualDistribution[currentEmoji] = (actualDistribution[currentEmoji] || 0) + 1;
+            } else {
+                failures.push(`${currentEmoji}: ${reactResult.error || 'reaction_failed'}`);
+            }
+        } catch (reactErr) {
+            failures.push(`${currentEmoji}: ${reactErr.message || 'exception'}`);
+        }
+
+        // تأخير إضافي بين الدفعات لتجنب الحظر
+        if (i > 0 && i % 10 === 0) {
+            await delay(300 + Math.floor(Math.random() * 200));
+        }
+    }
+
+    if (failures.length && sentCount === 0) {
+        console.warn('[OwnerChannelReact] all failed:', failures.slice(0, 5));
+    }
+
+    return {
+        ok: sentCount > 0,
+        error: sentCount > 0 ? '' : (failures[0]?.split(': ').slice(1).join(': ') || 'فشلت جميع محاولات الرشق.'),
+        requestedCount: normalizedCount,
+        scheduledCount: sequence.length,
+        sentCount,
+        availableSessions: 1,
+        connectedPhones: [normalizedPhone],
+        failures,
+        target: resolvedTarget,
+        ownerVerified: true,
+        reusedSessions: false,
+        distribution: actualDistribution,
+        plannedDistribution: plan.distribution || {},
+        distributionText: formatReactionDistributionSummary(actualDistribution)
+    };
+}
+
+// Helper: رشق منشور من رقم المالك المربوط فقط مع إيموجيات عشوائية
 async function sendChannelNewsletterReactions(phone, postLink, count) {
-    const ownerId = getPhoneOwner(normalizePhone(phone));
     const target = extractChannelPostTarget(postLink);
     if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
         return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
     }
     const emojiChoices = [...CHANNEL_LIKE_EMOJIS].sort(() => Math.random() - 0.5);
-    return runChannelReactionCampaign(ownerId || '', normalizePhone(phone), target, count, emojiChoices);
+    // يستخدم فقط الرقم المربوط (المالك) لتنفيذ الرشق
+    return runOwnerPhoneChannelReaction(normalizePhone(phone), target, count, emojiChoices);
 }
 
 async function resolveChannelNewsletterJid(sock, channelLink = WHATSAPP_CHANNEL_LINK) {
@@ -7443,7 +7552,7 @@ bot.on('callback_query', async (ctx) => {
         const phones = getUserPhones(ctx.from.id);
         if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
         ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ يجب أن يكون الرقم المربوط (${phones[0]}) مالكاً للقناة.`);
+        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ سيتم التنفيذ من الرقم المربوط فقط (${phones[0]}) ويجب أن يكون هو مالك القناة.`);
     }
 
     if (data.startsWith('channel_like_pick_')) {
@@ -8225,7 +8334,7 @@ bot.on('text', async (ctx) => {
             const phones = getUserPhones(ctx.from.id);
             if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
             ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123`);
+            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ التنفيذ سيكون من الرقم المربوط فقط.`);
         }
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
         if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
@@ -8243,7 +8352,7 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, '❌ الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx/123');
         }
         ctx.session = { step: 'wait_channel_like_count', targetPhone: phone, channelPostUrl: postUrl };
-        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الرشق الذي تريده (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
+        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الرشق الذي تريده وسيتم التنفيذ من الرقم المربوط فقط (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
     }
 
     if (sessionState === 'wait_channel_like_count') {
@@ -8257,21 +8366,21 @@ bot.on('text', async (ctx) => {
         ctx.session = null;
         const sock = waClients.get(normalizePhone(phone));
         if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
-        await safeReply(ctx, `⏳ جارٍ تنفيذ الرشق للمنشور بالعدد ${requestedCount}... قد يستغرق ذلك بعض الوقت حسب العدد.`);
+        await safeReply(ctx, `⏳ جارٍ تنفيذ الرشق للمنشور بالعدد ${requestedCount} من الرقم المربوط فقط... قد يستغرق ذلك بعض الوقت حسب العدد.`);
         try {
             const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
             if (result.ok) {
                 const responseLines = [
                     '✅ تم تنفيذ الرشق بنجاح!',
                     `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
-                    `📱 الأرقام المستخدمة فعلياً: ${(result.connectedPhones || []).length || result.availableSessions || 0}`,
+                    `📱 الرقم المستخدم فعلياً: ${(result.connectedPhones || [phone])[0] || phone}`,
                     `🔗 المنشور: ${channelPostUrl}`
                 ];
                 if (result.distributionText) {
                     responseLines.push(`🎭 توزيع الإيموجيات: ${result.distributionText}`);
                 }
                 if (result.reusedSessions) {
-                    responseLines.push('🔁 تم تدوير الجلسات المتصلة عشوائياً للوصول إلى خطة الرشق المطلوبة وتوزيع العدد على عدة إيموجيات.');
+                    responseLines.push('🔁 تم تدوير المحاولات داخل نفس الجلسة المربوطة للوصول إلى خطة الرشق المطلوبة.');
                 }
                 return safeReply(ctx, responseLines.join('\n'));
             } else {
