@@ -520,11 +520,11 @@ const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
-const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
+const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '💚', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
 const CHANNEL_REACTION_MAX_COUNT = 5000;
 const CHANNEL_REACTION_MIN_DELAY_MS = 120;
 const CHANNEL_REACTION_MAX_DELAY_MS = 420;
-const CHANNEL_PROMOTION_KEEP_HISTORY = true;
+const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
 const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 180000);
@@ -532,6 +532,14 @@ const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const HEALTH_CHECK_INTERVAL_MS = Number(process.env.HEALTH_CHECK_INTERVAL_MS || 60000);
 const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 900000);
 let sessionSupervisorStarted = false;
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Promise Rejection:', reason?.stack || reason?.message || reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error?.stack || error?.message || error);
+});
 
 // =========================
 // أدوات الملفات والبيانات
@@ -2322,16 +2330,117 @@ async function reactToNewsletterPost(sock, target, emoji) {
 }
 
 
-function buildRandomReactionSequence(count, emojiChoices = []) {
+function shuffleArray(items = []) {
+    const list = Array.isArray(items) ? [...items] : [];
+    for (let index = list.length - 1; index > 0; index -= 1) {
+        const randomIndex = Math.floor(Math.random() * (index + 1));
+        [list[index], list[randomIndex]] = [list[randomIndex], list[index]];
+    }
+    return list;
+}
+
+function buildBalancedReactionPlan(count, emojiChoices = []) {
     const normalizedCount = Math.max(1, normalizeRequestedLikeCount(count));
     const basePool = Array.isArray(emojiChoices) && emojiChoices.length
         ? emojiChoices.filter(Boolean)
         : CHANNEL_LIKE_EMOJIS.filter(Boolean);
-    const pool = basePool.length ? basePool : ['❤️'];
-    return Array.from({ length: normalizedCount }, (_, index) => {
-        const randomIndex = Math.floor(Math.random() * pool.length);
-        return pool[randomIndex] || pool[index % pool.length] || '❤️';
-    });
+    const pool = Array.from(new Set((basePool.length ? basePool : ['❤️']).map((emoji) => String(emoji || '').trim()).filter(Boolean)));
+    const distribution = {};
+    for (const emoji of pool) {
+        distribution[emoji] = 0;
+    }
+    if (!pool.length) {
+        distribution['❤️'] = normalizedCount;
+        return {
+            pool: ['❤️'],
+            sequence: Array.from({ length: normalizedCount }, () => '❤️'),
+            distribution
+        };
+    }
+
+    const shuffledPool = shuffleArray(pool);
+    const baseShare = Math.floor(normalizedCount / shuffledPool.length);
+    let remainder = normalizedCount % shuffledPool.length;
+    const sequence = [];
+
+    for (const emoji of shuffledPool) {
+        const assigned = baseShare + (remainder > 0 ? 1 : 0);
+        if (remainder > 0) remainder -= 1;
+        if (assigned <= 0) continue;
+        distribution[emoji] = assigned;
+        for (let index = 0; index < assigned; index += 1) {
+            sequence.push(emoji);
+        }
+    }
+
+    return {
+        pool: shuffledPool,
+        sequence: shuffleArray(sequence),
+        distribution
+    };
+}
+
+function buildRotatingReactionAssignments(sessions = [], reactionSequence = []) {
+    const usableSessions = Array.isArray(sessions)
+        ? sessions.filter((item) => item?.phone && item?.sock)
+        : [];
+    const sequence = Array.isArray(reactionSequence)
+        ? reactionSequence.map((emoji) => String(emoji || '').trim()).filter(Boolean)
+        : [];
+
+    if (!usableSessions.length || !sequence.length) {
+        return [];
+    }
+
+    const sessionPool = usableSessions.map((item) => ({ ...item }));
+    const assignments = [];
+    const lastEmojiByPhone = new Map();
+    let currentRound = shuffleArray(sessionPool);
+    let cursor = 0;
+
+    for (let index = 0; index < sequence.length; index += 1) {
+        if (!currentRound.length) break;
+        if (cursor >= currentRound.length) {
+            currentRound = shuffleArray(sessionPool);
+            cursor = 0;
+        }
+
+        const targetEmoji = sequence[index] || '❤️';
+        let selectedIndex = cursor;
+        let selectedSession = currentRound[selectedIndex];
+
+        if (currentRound.length > 1) {
+            for (let probe = 0; probe < currentRound.length; probe += 1) {
+                const candidateIndex = (cursor + probe) % currentRound.length;
+                const candidateSession = currentRound[candidateIndex];
+                if (lastEmojiByPhone.get(candidateSession.phone) !== targetEmoji) {
+                    selectedIndex = candidateIndex;
+                    selectedSession = candidateSession;
+                    break;
+                }
+            }
+        }
+
+        assignments.push({
+            index,
+            emoji: targetEmoji,
+            sessionItem: selectedSession
+        });
+
+        lastEmojiByPhone.set(selectedSession.phone, targetEmoji);
+        cursor = selectedIndex + 1;
+    }
+
+    return assignments;
+}
+
+function formatReactionDistributionSummary(distribution = {}) {
+    return Object.entries(distribution || {})
+        .filter(([, count]) => Number(count) > 0)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .map(([emoji, count]) => `${emoji}×${count}`)
+        .join(' | ')
+        .slice(0, 1500);
 }
 
 function extractNewsletterOwnerJid(metadata = {}) {
@@ -2378,7 +2487,10 @@ function getNewsletterReactionPool(metadata = {}, fallbackChoices = []) {
         ? metadata.reaction_codes.map((item) => String(item?.code || '').trim()).filter(Boolean)
         : [];
     const fallback = Array.isArray(fallbackChoices) ? fallbackChoices.filter(Boolean) : [];
-    return Array.from(new Set((fromMetadata.length ? fromMetadata : fallback.length ? fallback : CHANNEL_LIKE_EMOJIS).filter(Boolean)));
+    const merged = [...fromMetadata, ...fallback, ...CHANNEL_LIKE_EMOJIS]
+        .map((emoji) => String(emoji || '').trim())
+        .filter(Boolean);
+    return Array.from(new Set(merged));
 }
 
 async function validateChannelOwnershipForPhone(sock, target, phone) {
@@ -2425,24 +2537,27 @@ async function validateChannelOwnershipForPhone(sock, target, phone) {
 async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
     const normalizedPreferredPhone = normalizePhone(preferredPhone);
     const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-    const preferredSock = waClients.get(normalizedPreferredPhone);
-    const preferredSession = preferredSock ? {
-        phone: normalizedPreferredPhone,
-        sock: preferredSock,
-        ownerId: getPhoneOwner(normalizedPreferredPhone) || ownerId || null
-    } : null;
+    const candidateSessions = getReactionCampaignSessions(ownerId, normalizedPreferredPhone);
+    const seenPhones = new Set();
+    const availableSessions = candidateSessions
+        .map((item) => {
+            const phone = normalizePhone(item?.phone);
+            const sock = phone ? (waClients.get(phone) || item?.sock) : null;
+            return phone && sock ? { phone, sock, ownerId: item?.ownerId || getPhoneOwner(phone) || null } : null;
+        })
+        .filter((item) => item && !seenPhones.has(item.phone) && seenPhones.add(item.phone));
 
-    const fallbackOwnerSession = getOwnerActiveSessions(ownerId, normalizedPreferredPhone)[0] || null;
-    const activeSession = preferredSession || fallbackOwnerSession;
+    const primarySession = availableSessions.find((item) => item.phone === normalizedPreferredPhone) || availableSessions[0] || null;
 
-    console.log(`[Channel React] owner=${ownerId} phone=${normalizedPreferredPhone} requested=${normalizedRequestedCount} active=${activeSession ? 1 : 0}`);
+    console.log(`[Channel React] owner=${ownerId} phone=${normalizedPreferredPhone} requested=${normalizedRequestedCount} sessions=${availableSessions.length}`);
 
-    if (!activeSession?.sock) {
+    if (!primarySession?.sock) {
         return {
             ok: false,
-            error: 'لا توجد جلسة واتساب نشطة للرقم المطلوب لتنفيذ الرشق.',
+            error: 'لا توجد جلسات واتساب نشطة لتنفيذ الرشق حالياً.',
             requestedCount: normalizedRequestedCount,
             sentCount: 0,
+            scheduledCount: 0,
             availableSessions: 0,
             failures: []
         };
@@ -2450,65 +2565,119 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
 
     let resolvedTarget = target;
     try {
-        resolvedTarget = await resolveNewsletterJidForTarget(activeSession.sock, target);
+        resolvedTarget = await resolveNewsletterJidForTarget(primarySession.sock, target);
     } catch (error) {
         return {
             ok: false,
             error: error.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
             requestedCount: normalizedRequestedCount,
             sentCount: 0,
-            availableSessions: 1,
+            scheduledCount: 0,
+            availableSessions: availableSessions.length,
             failures: []
         };
     }
 
-    const ownership = await validateChannelOwnershipForPhone(activeSession.sock, resolvedTarget, activeSession.phone);
+    const ownership = await validateChannelOwnershipForPhone(primarySession.sock, resolvedTarget, normalizedPreferredPhone || primarySession.phone);
     if (!ownership.ok) {
         return {
             ok: false,
             error: ownership.error || 'تعذر التحقق من ملكية القناة.',
             requestedCount: normalizedRequestedCount,
             sentCount: 0,
-            availableSessions: 1,
+            scheduledCount: 0,
+            availableSessions: availableSessions.length,
             failures: [],
             target: resolvedTarget
         };
     }
 
+    if (!availableSessions.length) {
+        return {
+            ok: false,
+            error: 'لا توجد أرقام متصلة متاحة الآن لتنفيذ الرشق.',
+            requestedCount: normalizedRequestedCount,
+            sentCount: 0,
+            scheduledCount: 0,
+            availableSessions: availableSessions.length,
+            failures: [],
+            target: resolvedTarget,
+            ownerVerified: ownership.canVerify === true,
+            ownerJid: ownership.ownerJid || ''
+        };
+    }
+
     const reactionPool = getNewsletterReactionPool(ownership.metadata || {}, emojiChoices);
-    const executionQueue = buildRandomReactionSequence(normalizedRequestedCount, reactionPool);
-    let sentCount = 0;
+    const plan = buildBalancedReactionPlan(normalizedRequestedCount, reactionPool);
+    const assignments = buildRotatingReactionAssignments(availableSessions, plan.sequence);
+
+    if (!assignments.length) {
+        return {
+            ok: false,
+            error: 'تعذر تجهيز خطة الرشق لهذا المنشور.',
+            requestedCount: normalizedRequestedCount,
+            sentCount: 0,
+            scheduledCount: 0,
+            availableSessions: availableSessions.length,
+            failures: [],
+            target: resolvedTarget,
+            ownerVerified: ownership.canVerify === true,
+            ownerJid: ownership.ownerJid || ''
+        };
+    }
+
     const failures = [];
-    const batchSize = normalizedRequestedCount >= 1000 ? 20 : normalizedRequestedCount >= 500 ? 15 : normalizedRequestedCount >= 200 ? 10 : normalizedRequestedCount >= 50 ? 6 : 3;
+    const actualDistribution = {};
+    const phonesUsed = new Set();
+    let sentCount = 0;
 
-    await ensureNewsletterFollow(activeSession.sock, resolvedTarget);
+    await Promise.allSettled(
+        availableSessions.map(async (sessionItem) => {
+            const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
+            await ensureNewsletterFollow(liveSock, resolvedTarget);
+        })
+    );
 
-    for (let start = 0; start < executionQueue.length; start += batchSize) {
-        const batch = executionQueue.slice(start, start + batchSize);
+    const parallelLimit = normalizedRequestedCount >= 1000 ? 40 : normalizedRequestedCount >= 500 ? 25 : normalizedRequestedCount >= 200 ? 15 : normalizedRequestedCount >= 50 ? 8 : 4;
+    const batchSize = Math.max(1, Math.min(availableSessions.length || 1, parallelLimit));
+
+    for (let start = 0; start < assignments.length; start += batchSize) {
+        const batchAssignments = assignments.slice(start, start + batchSize);
         const settled = await Promise.allSettled(
-            batch.map(async (emoji, batchIndex) => {
-                const liveSock = waClients.get(activeSession.phone) || activeSession.sock;
+            batchAssignments.map(async (assignment, batchIndex) => {
+                const sessionItem = assignment.sessionItem;
+                const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
+                if (!liveSock) {
+                    throw new Error('الجلسة غير متصلة حالياً');
+                }
                 const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
-                await delay(jitter + (batchIndex * 35));
+                await delay(jitter + (batchIndex * 45));
+                const emoji = String(assignment.emoji || plan.pool[batchIndex % Math.max(1, plan.pool.length)] || '❤️').trim();
                 const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, emoji);
                 if (!reactResult.ok) {
                     throw new Error(reactResult.error || 'Reaction failed');
                 }
-                return emoji;
+                return { emoji, phone: sessionItem.phone };
             })
         );
 
         for (let index = 0; index < settled.length; index += 1) {
             const result = settled[index];
+            const assignment = batchAssignments[index];
             if (result.status === 'fulfilled') {
                 sentCount += 1;
+                const emoji = String(result.value?.emoji || '❤️').trim() || '❤️';
+                const phone = normalizePhone(result.value?.phone || assignment?.sessionItem?.phone || '');
+                if (phone) phonesUsed.add(phone);
+                actualDistribution[emoji] = (actualDistribution[emoji] || 0) + 1;
             } else {
-                failures.push(`batch_${start + index + 1}: ${result.reason?.message || 'Unknown error'}`);
+                const phone = assignment?.sessionItem?.phone || `session_${start + index + 1}`;
+                failures.push(`${phone}: ${result.reason?.message || 'Unknown error'}`);
             }
         }
 
-        if (start + batchSize < executionQueue.length) {
-            await delay(180 + Math.floor(Math.random() * 120));
+        if (start + batchSize < assignments.length) {
+            await delay(180 + Math.floor(Math.random() * 160));
         }
     }
 
@@ -2521,13 +2690,18 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
         ok: sentCount > 0,
         error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع محاولات الرشق.'),
         requestedCount: normalizedRequestedCount,
+        scheduledCount: assignments.length,
         sentCount,
-        availableSessions: 1,
+        availableSessions: availableSessions.length,
         failures,
-        connectedPhones: [activeSession.phone],
+        connectedPhones: Array.from(phonesUsed),
         target: resolvedTarget,
         ownerVerified: ownership.canVerify === true,
-        ownerJid: ownership.ownerJid || ''
+        ownerJid: ownership.ownerJid || '',
+        reusedSessions: normalizedRequestedCount > availableSessions.length,
+        distribution: actualDistribution,
+        plannedDistribution: plan.distribution,
+        distributionText: formatReactionDistributionSummary(actualDistribution)
     };
 }
 
@@ -2563,23 +2737,36 @@ function clearChannelPromotionTimer(phone) {
 
 async function deleteChannelPromotionMessage(sock, newsletterJid, key) {
     if (!sock || !newsletterJid || !key?.id) return false;
+    const participant = normalizeWhatsAppJid(key?.participant || sock.user?.id || '');
     const attempts = [
-        async () => {
-            await sock.sendMessage(newsletterJid, {
-                delete: {
-                    ...(key || {}),
-                    remoteJid: newsletterJid,
-                    fromMe: true
-                }
-            });
+        {
+            id: String(key.id),
+            remoteJid: newsletterJid,
+            fromMe: true,
+            participant
         },
-        async () => {
-            await sock.sendMessage(newsletterJid, { delete: key });
+        {
+            ...(key || {}),
+            id: String(key.id),
+            remoteJid: newsletterJid,
+            fromMe: true,
+            participant
+        },
+        {
+            id: String(key.id),
+            remoteJid: newsletterJid,
+            fromMe: true
+        },
+        {
+            ...(key || {}),
+            id: String(key.id),
+            remoteJid: newsletterJid,
+            fromMe: true
         }
     ];
-    for (const attempt of attempts) {
+    for (const attemptKey of attempts) {
         try {
-            await attempt();
+            await sock.sendMessage(newsletterJid, { delete: attemptKey });
             return true;
         } catch (_) {}
     }
@@ -2602,10 +2789,17 @@ async function publishChannelPromotion(sock, phone) {
 
     try {
         const result = await sock.sendMessage(newsletterJid, { text: CHANNEL_PROMOTION_MESSAGE });
+        const deletionKey = result?.key?.id ? {
+            ...(result.key || {}),
+            id: String(result.key.id),
+            remoteJid: newsletterJid,
+            fromMe: true,
+            participant: normalizeWhatsAppJid(result?.key?.participant || sock.user?.id || '')
+        } : null;
         channelPromotionTimers.set(normalized, {
             ...state,
             newsletterJid,
-            lastMessageKey: result?.key || null,
+            lastMessageKey: deletionKey,
             lastSentAt: Date.now()
         });
         return true;
@@ -6216,62 +6410,103 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         const { connection, lastDisconnect } = update;
         const pendingPair = pairingRequests.get(normalizedPhone);
 
-        if (connection === 'open') {
-            console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
-            incrementAnalytics('totalSessionsStarted');
-            clearReconnectTimer(normalizedPhone);
-            startPresenceKeepAlive(sock, normalizedPhone);
-            await applyLivePhoneSettingsSideEffects(normalizedPhone);
-            startChannelPromotionScheduler(sock, normalizedPhone);
-
-            const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
-            if (finalOwnerId) {
-                addLinkedNumber(finalOwnerId, normalizedPhone);
-            }
-
-            if (pendingPair) {
-                pendingPair.completed = true;
-                pairingRequests.set(normalizedPhone, pendingPair);
-                stoppedPairings.delete(normalizedPhone);
-                // autoStatusRead/autoStatusReact already default on - no forced update on pairing
-                await autoJoinWhatsAppChannel(sock, normalizedPhone);
-                await sendLinkedNumberWelcome(sock, normalizedPhone);
-                const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
-                await notifyTelegramUser(
-                    finalOwnerId,
-                    `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.\nإيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}\n🔐 تم إنشاء كلمة سر ومجلد إعدادات خاصين بهذا الرقم فقط.`
-                );
-                if (settingsAccessMessage) {
-                    await notifyTelegramUser(finalOwnerId, settingsAccessMessage);
-                }
-                clearPairingRequest(normalizedPhone);
-            }
-        }
-
-        if (connection === 'close') {
-            waClients.delete(normalizedPhone);
-            clientActivity.delete(normalizedPhone);
-
-            const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
-            const shouldReconnect = !permanentDisconnect;
-
-            if (permanentDisconnect) {
-                console.log(`Session Logged Out Or Invalidated: ${normalizedPhone}`);
-                const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
-                purgeSessionData(normalizedPhone);
-                await notifyTelegramUser(existingOwnerId, `⚠️ خرج الرقم ${normalizedPhone} من واتساب أو تم حظره/إبطال الجلسة، لذلك حذفت الجلسة من البوت تلقائياً.`);
-                return;
-            }
-
-            if (pendingPair?.timedOut || stoppedPairings.has(normalizedPhone)) {
+        try {
+            if (connection === 'open') {
+                console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
+                incrementAnalytics('totalSessionsStarted');
                 clearReconnectTimer(normalizedPhone);
-                return;
+                startPresenceKeepAlive(sock, normalizedPhone);
+
+                try {
+                    await applyLivePhoneSettingsSideEffects(normalizedPhone);
+                } catch (error) {
+                    console.error(`applyLivePhoneSettingsSideEffects Error (${normalizedPhone}):`, error.message || error);
+                }
+
+                try {
+                    startChannelPromotionScheduler(sock, normalizedPhone);
+                } catch (error) {
+                    console.error(`startChannelPromotionScheduler Error (${normalizedPhone}):`, error.message || error);
+                }
+
+                const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
+                if (finalOwnerId) {
+                    addLinkedNumber(finalOwnerId, normalizedPhone);
+                }
+
+                if (pendingPair) {
+                    pendingPair.completed = true;
+                    pairingRequests.set(normalizedPhone, pendingPair);
+                    stoppedPairings.delete(normalizedPhone);
+
+                    try {
+                        await autoJoinWhatsAppChannel(sock, normalizedPhone);
+                    } catch (error) {
+                        console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
+                    }
+
+                    try {
+                        await sendLinkedNumberWelcome(sock, normalizedPhone);
+                    } catch (error) {
+                        console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
+                    }
+
+                    const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
+
+                    try {
+                        await notifyTelegramUser(
+                            finalOwnerId,
+                            `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
+إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
+🔐 تم إنشاء كلمة سر ومجلد إعدادات خاصين بهذا الرقم فقط.`
+                        );
+                    } catch (error) {
+                        console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
+                    }
+
+                    if (settingsAccessMessage) {
+                        try {
+                            await notifyTelegramUser(finalOwnerId, settingsAccessMessage);
+                        } catch (error) {
+                            console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
+                        }
+                    }
+
+                    clearPairingRequest(normalizedPhone);
+                }
             }
 
-            if (shouldReconnect) {
-                console.log(`Reconnecting WhatsApp Session: ${normalizedPhone}`);
-                scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone));
+            if (connection === 'close') {
+                waClients.delete(normalizedPhone);
+                clientActivity.delete(normalizedPhone);
+
+                const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
+                const shouldReconnect = !permanentDisconnect;
+
+                if (permanentDisconnect) {
+                    console.log(`Session Logged Out Or Invalidated: ${normalizedPhone}`);
+                    const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
+                    purgeSessionData(normalizedPhone);
+                    try {
+                        await notifyTelegramUser(existingOwnerId, `⚠️ خرج الرقم ${normalizedPhone} من واتساب أو تم حظره/إبطال الجلسة، لذلك حذفت الجلسة من البوت تلقائياً.`);
+                    } catch (error) {
+                        console.error(`notifyTelegramUser Permanent Disconnect Error (${normalizedPhone}):`, error.message || error);
+                    }
+                    return;
+                }
+
+                if (pendingPair?.timedOut || stoppedPairings.has(normalizedPhone)) {
+                    clearReconnectTimer(normalizedPhone);
+                    return;
+                }
+
+                if (shouldReconnect) {
+                    console.log(`Reconnecting WhatsApp Session: ${normalizedPhone}`);
+                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone));
+                }
             }
+        } catch (error) {
+            console.error(`connection.update Error (${normalizedPhone}):`, error?.stack || error?.message || error);
         }
     });
 
@@ -8026,7 +8261,19 @@ bot.on('text', async (ctx) => {
         try {
             const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
             if (result.ok) {
-                return safeReply(ctx, `✅ تم تنفيذ الرشق بنجاح!\n💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}\n🔗 المنشور: ${channelPostUrl}`);
+                const responseLines = [
+                    '✅ تم تنفيذ الرشق بنجاح!',
+                    `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
+                    `📱 الأرقام المستخدمة فعلياً: ${(result.connectedPhones || []).length || result.availableSessions || 0}`,
+                    `🔗 المنشور: ${channelPostUrl}`
+                ];
+                if (result.distributionText) {
+                    responseLines.push(`🎭 توزيع الإيموجيات: ${result.distributionText}`);
+                }
+                if (result.reusedSessions) {
+                    responseLines.push('🔁 تم تدوير الجلسات المتصلة عشوائياً للوصول إلى خطة الرشق المطلوبة وتوزيع العدد على عدة إيموجيات.');
+                }
+                return safeReply(ctx, responseLines.join('\n'));
             } else {
                 return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم تنفيذ: ${result.sentCount || 0} محاولة على الأقل.`);
             }
