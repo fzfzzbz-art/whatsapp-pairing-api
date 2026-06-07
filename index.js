@@ -444,28 +444,8 @@ const DEFAULT_LINKED_WELCOME_MESSAGE = [
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
 const CHANNEL_PROMOTION_INTERVAL_MS = 5 * 60 * 1000; // كل 5 دقائق
 const CHANNEL_PROMOTION_INITIAL_DELAY_MS = 5 * 60 * 1000; // تأخير أولي 5 دقائق
-const CHANNEL_PROMOTION_MESSAGE = `تلقائي
-
-━━*〔 🌐 الـروابـط الـرسـمـيـة 〕*━━━┫
-
-الروابط الرسميه
-
-┆ ❯ *🤖 إنشاء بوت واتساب مجاني*
-┆ ⟢ أنشئ بوتك الخاص واربطه خلال دقائق.
-┆ ⟢ https://whatsapp-pairing-api-production.up.railway.app/
-
-┆ ❯ *الطريقه الثانيه ربط رقمك عن طريق البوت من خلال الرابط التالي*
-
-┆ https://t.me/Faresw_bot
-
-┆ ❯ *⚙️ لوحة الإعدادات والتحكم*
-┆ ⟢ إدارة وتخصيص جميع إعدادات البوت بسهولة.
-┆ ⟢ https://whatsapp-pairing-api-fwpg.onrender.com/settings
-
-╰━━━━━━━━━━━━━━━━━━━━╯
-
-*✨ سرعة • احترافية • خصوصية • مجانًا*
-*🚀 أنشئ بوتك الآن وابدأ في دقائق*`;
+const CHANNEL_PROMOTION_MESSAGE = `تحديث جديد تقدر تحكم برقمك بالكامل من خلال هذا البوت
+https://t.me/Faresw_bot`;
 
 
 const TELEGRAM_WEBHOOK_PATH = (() => {
@@ -541,6 +521,10 @@ const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
+const CHANNEL_REACTION_MAX_COUNT = 5000;
+const CHANNEL_REACTION_MIN_DELAY_MS = 120;
+const CHANNEL_REACTION_MAX_DELAY_MS = 420;
+const CHANNEL_PROMOTION_KEEP_HISTORY = true;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
 const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 180000);
@@ -2166,7 +2150,7 @@ function normalizeRequestedLikeCount(value) {
     const clean = String(value || '').replace(/[^0-9]/g, '');
     const count = Number(clean);
     if (!Number.isFinite(count) || count < 1) return 0;
-    return Math.min(count, 5000);
+    return Math.min(count, CHANNEL_REACTION_MAX_COUNT);
 }
 
 function extractReactionEmojiChoices(value) {
@@ -2337,14 +2321,127 @@ async function reactToNewsletterPost(sock, target, emoji) {
     }
 }
 
-async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
-    const activeSessions = getReactionCampaignSessions(ownerId, preferredPhone);
-    console.log(`[Channel React] owner=${ownerId} requested=${requestedCount} available=${activeSessions.length}`);
-    if (!activeSessions.length) {
+
+function buildRandomReactionSequence(count, emojiChoices = []) {
+    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(count));
+    const basePool = Array.isArray(emojiChoices) && emojiChoices.length
+        ? emojiChoices.filter(Boolean)
+        : CHANNEL_LIKE_EMOJIS.filter(Boolean);
+    const pool = basePool.length ? basePool : ['❤️'];
+    return Array.from({ length: normalizedCount }, (_, index) => {
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        return pool[randomIndex] || pool[index % pool.length] || '❤️';
+    });
+}
+
+function extractNewsletterOwnerJid(metadata = {}) {
+    const candidates = [
+        metadata?.owner,
+        metadata?.ownerJid,
+        metadata?.creator,
+        metadata?.creatorJid,
+        metadata?.thread_metadata?.owner,
+        metadata?.thread_metadata?.ownerJid,
+        metadata?.thread_metadata?.creator,
+        metadata?.thread_metadata?.creatorJid
+    ];
+    for (const candidate of candidates) {
+        const normalized = normalizeWhatsAppJid(String(candidate || '').trim());
+        if (normalized) return normalized;
+    }
+    return '';
+}
+
+function getSessionIdentityCandidates(sock, phone = '') {
+    const set = new Set();
+    const addCandidate = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return;
+        const normalizedJid = normalizeWhatsAppJid(raw);
+        if (normalizedJid) set.add(normalizedJid);
+        const normalizedPhone = normalizePhone(raw);
+        if (normalizedPhone) {
+            set.add(normalizedPhone);
+            set.add(`${normalizedPhone}@s.whatsapp.net`);
+            set.add(`${normalizedPhone}@lid`);
+        }
+    };
+    addCandidate(sock?.user?.id);
+    addCandidate(phone);
+    addCandidate(normalizePhone(phone));
+    addCandidate(`${normalizePhone(phone)}@s.whatsapp.net`);
+    return Array.from(set).filter(Boolean);
+}
+
+function getNewsletterReactionPool(metadata = {}, fallbackChoices = []) {
+    const fromMetadata = Array.isArray(metadata?.reaction_codes)
+        ? metadata.reaction_codes.map((item) => String(item?.code || '').trim()).filter(Boolean)
+        : [];
+    const fallback = Array.isArray(fallbackChoices) ? fallbackChoices.filter(Boolean) : [];
+    return Array.from(new Set((fromMetadata.length ? fromMetadata : fallback.length ? fallback : CHANNEL_LIKE_EMOJIS).filter(Boolean)));
+}
+
+async function validateChannelOwnershipForPhone(sock, target, phone) {
+    let metadata = null;
+    if (sock && target?.inviteCode && typeof sock.newsletterMetadata === 'function') {
+        try {
+            metadata = await sock.newsletterMetadata('invite', target.inviteCode);
+        } catch (_) {}
+    }
+
+    const ownerJid = extractNewsletterOwnerJid(metadata || {});
+    if (!ownerJid) {
+        return {
+            ok: true,
+            canVerify: false,
+            ownerJid: '',
+            metadata
+        };
+    }
+
+    const ownerPhone = normalizePhone(ownerJid);
+    const matched = getSessionIdentityCandidates(sock, phone).some((candidate) => {
+        return normalizeWhatsAppJid(candidate) === ownerJid || normalizePhone(candidate) === ownerPhone;
+    });
+
+    if (!matched) {
         return {
             ok: false,
-            error: 'لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ الإعجابات.',
-            requestedCount,
+            canVerify: true,
+            ownerJid,
+            metadata,
+            error: '❌ لا يمكن تنفيذ الرشق لأن مالك القناة ليس نفس الرقم المربوط بالبوت.'
+        };
+    }
+
+    return {
+        ok: true,
+        canVerify: true,
+        ownerJid,
+        metadata
+    };
+}
+
+async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
+    const normalizedPreferredPhone = normalizePhone(preferredPhone);
+    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
+    const preferredSock = waClients.get(normalizedPreferredPhone);
+    const preferredSession = preferredSock ? {
+        phone: normalizedPreferredPhone,
+        sock: preferredSock,
+        ownerId: getPhoneOwner(normalizedPreferredPhone) || ownerId || null
+    } : null;
+
+    const fallbackOwnerSession = getOwnerActiveSessions(ownerId, normalizedPreferredPhone)[0] || null;
+    const activeSession = preferredSession || fallbackOwnerSession;
+
+    console.log(`[Channel React] owner=${ownerId} phone=${normalizedPreferredPhone} requested=${normalizedRequestedCount} active=${activeSession ? 1 : 0}`);
+
+    if (!activeSession?.sock) {
+        return {
+            ok: false,
+            error: 'لا توجد جلسة واتساب نشطة للرقم المطلوب لتنفيذ الرشق.',
+            requestedCount: normalizedRequestedCount,
             sentCount: 0,
             availableSessions: 0,
             failures: []
@@ -2352,61 +2449,66 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
     }
 
     let resolvedTarget = target;
-    let resolveError = '';
-    for (const item of activeSessions) {
-        try {
-            resolvedTarget = await resolveNewsletterJidForTarget(item.sock, target);
-            if (resolvedTarget?.newsletterJid) break;
-        } catch (error) {
-            resolveError = error.message || 'تعذر تحديد القناة';
-        }
-    }
-
-    if (!resolvedTarget?.newsletterJid) {
+    try {
+        resolvedTarget = await resolveNewsletterJidForTarget(activeSession.sock, target);
+    } catch (error) {
         return {
             ok: false,
-            error: resolveError || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            requestedCount,
+            error: error.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
+            requestedCount: normalizedRequestedCount,
             sentCount: 0,
-            availableSessions: activeSessions.length,
+            availableSessions: 1,
             failures: []
         };
     }
 
-    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-    const executionPool = activeSessions.slice(0, normalizedRequestedCount);
+    const ownership = await validateChannelOwnershipForPhone(activeSession.sock, resolvedTarget, activeSession.phone);
+    if (!ownership.ok) {
+        return {
+            ok: false,
+            error: ownership.error || 'تعذر التحقق من ملكية القناة.',
+            requestedCount: normalizedRequestedCount,
+            sentCount: 0,
+            availableSessions: 1,
+            failures: [],
+            target: resolvedTarget
+        };
+    }
+
+    const reactionPool = getNewsletterReactionPool(ownership.metadata || {}, emojiChoices);
+    const executionQueue = buildRandomReactionSequence(normalizedRequestedCount, reactionPool);
     let sentCount = 0;
     const failures = [];
-    const batchSize = executionPool.length >= 300 ? 20 : executionPool.length >= 100 ? 12 : executionPool.length >= 30 ? 8 : 4;
+    const batchSize = normalizedRequestedCount >= 1000 ? 20 : normalizedRequestedCount >= 500 ? 15 : normalizedRequestedCount >= 200 ? 10 : normalizedRequestedCount >= 50 ? 6 : 3;
 
-    for (let start = 0; start < executionPool.length; start += batchSize) {
-        const batch = executionPool.slice(start, start + batchSize);
+    await ensureNewsletterFollow(activeSession.sock, resolvedTarget);
+
+    for (let start = 0; start < executionQueue.length; start += batchSize) {
+        const batch = executionQueue.slice(start, start + batchSize);
         const settled = await Promise.allSettled(
-            batch.map(async (item, batchIndex) => {
-                const index = start + batchIndex;
-                const emoji = emojiChoices[index % emojiChoices.length] || emojiChoices[0] || CHANNEL_LIKE_EMOJIS[0];
-                await new Promise((resolve) => setTimeout(resolve, batchIndex * 120));
-                await ensureNewsletterFollow(item.sock, resolvedTarget);
-                const reactResult = await reactToNewsletterPost(item.sock, resolvedTarget, emoji);
+            batch.map(async (emoji, batchIndex) => {
+                const liveSock = waClients.get(activeSession.phone) || activeSession.sock;
+                const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
+                await delay(jitter + (batchIndex * 35));
+                const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, emoji);
                 if (!reactResult.ok) {
                     throw new Error(reactResult.error || 'Reaction failed');
                 }
-                return item.phone;
+                return emoji;
             })
         );
 
         for (let index = 0; index < settled.length; index += 1) {
             const result = settled[index];
-            const phone = batch[index]?.phone || 'unknown';
             if (result.status === 'fulfilled') {
                 sentCount += 1;
             } else {
-                failures.push(phone + ': ' + (result.reason?.message || 'Unknown error'));
+                failures.push(`batch_${start + index + 1}: ${result.reason?.message || 'Unknown error'}`);
             }
         }
 
-        if (start + batchSize < executionPool.length) {
-            await new Promise((resolve) => setTimeout(resolve, 250));
+        if (start + batchSize < executionQueue.length) {
+            await delay(180 + Math.floor(Math.random() * 120));
         }
     }
 
@@ -2414,15 +2516,18 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
     if (failures.length) {
         console.warn('[Channel React] failures:', failures.slice(0, 10));
     }
+
     return {
         ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع الجلسات في تنفيذ التفاعل.'),
+        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع محاولات الرشق.'),
         requestedCount: normalizedRequestedCount,
         sentCount,
-        availableSessions: activeSessions.length,
+        availableSessions: 1,
         failures,
-        connectedPhones: activeSessions.map((item) => item.phone),
-        target: resolvedTarget
+        connectedPhones: [activeSession.phone],
+        target: resolvedTarget,
+        ownerVerified: ownership.canVerify === true,
+        ownerJid: ownership.ownerJid || ''
     };
 }
 
@@ -2489,7 +2594,7 @@ async function publishChannelPromotion(sock, phone) {
     let newsletterJid = state.newsletterJid || await resolveChannelNewsletterJid(sock, WHATSAPP_CHANNEL_LINK);
     if (!newsletterJid) return false;
 
-    if (state.lastMessageKey?.id) {
+    if (!CHANNEL_PROMOTION_KEEP_HISTORY && state.lastMessageKey?.id) {
         try {
             await deleteChannelPromotionMessage(sock, newsletterJid, state.lastMessageKey);
         } catch (_) {}
@@ -7903,27 +8008,27 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, '❌ الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx/123');
         }
         ctx.session = { step: 'wait_channel_like_count', targetPhone: phone, channelPostUrl: postUrl };
-        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الإعجابات التي تريدها (من 1 إلى 500):`);
+        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الرشق الذي تريده (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
     }
 
     if (sessionState === 'wait_channel_like_count') {
         const phone = ctx.session?.targetPhone;
         const channelPostUrl = ctx.session?.channelPostUrl;
         if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
-        const requestedCount = parseInt(String(incomingText || '0').trim(), 10);
-        if (!requestedCount || requestedCount < 1 || requestedCount > 500) {
-            return safeReply(ctx, '❌ أرسل عدداً صحيحاً من 1 إلى 500.');
+        const requestedCount = normalizeRequestedLikeCount(incomingText);
+        if (!requestedCount || requestedCount < 1 || requestedCount > CHANNEL_REACTION_MAX_COUNT) {
+            return safeReply(ctx, `❌ أرسل عدداً صحيحاً من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}.`);
         }
         ctx.session = null;
         const sock = waClients.get(normalizePhone(phone));
         if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
-        await safeReply(ctx, `⏳ جارٍ رشق المنشور بـ ${requestedCount} إعجاب... قد يستغرق بضع ثوانٍ.`);
+        await safeReply(ctx, `⏳ جارٍ تنفيذ الرشق للمنشور بالعدد ${requestedCount}... قد يستغرق ذلك بعض الوقت حسب العدد.`);
         try {
             const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
             if (result.ok) {
-                return safeReply(ctx, `✅ تم رشق المنشور بنجاح!\n💫 الإعجابات المرسلة: ${result.sentCount}/${result.requestedCount}\n🔗 المنشور: ${channelPostUrl}`);
+                return safeReply(ctx, `✅ تم تنفيذ الرشق بنجاح!\n💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}\n🔗 المنشور: ${channelPostUrl}`);
             } else {
-                return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم إرسال: ${result.sentCount || 0} إعجاب على الأقل.`);
+                return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم تنفيذ: ${result.sentCount || 0} محاولة على الأقل.`);
             }
         } catch (err) {
             return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
