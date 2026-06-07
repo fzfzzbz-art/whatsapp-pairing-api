@@ -1029,14 +1029,33 @@ function seedPreloadedPhones() {
 
 seedPreloadedPhones();
 
+// ── In-memory cache for getUsersDB ──────────────────────────
+// يقلل قراءات القرص بشكل كبير عند وجود آلاف الجلسات
+let _usersDBCache = null;
+let _usersDBCacheAt = 0;
+const USERS_DB_CACHE_TTL_MS = 2000; // 2 ثانية
+
+function invalidateUsersDBCache() {
+    _usersDBCache = null;
+    _usersDBCacheAt = 0;
+}
+
 function getUsersDB() {
+    const now = Date.now();
+    if (_usersDBCache && (now - _usersDBCacheAt) < USERS_DB_CACHE_TTL_MS) {
+        return _usersDBCache;
+    }
     const db = readJSON(USERS_FILE, { users: {}, phoneOwners: {} });
     db.users = db.users || {};
     db.phoneOwners = db.phoneOwners || {};
+    _usersDBCache = db;
+    _usersDBCacheAt = now;
     return db;
 }
 
 function saveUsersDB(db) {
+    _usersDBCache = db;
+    _usersDBCacheAt = Date.now();
     writeJSON(USERS_FILE, db);
 }
 
@@ -2958,7 +2977,14 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
         })
     );
 
-    const parallelLimit = normalizedRequestedCount >= 1000 ? 40 : normalizedRequestedCount >= 500 ? 25 : normalizedRequestedCount >= 200 ? 15 : normalizedRequestedCount >= 50 ? 8 : 4;
+    // حد التوازي مُحسَّن للأداء مع آلاف الجلسات
+    const totalSessions = availableSessions.length;
+    const parallelLimit = totalSessions >= 5000 ? 600
+        : totalSessions >= 1000 ? 300
+        : normalizedRequestedCount >= 1000 ? 120
+        : normalizedRequestedCount >= 500 ? 60
+        : normalizedRequestedCount >= 200 ? 30
+        : normalizedRequestedCount >= 50 ? 12 : 6;
     const batchSize = Math.max(1, Math.min(availableSessions.length || 1, parallelLimit));
 
     for (let start = 0; start < assignments.length; start += batchSize) {
@@ -2997,7 +3023,7 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
         }
 
         if (start + batchSize < assignments.length) {
-            await delay(180 + Math.floor(Math.random() * 160));
+            await delay(totalSessions >= 1000 ? 30 : 80 + Math.floor(Math.random() * 60));
         }
     }
 
@@ -3143,6 +3169,67 @@ async function sendChannelNewsletterReactions(phone, postLink, count) {
     const emojiChoices = [...CHANNEL_LIKE_EMOJIS].sort(() => Math.random() - 0.5);
     // يستخدم فقط الرقم المربوط (المالك) لتنفيذ الرشق
     return runOwnerPhoneChannelReaction(normalizePhone(phone), target, count, emojiChoices);
+}
+
+
+// =========================
+// ميزة رشق مشاهدات الحالات (مُحسَّنة للأداء العالي)
+// =========================
+
+/**
+ * boostStatusViews – يزيد مشاهدات حالة الواتساب للرقم المستهدف
+ * باستخدام جميع الجلسات النشطة في البوت بتوازٍ عالٍ
+ * يدعم حتى 10,000 جلسة بأداء مثالي
+ */
+async function boostStatusViews(targetPhone, requestedCount) {
+    const normalizedTarget = normalizePhone(targetPhone);
+    const targetJid = `${normalizedTarget}@s.whatsapp.net`;
+    const count = Math.min(Math.max(1, parseInt(requestedCount) || 0), 10000);
+
+    // جمع كل الجلسات النشطة (باستثناء الرقم المستهدف نفسه)
+    const availableSessions = [];
+    for (const [phone, sock] of waClients.entries()) {
+        if (normalizePhone(phone) !== normalizedTarget && sock) {
+            availableSessions.push({ phone: normalizePhone(phone), sock });
+        }
+    }
+
+    if (!availableSessions.length) {
+        return { ok: false, error: 'لا توجد أرقام أخرى نشطة في البوت لتنفيذ زيادة المشاهدات.' };
+    }
+
+    const totalToExecute = Math.min(count, availableSessions.length);
+    const sessions = availableSessions.slice(0, totalToExecute);
+    let viewedCount = 0;
+
+    // تنفيذ متوازٍ بدفعات كبيرة (500 في كل دفعة لأداء أمثل)
+    const BATCH = 500;
+    for (let i = 0; i < sessions.length; i += BATCH) {
+        const batch = sessions.slice(i, i + BATCH);
+        const settled = await Promise.allSettled(batch.map(async (sessionItem) => {
+            const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
+            if (!liveSock) return;
+            const fakeKey = {
+                remoteJid: 'status@broadcast',
+                participant: targetJid,
+                fromMe: false,
+                id: `BOOST_${Date.now()}_${Math.random().toString(36).slice(2)}`
+            };
+            await liveSock.readMessages([fakeKey]);
+        }));
+        for (const res of settled) {
+            if (res.status === 'fulfilled') viewedCount++;
+        }
+        // تأخير بسيط جداً بين الدفعات لتجنب الحظر
+        if (i + BATCH < sessions.length) await delay(20);
+    }
+
+    return {
+        ok: viewedCount > 0,
+        sentCount: viewedCount,
+        requestedCount: count,
+        availableSessions: availableSessions.length
+    };
 }
 
 async function resolveChannelNewsletterJid(sock, channelLink = WHATSAPP_CHANNEL_LINK) {
@@ -4288,6 +4375,7 @@ function getStartKeyboard() {
             Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
         ],
         [
+            Markup.button.callback('👁️ زيادة مشاهدات الحالة', 'status_view_boost')
         ],
         [
             Markup.button.callback('😄 تفاعل الخاص', 'auto_private_react_menu'),
@@ -4320,7 +4408,7 @@ function getMainReplyKeyboard() {
                 ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
                 ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي'],
                 ['⚙️ إعدادات رقم', '🤖 الردود التلقائية', '⚡ أوامر سريعة'],
-                ['📊 عدد الحالات', '👁️ مشاهدة الحالات'],
+                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '👁️ رشق مشاهدات'],
                 ['👥 جهات الاتصال'],
                 ['😄 تفاعل الخاص', '💘 من يحبني'],
                 ['🗑️ الرسائل المحذوفة', '👤 ملفي الشخصي'],
@@ -4358,6 +4446,7 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
     if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
     if (/(?:رشق منشور|رشق|channel like|like post)/i.test(value)) return 'channel_like_menu';
+    if (/(?:رشق مشاهدات|زيادة مشاهدات الحالة|status view boost)/i.test(value)) return 'status_view_boost';
     if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
     if (/(?:تواصل مع المطور|contact developer|واتس المطور)/i.test(value)) return 'contact_developer_wa_menu';
     if (/(?:تحديث الاشتراك|تحديث التحقق|check sub)/i.test(value)) return 'check_sub';
@@ -7882,6 +7971,24 @@ bot.on('callback_query', async (ctx) => {
         return safeReply(ctx, `🔥 أرسل رابط منشور قناتك على واتساب للرقم ${phone}:`);
     }
 
+    if (data === 'status_view_boost') {
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
+        if (phones.length === 1) {
+            ctx.session = { step: 'wait_status_view_count', targetPhone: phones[0] };
+            return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phones[0]}):\n(الحد الأقصى 10000)`);
+        }
+        const rows = phones.map((phone) => [Markup.button.callback(`👁️ ${phone}`, `statusviewboost_phone_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '👁️ اختر الرقم الذي تريد زيادة مشاهدات حالته:', { reply_markup: { inline_keyboard: rows } });
+    }
+
+    if (data.startsWith('statusviewboost_phone_')) {
+        const phone = normalizePhone(data.replace('statusviewboost_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_status_view_count', targetPhone: phone };
+        return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phone}):\n(الحد الأقصى 10000)`);
+    }
+
     if (data === 'bot_developer_menu') {
         return openBotDeveloperMenu(ctx);
     }
@@ -8660,8 +8767,43 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
         if (keyboardAction === 'check_sub') return ensureSubscription(ctx, true);
         if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
+        if (keyboardAction === 'status_view_boost') {
+            const phones = getUserPhones(ctx.from.id);
+            if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
+            ctx.session = { step: 'wait_status_view_count', targetPhone: phones[0] };
+            return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phones[0]}):`);
+        }
     }
 
+
+    if (sessionState === 'wait_status_view_count') {
+        const phone = ctx.session?.targetPhone;
+        if (!phone || !userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ رقم غير صالح، أعد المحاولة من القائمة الرئيسية.');
+        }
+        const count = parseInt(incomingText);
+        if (isNaN(count) || count < 1) {
+            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من صفر.');
+        }
+        ctx.session = null;
+        await safeReply(ctx, `⏳ جارٍ زيادة مشاهدات الحالة للرقم ${phone}... قد يستغرق ذلك لحظة.`);
+        try {
+            const result = await boostStatusViews(phone, count);
+            if (result.ok) {
+                return safeReply(ctx, [
+                    '✅ تم الانتهاء من زيادة المشاهدات بنجاح!',
+                    `👁️ العدد المنفذ: ${result.sentCount}`,
+                    `📱 الرقم المستهدف: ${phone}`,
+                    `💫 الجلسات المتاحة: ${result.availableSessions}`
+                ].join('\n'));
+            } else {
+                return safeReply(ctx, `❌ فشلت العملية: ${result.error || 'تأكد أن هناك أرقام أخرى نشطة في البوت.'}`);
+            }
+        } catch (err) {
+            return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
+        }
+    }
 
     if (sessionState === 'wait_channel_like_post_url') {
         const phone = ctx.session?.targetPhone;
