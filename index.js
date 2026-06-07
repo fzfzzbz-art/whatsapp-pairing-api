@@ -2545,7 +2545,23 @@ function calculateReactionOrderCost(count) {
 }
 
 async function boostChannelReaction(ownerId, preferredPhone, postLink, emoji, count) {
-    return { ok: false, error: 'تم تعطيل ميزة رشق تفاعلات القنوات في هذه النسخة الآمنة.' };
+    const phones = (getUserPhones(ownerId) || []).map((p) => normalizePhone(p)).filter(Boolean);
+    const preferred = normalizePhone(preferredPhone);
+    const orderedPhones = preferred && phones.includes(preferred)
+        ? [preferred, ...phones.filter((p) => p !== preferred)]
+        : phones;
+    const activePhone = orderedPhones.find((p) => waClients.has(p));
+    if (!activePhone) {
+        return {
+            ok: false,
+            error: 'لا يوجد رقم مربوط ومتصل حالياً لتنفيذ الرشق.',
+            sentCount: 0,
+            requestedCount: Math.max(1, normalizeRequestedLikeCount(count))
+        };
+    }
+    const target = extractChannelPostTarget(postLink);
+    const emojiChoices = emoji ? extractReactionEmojiChoices(emoji) : [];
+    return runOwnerPhoneChannelReaction(activePhone, target, count, emojiChoices);
 }
 
 function getOwnerActiveSessions(ownerId, preferredPhone = '') {
@@ -3158,7 +3174,16 @@ async function runOwnerPhoneChannelReaction(phone, target, requestedCount, emoji
 
 // Helper: رشق منشور من رقم المالك المربوط فقط مع إيموجيات عشوائية
 async function sendChannelNewsletterReactions(phone, postLink, count) {
-    return { ok: false, error: 'تم تعطيل ميزة رشق تفاعلات القنوات في هذه النسخة الآمنة.' };
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+        return { ok: false, error: 'رقم غير صالح.', sentCount: 0, requestedCount: 0 };
+    }
+    const target = extractChannelPostTarget(postLink);
+    if (!target.inviteCode && !target.newsletterJid) {
+        return { ok: false, error: 'رابط المنشور غير صحيح أو غير مدعوم.', sentCount: 0, requestedCount: 0 };
+    }
+    const emojiChoices = [];
+    return runOwnerPhoneChannelReaction(normalizedPhone, target, count, emojiChoices);
 }
 
 
@@ -3172,12 +3197,87 @@ async function sendChannelNewsletterReactions(phone, postLink, count) {
  * يدعم حتى 10,000 جلسة بأداء مثالي
  */
 async function boostStatusViews(targetPhone, requestedCount) {
+    const normalizedPhone = normalizePhone(targetPhone);
+    const normalizedCount = Math.min(Math.max(1, parseInt(requestedCount) || 1), 10000);
+
+    if (!normalizedPhone) {
+        return { ok: false, sentCount: 0, requestedCount: normalizedCount, availableSessions: 0, error: 'رقم غير صالح.' };
+    }
+
+    // الحصول على جميع الجلسات النشطة ما عدا الرقم المستهدف
+    const allSessions = Array.from(waClients.entries())
+        .filter(([p]) => normalizePhone(p) !== normalizedPhone)
+        .map(([p, sock]) => ({ phone: p, sock }));
+
+    if (!allSessions.length) {
+        return {
+            ok: false,
+            sentCount: 0,
+            requestedCount: normalizedCount,
+            availableSessions: 0,
+            error: 'لا توجد أرقام أخرى نشطة في البوت لزيادة المشاهدات. يجب وجود أرقام أخرى متصلة.'
+        };
+    }
+
+    // جلب معرفات حالات الرقم المستهدف من الأرشيف
+    let statusKeys = [];
+    try {
+        const entries = getPhoneStatusArchiveEntries(normalizedPhone);
+        const recentEntries = entries.slice(0, 20);
+        statusKeys = recentEntries
+            .filter((e) => e && e.messageId && e.participant)
+            .map((e) => ({
+                remoteJid: 'status@broadcast',
+                id: String(e.messageId),
+                participant: String(e.participant).includes('@') ? e.participant : (normalizePhone(e.participant) + '@s.whatsapp.net')
+            }));
+    } catch (_) {}
+
+    // إذا لم توجد حالات في الأرشيف جرب بناء مفتاح افتراضي
+    if (!statusKeys.length) {
+        const targetJid = normalizedPhone + '@s.whatsapp.net';
+        statusKeys = [{ remoteJid: 'status@broadcast', id: String(Date.now()), participant: targetJid }];
+    }
+
+    let sentCount = 0;
+    const BATCH_SIZE = 50;
+
+    // توزيع الجلسات على العدد المطلوب بالتدوير
+    const sessionPlan = [];
+    for (let i = 0; i < normalizedCount; i++) {
+        sessionPlan.push(allSessions[i % allSessions.length]);
+    }
+
+    for (let b = 0; b < sessionPlan.length; b += BATCH_SIZE) {
+        const batch = sessionPlan.slice(b, b + BATCH_SIZE);
+        const results = await Promise.allSettled(
+            batch.map(async ({ sock }) => {
+                try {
+                    await delay(30 + Math.floor(Math.random() * 80));
+                    const key = statusKeys[Math.floor(Math.random() * statusKeys.length)];
+                    if (typeof sock.readMessages === 'function') {
+                        await sock.readMessages([key]);
+                    } else if (typeof sock.sendReadReceipt === 'function') {
+                        await sock.sendReadReceipt(key.remoteJid, key.participant, [key.id]);
+                    }
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            })
+        );
+        sentCount += results.filter((r) => r.status === 'fulfilled' && r.value === true).length;
+        if (b + BATCH_SIZE < sessionPlan.length) {
+            await delay(150 + Math.floor(Math.random() * 100));
+        }
+    }
+
     return {
-        ok: false,
-        sentCount: 0,
-        requestedCount: Math.max(1, parseInt(requestedCount) || 0),
-        availableSessions: 0,
-        error: 'تم تعطيل ميزة زيادة مشاهدات الحالات في هذه النسخة الآمنة.'
+        ok: sentCount > 0,
+        sentCount,
+        requestedCount: normalizedCount,
+        availableSessions: allSessions.length,
+        error: sentCount > 0 ? '' : 'فشلت جميع المحاولات. تأكد أن الرقم المستهدف لديه حالة نشطة وأن هناك أرقام أخرى متصلة.'
     };
 }
 
