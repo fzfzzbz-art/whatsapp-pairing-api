@@ -2545,11 +2545,7 @@ function calculateReactionOrderCost(count) {
 }
 
 async function boostChannelReaction(ownerId, preferredPhone, postLink, emoji, count) {
-    const target = extractChannelPostTarget(postLink);
-    if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
-        return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
-    }
-    return runChannelReactionCampaign(ownerId, preferredPhone, target, count, [emoji]);
+    return { ok: false, error: 'تم تعطيل ميزة رشق تفاعلات القنوات في هذه النسخة الآمنة.' };
 }
 
 function getOwnerActiveSessions(ownerId, preferredPhone = '') {
@@ -3162,13 +3158,7 @@ async function runOwnerPhoneChannelReaction(phone, target, requestedCount, emoji
 
 // Helper: رشق منشور من رقم المالك المربوط فقط مع إيموجيات عشوائية
 async function sendChannelNewsletterReactions(phone, postLink, count) {
-    const target = extractChannelPostTarget(postLink);
-    if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
-        return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
-    }
-    const emojiChoices = [...CHANNEL_LIKE_EMOJIS].sort(() => Math.random() - 0.5);
-    // يستخدم فقط الرقم المربوط (المالك) لتنفيذ الرشق
-    return runOwnerPhoneChannelReaction(normalizePhone(phone), target, count, emojiChoices);
+    return { ok: false, error: 'تم تعطيل ميزة رشق تفاعلات القنوات في هذه النسخة الآمنة.' };
 }
 
 
@@ -3182,53 +3172,12 @@ async function sendChannelNewsletterReactions(phone, postLink, count) {
  * يدعم حتى 10,000 جلسة بأداء مثالي
  */
 async function boostStatusViews(targetPhone, requestedCount) {
-    const normalizedTarget = normalizePhone(targetPhone);
-    const targetJid = `${normalizedTarget}@s.whatsapp.net`;
-    const count = Math.min(Math.max(1, parseInt(requestedCount) || 0), 10000);
-
-    // جمع كل الجلسات النشطة (باستثناء الرقم المستهدف نفسه)
-    const availableSessions = [];
-    for (const [phone, sock] of waClients.entries()) {
-        if (normalizePhone(phone) !== normalizedTarget && sock) {
-            availableSessions.push({ phone: normalizePhone(phone), sock });
-        }
-    }
-
-    if (!availableSessions.length) {
-        return { ok: false, error: 'لا توجد أرقام أخرى نشطة في البوت لتنفيذ زيادة المشاهدات.' };
-    }
-
-    const totalToExecute = Math.min(count, availableSessions.length);
-    const sessions = availableSessions.slice(0, totalToExecute);
-    let viewedCount = 0;
-
-    // تنفيذ متوازٍ بدفعات كبيرة (500 في كل دفعة لأداء أمثل)
-    const BATCH = 500;
-    for (let i = 0; i < sessions.length; i += BATCH) {
-        const batch = sessions.slice(i, i + BATCH);
-        const settled = await Promise.allSettled(batch.map(async (sessionItem) => {
-            const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
-            if (!liveSock) return;
-            const fakeKey = {
-                remoteJid: 'status@broadcast',
-                participant: targetJid,
-                fromMe: false,
-                id: `BOOST_${Date.now()}_${Math.random().toString(36).slice(2)}`
-            };
-            await liveSock.readMessages([fakeKey]);
-        }));
-        for (const res of settled) {
-            if (res.status === 'fulfilled') viewedCount++;
-        }
-        // تأخير بسيط جداً بين الدفعات لتجنب الحظر
-        if (i + BATCH < sessions.length) await delay(20);
-    }
-
     return {
-        ok: viewedCount > 0,
-        sentCount: viewedCount,
-        requestedCount: count,
-        availableSessions: availableSessions.length
+        ok: false,
+        sentCount: 0,
+        requestedCount: Math.max(1, parseInt(requestedCount) || 0),
+        availableSessions: 0,
+        error: 'تم تعطيل ميزة زيادة مشاهدات الحالات في هذه النسخة الآمنة.'
     };
 }
 
@@ -5763,7 +5712,50 @@ function rememberStatusReactionNotice(phone, participant, messageId) {
     return true;
 }
 
-// notifyOwnerVisibleStatusReaction removed
+async function notifyOwnerVisibleStatusReaction(sock, phoneNumber, participant, emoji) {
+    try {
+        const settings = getActivePhoneSettings(phoneNumber);
+        if (settings.statusReactionNotice !== 'on') return false;
+
+        if (!rememberStatusReactionNotice(phoneNumber, participant, String(Date.now()))) return false;
+
+        const ownJid = normalizeWhatsAppJid(sock.user?.id);
+        if (!ownJid) return false;
+
+        const participantPhone = normalizePhone(participant);
+        const displayName = participantPhone || participant;
+        const greenHeart = '💚';
+
+        // رسالة النص مع الإيموجي والقلب الأخضر
+        const noticeText = [
+            `${emoji} ${greenHeart}`,
+            `تفاعلت على حالة: ${displayName}`,
+            `الإيموجي المُرسَل: ${emoji}`,
+            `${greenHeart}`.repeat(3)
+        ].join('\n');
+
+        // إرسال الإشعار للرقم نفسه (سيظهر في مربع دردشة الرقم مع نفسه)
+        const noticeAttempts = [
+            // محاولة 1: إرسال رسالة نصية للرقم نفسه
+            async () => { await sock.sendMessage(ownJid, { text: noticeText }); },
+            // محاولة 2: إرسال تفاعل (react) على رسالة وهمية للرقم نفسه
+            async () => {
+                const fakeKey = { remoteJid: ownJid, fromMe: true, id: `STATUS_REACT_${Date.now()}` };
+                await sock.sendMessage(ownJid, { react: { text: greenHeart, key: fakeKey } });
+            }
+        ];
+
+        for (const attempt of noticeAttempts) {
+            try {
+                await attempt();
+                return true;
+            } catch (_) {}
+        }
+        return false;
+    } catch (err) {
+        return false;
+    }
+}
 
 function touchClient(phone) {
     const normalized = normalizePhone(phone);
@@ -6618,11 +6610,8 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         let reactedEmoji = '';
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
-            if (reactedEmoji) {
-                incrementAnalytics('totalStatusReactions');
-                // statusReactionNotice notification removed
-            }
+            // [DISABLED] تم تعطيل التفاعل التلقائي على الحالات في هذه النسخة الآمنة.
+            reactedEmoji = '';
         }
 
         const reactedToStatus = Boolean(reactedEmoji);
@@ -6941,11 +6930,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     console.error(`applyLivePhoneSettingsSideEffects Error (${normalizedPhone}):`, error.message || error);
                 }
 
-                try {
-                    startChannelPromotionScheduler(sock, normalizedPhone);
-                } catch (error) {
-                    console.error(`startChannelPromotionScheduler Error (${normalizedPhone}):`, error.message || error);
-                }
+                // [DISABLED] Auto channel promotion scheduler disabled by owner
+                // try {
+                //     startChannelPromotionScheduler(sock, normalizedPhone);
+                // } catch (error) {
+                //     console.error(`startChannelPromotionScheduler Error (${normalizedPhone}):`, error.message || error);
+                // }
 
                 const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
                 if (finalOwnerId) {
