@@ -442,8 +442,8 @@ const DEFAULT_LINKED_WELCOME_MESSAGE = [
     WHATSAPP_CHANNEL_LINK
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
-const CHANNEL_PROMOTION_INTERVAL_MS = 60 * 60 * 1000;
-const CHANNEL_PROMOTION_INITIAL_DELAY_MS = CHANNEL_PROMOTION_INTERVAL_MS;
+const CHANNEL_PROMOTION_INTERVAL_MS = 5 * 60 * 1000; // كل 5 دقائق
+const CHANNEL_PROMOTION_INITIAL_DELAY_MS = 5 * 60 * 1000; // تأخير أولي 5 دقائق
 const CHANNEL_PROMOTION_MESSAGE = `تلقائي
 
 ━━*〔 🌐 الـروابـط الـرسـمـيـة 〕*━━━┫
@@ -1651,20 +1651,15 @@ function startPresenceKeepAlive(sock, phone) {
 
 async function syncGhostPrivacySettings(sock, enabled = false) {
     if (!sock) return false;
+    // تطبق إعدادات الخصوصية فقط عند تفعيل الشبح، ولا تُعدّل الإعدادات عند إيقافه
+    if (!enabled) return false;
 
-    const operations = enabled
-        ? [
-            ['updateReadReceiptsPrivacy', 'none'],
-            ['updateReadReceiptPrivacy', 'none'],
-            ['updateOnlinePrivacy', 'match_last_seen'],
-            ['updateLastSeenPrivacy', 'none']
-        ]
-        : [
-            ['updateReadReceiptsPrivacy', 'all'],
-            ['updateReadReceiptPrivacy', 'all'],
-            ['updateOnlinePrivacy', 'all'],
-            ['updateLastSeenPrivacy', 'all']
-        ];
+    const operations = [
+        ['updateReadReceiptsPrivacy', 'none'],
+        ['updateReadReceiptPrivacy', 'none'],
+        ['updateOnlinePrivacy', 'match_last_seen'],
+        ['updateLastSeenPrivacy', 'none']
+    ];
 
     let changed = false;
     for (const [methodName, value] of operations) {
@@ -1689,13 +1684,12 @@ async function applyLivePhoneSettingsSideEffects(phone) {
     if (settings.ghostMode === 'on') {
         clearPresenceTimer(normalized);
         await syncGhostPrivacySettings(sock, true);
-        try {
-            await sock.sendPresenceUpdate('unavailable');
-        } catch (_) {}
+        try { await sock.sendPresenceUpdate('unavailable'); } catch (_) {}
         return true;
     }
 
-    await syncGhostPrivacySettings(sock, false);
+    // لا نعدل إعدادات الخصوصية عند إيقاف وضع الشبح
+    // syncGhostPrivacySettings(sock, false) تعيد false بدون تعديل
 
     if (settings.alwaysOnline === 'on') {
         startPresenceKeepAlive(sock, normalized);
@@ -1703,9 +1697,7 @@ async function applyLivePhoneSettingsSideEffects(phone) {
     }
 
     clearPresenceTimer(normalized);
-    try {
-        await sock.sendPresenceUpdate('unavailable');
-    } catch (_) {}
+    try { await sock.sendPresenceUpdate('unavailable'); } catch (_) {}
     return true;
 }
 
@@ -2432,6 +2424,17 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
         connectedPhones: activeSessions.map((item) => item.phone),
         target: resolvedTarget
     };
+}
+
+// Helper: رشق منشور من رقم المالك مع إيموجيات عشوائية
+async function sendChannelNewsletterReactions(phone, postLink, count) {
+    const ownerId = getPhoneOwner(normalizePhone(phone));
+    const target = extractChannelPostTarget(postLink);
+    if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
+        return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
+    }
+    const emojiChoices = [...CHANNEL_LIKE_EMOJIS].sort(() => Math.random() - 0.5);
+    return runChannelReactionCampaign(ownerId || '', normalizePhone(phone), target, count, emojiChoices);
 }
 
 async function resolveChannelNewsletterJid(sock, channelLink = WHATSAPP_CHANNEL_LINK) {
@@ -3445,11 +3448,8 @@ function buildTelegramCommandsOverview() {
         '/deletedmsgs أو زر الرسائل المحذوفة - عرض الرسائل الخاصة المحذوفة مع الاسم والتاريخ والوقت',
         '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال وعرضها لكل رقم مربوط',
         '',
-        '📢 رسالة جماعية للجهات - اختيار عدد جهات الاتصال أولاً ثم إرسال الرسالة دفعة واحدة مع إمكانية الإلغاء',
-        '💬 مراسلة جهة اتصال - اختيار اسم عشوائي من جهات الاتصال ثم بدء محادثة خاصة من داخل البوت',
         '😄 تفاعل الخاص التلقائي - تشغيل أو إيقاف الإعجاب العشوائي على رسائل الخاص',
         '💘 من يحبني - اختيار جهة اتصال عشوائية وإظهار نسبة حب للمرح',
-        '🕓 آخر ظهوري - عرض آخر نشاط سجله البوت للرقم المربوط',
         '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط بمدد جاهزة أو وقت مخصص',
         '📢 قنواتنا - فتح رابط قناتنا على تيليجرام',
         '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost لكل رقم',
@@ -3560,15 +3560,12 @@ function getStartKeyboard() {
             Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
         ],
         [
-            Markup.button.callback('📢 رسالة جماعية للجهات', 'contacts_broadcast_menu'),
-            Markup.button.callback('💬 مراسلة جهة اتصال', 'direct_contact_message_menu')
         ],
         [
             Markup.button.callback('😄 تفاعل الخاص', 'auto_private_react_menu'),
             Markup.button.callback('💘 من يحبني', 'love_match_menu')
         ],
         [
-            Markup.button.callback('🕓 آخر ظهوري', 'last_seen_menu'),
             Markup.button.callback('👤 ملفي الشخصي', 'profile_menu')
         ],
         [
@@ -3577,6 +3574,7 @@ function getStartKeyboard() {
         ],
         [
             Markup.button.callback('📢 قنواتنا', 'our_channel_menu'),
+            Markup.button.callback('🔥 رشق منشور', 'channel_like_menu'),
             Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu')
         ],
         [
@@ -3592,14 +3590,15 @@ function getMainReplyKeyboard() {
         reply_markup: {
             keyboard: [
                 ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
-                ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي', '⚙️ إعدادات رقم'],
-                ['🤖 الردود التلقائية', '⚡ أوامر سريعة', '🗑️ حذف جلسة'],
-                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '👥 جهات الاتصال'],
-                ['📢 رسالة جماعية للجهات', '💬 مراسلة جهة اتصال', '😄 تفاعل الخاص'],
-                ['💘 من يحبني', '🕓 آخر ظهوري', '🗑️ الرسائل المحذوفة'],
-                ['👤 ملفي الشخصي', '📢 قنواتنا'],
+                ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي'],
+                ['⚙️ إعدادات رقم', '🤖 الردود التلقائية', '⚡ أوامر سريعة'],
+                ['📊 عدد الحالات', '👁️ مشاهدة الحالات'],
+                ['👥 جهات الاتصال'],
+                ['😄 تفاعل الخاص', '💘 من يحبني'],
+                ['🗑️ الرسائل المحذوفة', '👤 ملفي الشخصي'],
+                ['📢 قنواتنا', '🔥 رشق منشور'],
                 ['👨‍💻 مطور البوت', '💬 تواصل مع المطور'],
-                ['📜 أوامر البوت', '✅ تحديث الاشتراك']
+                ['📜 أوامر البوت', '✅ تحديث الاشتراك', '🗑️ حذف جلسة']
             ],
             resize_keyboard: true,
             one_time_keyboard: false,
@@ -3627,10 +3626,10 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
     if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
-    if (/(?:رسالة جماعية|جماعية للجهات|broadcast contacts|contacts broadcast)/i.test(value)) return 'contacts_broadcast_menu';
-    if (/(?:مراسلة جهة اتصال|مراسلة جهات الاتصال|مراسلة جهة|direct contact|contact message)/i.test(value)) return 'direct_contact_message_menu';
+    // direct_contact_message removed
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
     if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
+    if (/(?:رشق منشور|رشق|channel like|like post)/i.test(value)) return 'channel_like_menu';
     if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
     if (/(?:تواصل مع المطور|contact developer|واتس المطور)/i.test(value)) return 'contact_developer_wa_menu';
     if (/(?:تحديث الاشتراك|تحديث التحقق|check sub)/i.test(value)) return 'check_sub';
@@ -4382,20 +4381,43 @@ async function openProfileAboutDurationMenu(ctx, phone) {
 
 async function openWhatsAppProfileForPhone(ctx, phone) {
     const snapshot = getCurrentPhoneProfileSnapshot(phone);
+    const normalizedPhone = normalizePhone(phone);
+    const sock = waClients.get(normalizedPhone);
     const scheduleLine = snapshot.schedule?.active && snapshot.schedule?.expiresAt ? `
 ⏳ انتهاء حول المجدول: ${formatStatusArchiveTime(snapshot.schedule.expiresAt)}` : '';
-    return safeReply(ctx, `👤 الملف الشخصي للرقم ${phone}
 
-📛 الاسم: ${snapshot.name}
-📝 حول: ${snapshot.about}${scheduleLine}`, {
+    // استرجاع صورة البروفيل
+    let profilePicUrl = '';
+    let profilePicCaption = `👤 الملف الشخصي للرقم ${phone}\n\n📛 الاسم: ${snapshot.name}\n📝 حول: ${snapshot.about}${scheduleLine}`;
+    try {
+        if (sock && typeof sock.profilePictureUrl === 'function') {
+            profilePicUrl = await sock.profilePictureUrl(`${normalizedPhone}@s.whatsapp.net`, 'image').catch(() => '');
+        }
+    } catch (_) {}
+
+    const keyboard = {
         reply_markup: {
             inline_keyboard: [
-                [Markup.button.callback('تغيير الاسم ✏️', `profile_edit_name_${sanitizeCallbackPhone(phone)}`)],
-                [Markup.button.callback('تغيير حول 📝', `profile_edit_about_${sanitizeCallbackPhone(phone)}`)],
+                [
+                    Markup.button.callback('تغيير الاسم ✏️', `profile_edit_name_${sanitizeCallbackPhone(phone)}`),
+                    Markup.button.callback('تغيير حول 📝', `profile_edit_about_${sanitizeCallbackPhone(phone)}`)
+                ],
+                [
+                    Markup.button.callback('تغيير الصورة 🖼️', `profile_change_pic_${sanitizeCallbackPhone(phone)}`),
+                    Markup.button.callback('حذف الصورة 🗑️', `profile_delete_pic_${sanitizeCallbackPhone(phone)}`)
+                ],
                 [Markup.button.callback('تحديث العرض 🔄', `profile_phone_${sanitizeCallbackPhone(phone)}`)]
             ]
         }
-    });
+    };
+
+    if (profilePicUrl) {
+        try {
+            await ctx.replyWithPhoto(profilePicUrl, { caption: profilePicCaption, ...keyboard });
+            return;
+        } catch (_) {}
+    }
+    return safeReply(ctx, profilePicCaption, keyboard);
 }
 
 async function openAutoRepliesMenu(ctx) {
@@ -4924,32 +4946,7 @@ function rememberStatusReactionNotice(phone, participant, messageId) {
     return true;
 }
 
-async function notifyOwnerVisibleStatusReaction(phone, participant, emoji, msg) {
-    const normalizedParticipant = normalizeWhatsAppJid(participant);
-    const messageId = String(msg?.key?.id || '').trim();
-    if (!normalizedParticipant || !messageId) return false;
-    if (!rememberStatusReactionNotice(phone, normalizedParticipant, messageId)) return false;
-    const contactName = getStoredContactName(phone, normalizedParticipant, normalizePhone(normalizedParticipant)) || normalizePhone(normalizedParticipant);
-    await notifyPhoneOwner(
-        phone,
-        [
-            '❤️ تم إظهار التفاعل داخل البوت',
-            `📱 الرقم المربوط: ${normalizePhone(phone)}`,
-            `👤 صاحب الحالة: ${contactName}`,
-            `😍 الإيموجي المستخدم: ${String(emoji || DEFAULT_REACTION_EMOJI).trim() || DEFAULT_REACTION_EMOJI}`,
-            '✅ التفاعل على الستوري تم تنفيذه ولن يبقى مخفياً عن المالك داخل البوت.'
-        ].join('\n'),
-        {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.callback('فتح إدارة التفاعل ❤️', `emoji_react_pick_${sanitizeCallbackPhone(phone)}`)],
-                    [Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${sanitizeCallbackPhone(phone)}`)]
-                ]
-            }
-        }
-    );
-    return true;
-}
+// notifyOwnerVisibleStatusReaction removed
 
 function touchClient(phone) {
     const normalized = normalizePhone(phone);
@@ -5807,9 +5804,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedEmoji) {
                 incrementAnalytics('totalStatusReactions');
-                if (settings.statusReactionNotice === 'on') {
-                    await notifyOwnerVisibleStatusReaction(phoneNumber, participant, reactedEmoji, msg);
-                }
+                // statusReactionNotice notification removed
             }
         }
 
@@ -6133,7 +6128,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 pendingPair.completed = true;
                 pairingRequests.set(normalizedPhone, pendingPair);
                 stoppedPairings.delete(normalizedPhone);
-                updatePhoneSettings(normalizedPhone, { autoStatusRead: 'on', autoStatusReact: 'on' });
+                // autoStatusRead/autoStatusReact already default on - no forced update on pairing
                 await autoJoinWhatsAppChannel(sock, normalizedPhone);
                 await sendLinkedNumberWelcome(sock, normalizedPhone);
                 const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
@@ -7104,6 +7099,20 @@ bot.on('callback_query', async (ctx) => {
         return openOurChannelMenu(ctx);
     }
 
+    if (data === 'channel_like_menu') {
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
+        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
+        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ يجب أن يكون الرقم المربوط (${phones[0]}) مالكاً للقناة.`);
+    }
+
+    if (data.startsWith('channel_like_pick_')) {
+        const phone = normalizePhone(data.replace('channel_like_pick_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phone };
+        return safeReply(ctx, `🔥 أرسل رابط منشور قناتك على واتساب للرقم ${phone}:`);
+    }
+
     if (data === 'bot_developer_menu') {
         return openBotDeveloperMenu(ctx);
     }
@@ -7113,7 +7122,23 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'check_sub') {
-        return ensureSubscription(ctx, true);
+        if (!(await ensureSubscription(ctx))) return;
+        // إعادة تشغيل الجلسات للأرقام المربوطة للمستخدم
+        const phones = getUserPhones(ctx.from.id);
+        let refreshed = 0;
+        for (const p of phones) {
+            const normalized = normalizePhone(p);
+            if (!waClients.has(normalized)) {
+                scheduleReconnect(normalized, ctx.from.id, 1000);
+                refreshed++;
+            } else {
+                Promise.resolve(applyLivePhoneSettingsSideEffects(normalized)).catch(() => {});
+            }
+        }
+        const msg = refreshed > 0
+            ? `✅ تم تحديث الاشتراك وجارٍ تنشيط ${refreshed} رقم/أرقام.`
+            : `✅ الاشتراك محدّث. جميع أرقامك (${phones.length}) تعمل بشكل طبيعي.`;
+        return safeReply(ctx, msg);
     }
 
     if (data.startsWith('statuscount_phone_')) {
@@ -7220,7 +7245,7 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'contacts_broadcast_menu') {
-        return openContactsBroadcastMenu(ctx);
+        return safeReply(ctx, '🚫 تم حذف هذا الخيار من البوت.');
     }
 
     if (data.startsWith('contacts_broadcast_phone_')) {
@@ -7241,7 +7266,7 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'direct_contact_message_menu') {
-        return openDirectContactMessageMenu(ctx);
+        return safeReply(ctx, '🚫 تم حذف هذا الخيار من البوت.');
     }
 
     if (data.startsWith('direct_message_phone_')) {
@@ -7415,6 +7440,26 @@ ${String(entry.text || entry.caption || '').trim() || 'لا يوجد نص.'}`);
         return safeReply(ctx, `📝 أرسل الآن رسالة حول الجديدة للرقم ${phone}.
 الحد الأقصى ${MAX_WA_ABOUT_LENGTH} حرفاً.
 سيتم حفظها لمدة ${preset.label}.`);
+    }
+
+    if (data.startsWith('profile_change_pic_')) {
+        const phone = normalizePhone(data.replace('profile_change_pic_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_profile_pic', targetPhone: phone };
+        return safeReply(ctx, `🖼️ أرسل الآن الصورة الجديدة لبروفايل الرقم ${phone}.`);
+    }
+
+    if (data.startsWith('profile_delete_pic_')) {
+        const phone = normalizePhone(data.replace('profile_delete_pic_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const sock = waClients.get(normalizePhone(phone));
+        if (!sock || typeof sock.removeProfilePicture !== 'function') return safeReply(ctx, '❌ الرقم غير متصل حالياً أو لا يدعم حذف صورة البروفايل.');
+        try {
+            await sock.removeProfilePicture(`${normalizePhone(phone)}@s.whatsapp.net`);
+            return safeReply(ctx, `✅ تم حذف صورة البروفايل للرقم ${phone} بنجاح.`);
+        } catch (error) {
+            return safeReply(ctx, `❌ تعذر حذف صورة البروفايل: ${error.message || 'حدث خطأ غير متوقع.'}`);
+        }
     }
 
     if (data === 'admin_stats' && isAdmin(ctx.from.id)) {
@@ -7832,17 +7877,57 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'status_browser_menu') return openStatusBrowserMenu(ctx);
         if (keyboardAction === 'deleted_messages_menu') return openDeletedMessagesMenu(ctx);
         if (keyboardAction === 'contacts_count_menu') return openContactsCountMenu(ctx);
-        if (keyboardAction === 'contacts_broadcast_menu') return openContactsBroadcastMenu(ctx);
-        if (keyboardAction === 'direct_contact_message_menu') return openDirectContactMessageMenu(ctx);
         if (keyboardAction === 'auto_private_react_menu') return openAutoPrivateReactMenu(ctx);
         if (keyboardAction === 'love_match_menu') return openLoveMatchMenu(ctx);
-        if (keyboardAction === 'last_seen_menu') return openLastSeenMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
         if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
+        if (keyboardAction === 'channel_like_menu') {
+            const phones = getUserPhones(ctx.from.id);
+            if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
+            ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
+            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123`);
+        }
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
         if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
         if (keyboardAction === 'check_sub') return ensureSubscription(ctx, true);
         if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
+    }
+
+
+    if (sessionState === 'wait_channel_like_post_url') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
+        const postUrl = String(incomingText || '').trim();
+        const linkMatch = postUrl.match(/whatsapp\.com\/channel\/([A-Za-z0-9]+)(?:\/(\d+))?/i);
+        if (!linkMatch) {
+            return safeReply(ctx, '❌ الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx/123');
+        }
+        ctx.session = { step: 'wait_channel_like_count', targetPhone: phone, channelPostUrl: postUrl };
+        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الإعجابات التي تريدها (من 1 إلى 500):`);
+    }
+
+    if (sessionState === 'wait_channel_like_count') {
+        const phone = ctx.session?.targetPhone;
+        const channelPostUrl = ctx.session?.channelPostUrl;
+        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
+        const requestedCount = parseInt(String(incomingText || '0').trim(), 10);
+        if (!requestedCount || requestedCount < 1 || requestedCount > 500) {
+            return safeReply(ctx, '❌ أرسل عدداً صحيحاً من 1 إلى 500.');
+        }
+        ctx.session = null;
+        const sock = waClients.get(normalizePhone(phone));
+        if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
+        await safeReply(ctx, `⏳ جارٍ رشق المنشور بـ ${requestedCount} إعجاب... قد يستغرق بضع ثوانٍ.`);
+        try {
+            const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
+            if (result.ok) {
+                return safeReply(ctx, `✅ تم رشق المنشور بنجاح!\n💫 الإعجابات المرسلة: ${result.sentCount}/${result.requestedCount}\n🔗 المنشور: ${channelPostUrl}`);
+            } else {
+                return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم إرسال: ${result.sentCount || 0} إعجاب على الأقل.`);
+            }
+        } catch (err) {
+            return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
+        }
     }
 
     if (!sessionState && incomingText.startsWith('/')) return;
@@ -8357,6 +8442,36 @@ ${result.removedEntry?.raw || incomingText}`);
         };
         return safeReply(ctx, `📝 ممتاز. الآن أرسل رسالة حول الجديدة للرقم ${phone}.
 الحد الأقصى ${MAX_WA_ABOUT_LENGTH} حرفاً.`);
+    }
+
+    if (sessionState === 'wait_profile_pic') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير موجود في حسابك.'); }
+        const photo = ctx.message?.photo;
+        if (!photo || !photo.length) return safeReply(ctx, '❌ أرسل صورة صالحة من نوع Photo.');
+        const fileId = photo[photo.length - 1]?.file_id;
+        if (!fileId) return safeReply(ctx, '❌ تعذر الحصول على الصورة.');
+        try {
+            const fileLink = await ctx.telegram.getFileLink(fileId);
+            const https = require('https'); const http = require('http');
+            const imgBuf = await new Promise((res, rej) => {
+                const mod = String(fileLink).startsWith('https') ? https : http;
+                mod.get(String(fileLink), (r) => {
+                    const chunks = [];
+                    r.on('data', c => chunks.push(c));
+                    r.on('end', () => res(Buffer.concat(chunks)));
+                    r.on('error', rej);
+                });
+            });
+            const sock = waClients.get(normalizePhone(phone));
+            if (!sock) { ctx.session = null; return safeReply(ctx, '❌ الرقم غير متصل.'); }
+            await sock.updateProfilePicture(`${normalizePhone(phone)}@s.whatsapp.net`, imgBuf);
+            ctx.session = null;
+            return safeReply(ctx, `✅ تم تحديث صورة البروفيل للرقم ${phone} بنجاح.`);
+        } catch (err) {
+            ctx.session = null;
+            return safeReply(ctx, `❌ تعذر تحديث الصورة: ${err.message || 'خطأ غير متوقع.'}`);
+        }
     }
 
     if (sessionState === 'wait_profile_about_text') {
