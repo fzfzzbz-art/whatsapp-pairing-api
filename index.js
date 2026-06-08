@@ -3173,6 +3173,164 @@ async function runOwnerPhoneChannelReaction(phone, target, requestedCount, emoji
 }
 
 // Helper: رشق منشور من رقم المالك المربوط فقط مع إيموجيات عشوائية
+// =========================
+// رشق منشور القناة من أرقام عشوائية (جميع الجلسات المتاحة)
+// =========================
+
+/**
+ * sendChannelReactionsFromGlobalSessions
+ * تنفيذ الرشق من أرقام عشوائية (جميع الجلسات النشطة في البوت)
+ * بدلاً من الرقم المربوط فقط
+ */
+async function sendChannelReactionsFromGlobalSessions(ownerPhone, target, requestedCount, emojiChoices) {
+    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
+    const normalizedOwnerPhone = normalizePhone(ownerPhone);
+
+    // جمع جميع الجلسات النشطة من كل الأرقام (أرقام عشوائية)
+    const allGlobalSessions = getGlobalActiveSessions(normalizedOwnerPhone);
+    const seenPhones = new Set();
+    let sessionPool = allGlobalSessions
+        .map((item) => {
+            const phone = normalizePhone(item?.phone);
+            const sock = phone ? (waClients.get(phone) || item?.sock) : null;
+            return phone && sock ? { phone, sock } : null;
+        })
+        .filter((item) => item && !seenPhones.has(item.phone) && seenPhones.add(item.phone));
+
+    // إذا لم توجد جلسات عالمية نستخدم رقم المالك كاحتياط
+    if (!sessionPool.length) {
+        const ownerSock = waClients.get(normalizedOwnerPhone);
+        if (ownerSock) {
+            sessionPool = [{ phone: normalizedOwnerPhone, sock: ownerSock }];
+        }
+    }
+
+    if (!sessionPool.length) {
+        return {
+            ok: false,
+            error: 'لا توجد جلسات واتساب نشطة لتنفيذ الرشق حالياً.',
+            sentCount: 0,
+            requestedCount: normalizedCount,
+            availableSessions: 0,
+            connectedPhones: [],
+            failures: []
+        };
+    }
+
+    // حل معرف القناة من الرابط
+    const primarySock = sessionPool[0].sock;
+    let resolvedTarget = { ...target };
+    try {
+        resolvedTarget = await resolveNewsletterJidForTarget(primarySock, target);
+    } catch (resolveErr) {
+        return {
+            ok: false,
+            error: resolveErr.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
+            sentCount: 0,
+            requestedCount: normalizedCount,
+            availableSessions: sessionPool.length,
+            connectedPhones: [],
+            failures: [resolveErr.message || 'resolve_failed']
+        };
+    }
+
+    if (!resolvedTarget.newsletterJid || !resolvedTarget.serverId) {
+        return {
+            ok: false,
+            error: 'الرابط غير مكتمل، تأكد من إرسال رابط المنشور كاملاً مع رقم المنشور.',
+            sentCount: 0,
+            requestedCount: normalizedCount,
+            availableSessions: sessionPool.length,
+            connectedPhones: [],
+            failures: []
+        };
+    }
+
+    // بناء خطة التفاعل المتوازنة بإيموجيات عشوائية
+    const pool = getNewsletterReactionPool({}, Array.isArray(emojiChoices) ? emojiChoices : []);
+    const plan = buildBalancedReactionPlan(normalizedCount, pool);
+    const sequence = Array.isArray(plan.sequence) && plan.sequence.length
+        ? plan.sequence
+        : Array.from({ length: normalizedCount }, () => '❤️');
+
+    // بناء مهام التدوير على الأرقام العشوائية
+    const assignments = buildRotatingReactionAssignments(sessionPool, sequence);
+
+    const actualDistribution = {};
+    const phonesUsed = new Set();
+    const failures = [];
+    let sentCount = 0;
+
+    // متابعة القناة من جميع الجلسات قبل الرشق
+    await Promise.allSettled(
+        sessionPool.map(async (item) => {
+            try {
+                const liveSock = waClients.get(item.phone) || item.sock;
+                await ensureNewsletterFollow(liveSock, resolvedTarget);
+            } catch (_) {}
+        })
+    );
+
+    // حد التوازي المُحسَّن للأداء
+    const totalSessions = sessionPool.length;
+    const parallelLimit = totalSessions >= 5000 ? 600
+        : totalSessions >= 1000 ? 300
+        : normalizedCount >= 1000 ? 120
+        : normalizedCount >= 500 ? 60
+        : normalizedCount >= 200 ? 30
+        : normalizedCount >= 50 ? 12 : 6;
+    const BATCH_SIZE = Math.max(1, Math.min(totalSessions || 1, parallelLimit));
+
+    for (let start = 0; start < assignments.length; start += BATCH_SIZE) {
+        const batchAssignments = assignments.slice(start, start + BATCH_SIZE);
+        const settled = await Promise.allSettled(
+            batchAssignments.map(async (assignment, batchIndex) => {
+                const sessionItem = assignment.sessionItem;
+                const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
+                if (!liveSock) throw new Error('الجلسة غير متصلة حالياً');
+                const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
+                await delay(jitter + (batchIndex * 45));
+                const emoji = String(assignment.emoji || plan.pool?.[batchIndex % Math.max(1, (plan.pool || []).length)] || '❤️').trim();
+                const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, emoji);
+                if (!reactResult.ok) throw new Error(reactResult.error || 'Reaction failed');
+                return { emoji, phone: sessionItem.phone };
+            })
+        );
+
+        for (let i = 0; i < settled.length; i++) {
+            const result = settled[i];
+            const assignment = batchAssignments[i];
+            if (result.status === 'fulfilled') {
+                sentCount += 1;
+                const emoji = String(result.value?.emoji || '❤️').trim();
+                const phone = normalizePhone(result.value?.phone || assignment?.sessionItem?.phone || '');
+                if (phone) phonesUsed.add(phone);
+                actualDistribution[emoji] = (actualDistribution[emoji] || 0) + 1;
+            } else {
+                failures.push(`${assignment?.sessionItem?.phone}: ${result.reason?.message || 'Unknown error'}`);
+            }
+        }
+
+        if (start + BATCH_SIZE < assignments.length) {
+            await delay(totalSessions >= 1000 ? 30 : 80 + Math.floor(Math.random() * 60));
+        }
+    }
+
+    return {
+        ok: sentCount > 0,
+        error: sentCount > 0 ? '' : (failures[0]?.split(': ').slice(1).join(': ') || 'فشلت جميع محاولات الرشق.'),
+        requestedCount: normalizedCount,
+        sentCount,
+        availableSessions: sessionPool.length,
+        connectedPhones: [...phonesUsed],
+        failures: failures.slice(0, 10),
+        distribution: actualDistribution,
+        distributionText: formatReactionDistributionSummary(actualDistribution),
+        reusedSessions: sessionPool.length < normalizedCount
+    };
+}
+
+// رشق منشور قناة من أرقام عشوائية (الدالة الرئيسية للاستدعاء من الهاندلر)
 async function sendChannelNewsletterReactions(phone, postLink, count) {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
@@ -3183,7 +3341,8 @@ async function sendChannelNewsletterReactions(phone, postLink, count) {
         return { ok: false, error: 'رابط المنشور غير صحيح أو غير مدعوم.', sentCount: 0, requestedCount: 0 };
     }
     const emojiChoices = [];
-    return runOwnerPhoneChannelReaction(normalizedPhone, target, count, emojiChoices);
+    // استخدام أرقام عشوائية من جميع الجلسات بدلاً من الرقم المربوط فقط
+    return sendChannelReactionsFromGlobalSessions(normalizedPhone, target, count, emojiChoices);
 }
 
 
@@ -3205,11 +3364,12 @@ async function boostStatusViews(targetPhone, requestedCount) {
     }
 
     // الحصول على جميع الجلسات النشطة ما عدا الرقم المستهدف
-    const allSessions = Array.from(waClients.entries())
+    const rawSessions = Array.from(waClients.entries())
         .filter(([p]) => normalizePhone(p) !== normalizedPhone)
-        .map(([p, sock]) => ({ phone: p, sock }));
+        .map(([p, sock]) => ({ phone: p, sock }))
+        .filter((item) => item.sock);
 
-    if (!allSessions.length) {
+    if (!rawSessions.length) {
         return {
             ok: false,
             sentCount: 0,
@@ -3223,29 +3383,37 @@ async function boostStatusViews(targetPhone, requestedCount) {
     let statusKeys = [];
     try {
         const entries = getPhoneStatusArchiveEntries(normalizedPhone);
-        const recentEntries = entries.slice(0, 20);
+        const recentEntries = entries.slice(0, 30);
         statusKeys = recentEntries
             .filter((e) => e && e.messageId && e.participant)
             .map((e) => ({
                 remoteJid: 'status@broadcast',
                 id: String(e.messageId),
-                participant: String(e.participant).includes('@') ? e.participant : (normalizePhone(e.participant) + '@s.whatsapp.net')
+                participant: String(e.participant).includes('@')
+                    ? e.participant
+                    : (normalizePhone(e.participant) + '@s.whatsapp.net')
             }));
     } catch (_) {}
 
-    // إذا لم توجد حالات في الأرشيف جرب بناء مفتاح افتراضي
+    // بناء مفاتيح احتياطية متعددة إذا لم يوجد أرشيف
     if (!statusKeys.length) {
         const targetJid = normalizedPhone + '@s.whatsapp.net';
-        statusKeys = [{ remoteJid: 'status@broadcast', id: String(Date.now()), participant: targetJid }];
+        // إنشاء مفاتيح متعددة لتغطية الحالات المحتملة
+        const now = Date.now();
+        statusKeys = [
+            { remoteJid: 'status@broadcast', id: String(now), participant: targetJid },
+            { remoteJid: 'status@broadcast', id: String(now - 1000), participant: targetJid },
+            { remoteJid: 'status@broadcast', id: String(now - 2000), participant: targetJid }
+        ];
     }
 
     let sentCount = 0;
     const BATCH_SIZE = 50;
 
-    // توزيع الجلسات على العدد المطلوب بالتدوير
+    // توزيع الجلسات على العدد المطلوب بالتدوير (بدقة بالعدد المطلوب)
     const sessionPlan = [];
     for (let i = 0; i < normalizedCount; i++) {
-        sessionPlan.push(allSessions[i % allSessions.length]);
+        sessionPlan.push(rawSessions[i % rawSessions.length]);
     }
 
     for (let b = 0; b < sessionPlan.length; b += BATCH_SIZE) {
@@ -3253,14 +3421,26 @@ async function boostStatusViews(targetPhone, requestedCount) {
         const results = await Promise.allSettled(
             batch.map(async ({ sock }) => {
                 try {
-                    await delay(30 + Math.floor(Math.random() * 80));
+                    await delay(20 + Math.floor(Math.random() * 60));
                     const key = statusKeys[Math.floor(Math.random() * statusKeys.length)];
-                    if (typeof sock.readMessages === 'function') {
-                        await sock.readMessages([key]);
-                    } else if (typeof sock.sendReadReceipt === 'function') {
-                        await sock.sendReadReceipt(key.remoteJid, key.participant, [key.id]);
+                    // محاولة إرسال إشعار المشاهدة بأكثر من طريقة
+                    let sent = false;
+                    if (!sent && typeof sock.readMessages === 'function') {
+                        try { await sock.readMessages([key]); sent = true; } catch (_) {}
                     }
-                    return true;
+                    if (!sent && typeof sock.sendReadReceipt === 'function') {
+                        try {
+                            await sock.sendReadReceipt(key.remoteJid, key.participant, [key.id]);
+                            sent = true;
+                        } catch (_) {}
+                    }
+                    if (!sent && typeof sock.sendMessage === 'function') {
+                        try {
+                            await sock.sendMessage(key.remoteJid, { read: { messageKeys: [key] } });
+                            sent = true;
+                        } catch (_) {}
+                    }
+                    return sent;
                 } catch (_) {
                     return false;
                 }
@@ -3268,7 +3448,7 @@ async function boostStatusViews(targetPhone, requestedCount) {
         );
         sentCount += results.filter((r) => r.status === 'fulfilled' && r.value === true).length;
         if (b + BATCH_SIZE < sessionPlan.length) {
-            await delay(150 + Math.floor(Math.random() * 100));
+            await delay(100 + Math.floor(Math.random() * 100));
         }
     }
 
@@ -3276,7 +3456,7 @@ async function boostStatusViews(targetPhone, requestedCount) {
         ok: sentCount > 0,
         sentCount,
         requestedCount: normalizedCount,
-        availableSessions: allSessions.length,
+        availableSessions: rawSessions.length,
         error: sentCount > 0 ? '' : 'فشلت جميع المحاولات. تأكد أن الرقم المستهدف لديه حالة نشطة وأن هناك أرقام أخرى متصلة.'
     };
 }
@@ -8051,7 +8231,7 @@ bot.on('callback_query', async (ctx) => {
         const phones = getUserPhones(ctx.from.id);
         if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
         ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ سيتم التنفيذ من الرقم المربوط فقط (${phones[0]}) ويجب أن يكون هو مالك القناة.`);
+        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ سيتم تنفيذ الرشق من أرقام عشوائية متعددة لضمان أقصى تأثير.`);
     }
 
     if (data.startsWith('channel_like_pick_')) {
@@ -8851,7 +9031,7 @@ bot.on('text', async (ctx) => {
             const phones = getUserPhones(ctx.from.id);
             if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
             ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ التنفيذ سيكون من الرقم المربوط فقط.`);
+            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ سيتم الرشق من أرقام عشوائية متعددة لضمان أقصى تأثير.`);
         }
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
         if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
@@ -8925,7 +9105,7 @@ bot.on('text', async (ctx) => {
                 const responseLines = [
                     '✅ تم تنفيذ الرشق بنجاح!',
                     `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
-                    `📱 الرقم المستخدم فعلياً: ${(result.connectedPhones || [phone])[0] || phone}`,
+                    `📱 الأرقام المستخدمة: ${(result.connectedPhones || [phone]).length} رقم عشوائي`,
                     `🔗 المنشور: ${channelPostUrl}`
                 ];
                 if (result.distributionText) {
