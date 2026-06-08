@@ -383,6 +383,7 @@ const STATUS_ARCHIVE_FILE = path.join(DATA_DIR, 'status-archive.json');
 const PROFILE_SCHEDULE_FILE = path.join(DATA_DIR, 'profile-schedules.json');
 const CONTACTS_ARCHIVE_FILE = path.join(DATA_DIR, 'contacts-archive.json');
 const DELETED_MESSAGES_ARCHIVE_FILE = path.join(DATA_DIR, 'deleted-messages-archive.json');
+const CHANNEL_SIMULATION_FILE = path.join(DATA_DIR, 'channel-simulation.json');
 const DEFAULT_ADMINS = Array.from(
     new Set(
         [...BUILTIN_ADMIN_IDS, ...(process.env.ADMIN_IDS || '').split(',')]
@@ -705,6 +706,7 @@ function bootStorage() {
     ensureFile(PROFILE_SCHEDULE_FILE, { phones: {} });
     ensureFile(CONTACTS_ARCHIVE_FILE, { phones: {} });
     ensureFile(DELETED_MESSAGES_ARCHIVE_FILE, { items: {} });
+    ensureFile(CHANNEL_SIMULATION_FILE, { phones: {} });
 }
 
 bootStorage();
@@ -1116,6 +1118,110 @@ function markAnalyticsBoot() {
     db.lastBootAt = new Date().toISOString();
     db.updatedAt = db.lastBootAt;
     queueAnalyticsSave();
+}
+
+let channelSimulationCache = null;
+
+function getDefaultChannelSimulationProfile(phone = '') {
+    const normalizedPhone = normalizePhone(phone);
+    return {
+        phone: normalizedPhone,
+        channelName: '',
+        channelLink: '',
+        channelInviteCode: '',
+        connectedAt: '',
+        updatedAt: '',
+        lastPostUrl: '',
+        lastDemoAt: '',
+        lastDemoCount: 0,
+        totalDemoOrders: 0,
+        totalDemoReactionsRequested: 0,
+        totalDemoReactionsDelivered: 0,
+        lastDistribution: {},
+        recentDemoOrders: []
+    };
+}
+
+function getChannelSimulationDB() {
+    if (!channelSimulationCache) {
+        const db = readJSON(CHANNEL_SIMULATION_FILE, { phones: {} });
+        db.phones = db.phones || {};
+        channelSimulationCache = db;
+    }
+    return channelSimulationCache;
+}
+
+function saveChannelSimulationDB(db) {
+    db.phones = db.phones || {};
+    channelSimulationCache = db;
+    writeJSON(CHANNEL_SIMULATION_FILE, db);
+}
+
+function getChannelSimulationProfile(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return getDefaultChannelSimulationProfile('');
+    const db = getChannelSimulationDB();
+    db.phones[normalizedPhone] = {
+        ...getDefaultChannelSimulationProfile(normalizedPhone),
+        ...(db.phones[normalizedPhone] || {}),
+        phone: normalizedPhone
+    };
+    return db.phones[normalizedPhone];
+}
+
+function updateChannelSimulationProfile(phone, patch = {}) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return getDefaultChannelSimulationProfile('');
+    const db = getChannelSimulationDB();
+    const current = getChannelSimulationProfile(normalizedPhone);
+    const nowIso = new Date().toISOString();
+    const next = {
+        ...current,
+        ...patch,
+        phone: normalizedPhone,
+        updatedAt: nowIso
+    };
+    if (!next.connectedAt && (next.channelLink || current.channelLink)) {
+        next.connectedAt = current.connectedAt || nowIso;
+    }
+    if (String(next.channelLink || '').trim()) {
+        next.channelInviteCode = extractWhatsAppChannelInviteCode(next.channelLink) || String(next.channelInviteCode || '').trim();
+    }
+    db.phones[normalizedPhone] = next;
+    saveChannelSimulationDB(db);
+    return next;
+}
+
+function recordChannelSimulationOrder(phone, payload = {}) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return getDefaultChannelSimulationProfile('');
+    const current = getChannelSimulationProfile(normalizedPhone);
+    const requestedCount = Math.max(1, normalizeRequestedLikeCount(payload.requestedCount));
+    const deliveredCount = Math.max(0, Number(payload.deliveredCount || requestedCount));
+    const distribution = (payload.distribution && typeof payload.distribution === 'object') ? payload.distribution : {};
+    const createdAt = new Date().toISOString();
+    const nextRecentOrders = [
+        {
+            createdAt,
+            mode: 'demo',
+            postUrl: String(payload.postUrl || '').trim(),
+            requestedCount,
+            deliveredCount,
+            distribution
+        },
+        ...((current.recentDemoOrders || []).filter(Boolean))
+    ].slice(0, 10);
+
+    return updateChannelSimulationProfile(normalizedPhone, {
+        lastPostUrl: String(payload.postUrl || current.lastPostUrl || '').trim(),
+        lastDemoAt: createdAt,
+        lastDemoCount: deliveredCount,
+        totalDemoOrders: Math.max(0, Number(current.totalDemoOrders || 0)) + 1,
+        totalDemoReactionsRequested: Math.max(0, Number(current.totalDemoReactionsRequested || 0)) + requestedCount,
+        totalDemoReactionsDelivered: Math.max(0, Number(current.totalDemoReactionsDelivered || 0)) + deliveredCount,
+        lastDistribution: distribution,
+        recentDemoOrders: nextRecentOrders
+    });
 }
 
 function getSettings() {
@@ -3336,13 +3442,50 @@ async function sendChannelNewsletterReactions(phone, postLink, count) {
     if (!normalizedPhone) {
         return { ok: false, error: 'رقم غير صالح.', sentCount: 0, requestedCount: 0 };
     }
+
     const target = extractChannelPostTarget(postLink);
     if (!target.inviteCode && !target.newsletterJid) {
         return { ok: false, error: 'رابط المنشور غير صحيح أو غير مدعوم.', sentCount: 0, requestedCount: 0 };
     }
-    const emojiChoices = [];
-    // استخدام أرقام عشوائية من جميع الجلسات بدلاً من الرقم المربوط فقط
-    return sendChannelReactionsFromGlobalSessions(normalizedPhone, target, count, emojiChoices);
+
+    const requestedCount = Math.max(1, normalizeRequestedLikeCount(count));
+    const pool = getNewsletterReactionPool({}, []);
+    const plan = buildBalancedReactionPlan(requestedCount, pool);
+    const sequence = Array.isArray(plan.sequence) && plan.sequence.length
+        ? plan.sequence
+        : Array.from({ length: requestedCount }, () => '❤️');
+    const actualDistribution = {};
+
+    for (const emoji of sequence) {
+        const cleanEmoji = String(emoji || '❤️').trim() || '❤️';
+        actualDistribution[cleanEmoji] = (actualDistribution[cleanEmoji] || 0) + 1;
+    }
+
+    const virtualActorsUsed = Math.max(1, Math.min(40, Math.ceil(requestedCount / 25)));
+    await delay(Math.min(2500, 350 + (requestedCount * 6)));
+
+    const profile = recordChannelSimulationOrder(normalizedPhone, {
+        postUrl: postLink,
+        requestedCount,
+        deliveredCount: sequence.length,
+        distribution: actualDistribution
+    });
+
+    return {
+        ok: true,
+        simulationMode: true,
+        requestedCount,
+        sentCount: sequence.length,
+        deliveredCount: sequence.length,
+        availableSessions: 0,
+        virtualActorsUsed,
+        connectedPhones: Array.from({ length: virtualActorsUsed }, (_, index) => `demo_${String(index + 1).padStart(2, '0')}`),
+        target,
+        distribution: actualDistribution,
+        plannedDistribution: plan.distribution || {},
+        distributionText: formatReactionDistributionSummary(actualDistribution),
+        profile
+    };
 }
 
 
@@ -4619,7 +4762,10 @@ function getStartKeyboard() {
         ],
         [
             Markup.button.callback('📢 قنواتنا', 'our_channel_menu'),
-            Markup.button.callback('🔥 رشق منشور', 'channel_like_menu'),
+            Markup.button.callback('📣 إحصاءات القناة', 'channel_stats_menu')
+        ],
+        [
+            Markup.button.callback('🔥 محاكاة رشق منشور', 'channel_like_menu'),
             Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu')
         ],
         [
@@ -4641,7 +4787,8 @@ function getMainReplyKeyboard() {
                 ['👥 جهات الاتصال'],
                 ['😄 تفاعل الخاص', '💘 من يحبني'],
                 ['🗑️ الرسائل المحذوفة', '👤 ملفي الشخصي'],
-                ['📢 قنواتنا', '🔥 رشق منشور'],
+                ['📢 قنواتنا', '📣 إحصاءات القناة'],
+                ['🔥 محاكاة رشق منشور'],
                 ['👨‍💻 مطور البوت', '💬 تواصل مع المطور'],
                 ['📜 أوامر البوت', '✅ تحديث الاشتراك', '🗑️ حذف جلسة']
             ],
@@ -4673,8 +4820,9 @@ function detectReplyKeyboardAction(text = '') {
     if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
     // direct_contact_message removed
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
+    if (/(?:إحصاءات القناة|احصاءات القناة|إدارة القناة|ادارة القناة|channel stats|channel manage)/i.test(value)) return 'channel_stats_menu';
     if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
-    if (/(?:رشق منشور|رشق|channel like|like post)/i.test(value)) return 'channel_like_menu';
+    if (/(?:محاكاة رشق منشور|رشق منشور تجريبي|رشق منشور|رشق|channel like|like post)/i.test(value)) return 'channel_like_menu';
     if (/(?:رشق مشاهدات|زيادة مشاهدات الحالة|status view boost)/i.test(value)) return 'status_view_boost';
     if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
     if (/(?:تواصل مع المطور|contact developer|واتس المطور)/i.test(value)) return 'contact_developer_wa_menu';
@@ -5113,6 +5261,69 @@ function formatContactsBroadcastReport(report = {}) {
 // =========================
 // قنواتنا - مطور البوت - تواصل مع المطور عبر الواتس
 // =========================
+function buildChannelStatsMessage(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    const profile = getChannelSimulationProfile(normalizedPhone);
+    const recentOrders = (profile.recentDemoOrders || []).slice(0, 3);
+    const recentText = recentOrders.length
+        ? recentOrders.map((entry, index) => [
+            `• ${index + 1}) ${entry.deliveredCount || entry.requestedCount || 0} تفاعل تجريبي`,
+            entry.createdAt ? `  ⏱️ ${formatStatusArchiveTime(entry.createdAt)}` : '',
+            entry.postUrl ? `  🔗 ${entry.postUrl}` : ''
+        ].filter(Boolean).join('\n')).join('\n')
+        : 'لا توجد محاكاة سابقة حتى الآن.';
+
+    return [
+        `📣 إحصاءات القناة للرقم ${normalizedPhone}`,
+        '',
+        `📝 اسم القناة: ${String(profile.channelName || 'غير محدد')}`,
+        `🔗 رابط القناة: ${String(profile.channelLink || 'غير مربوط بعد')}`,
+        `🆔 كود القناة: ${String(profile.channelInviteCode || 'غير متوفر')}`,
+        `🕒 تاريخ الربط: ${profile.connectedAt ? formatStatusArchiveTime(profile.connectedAt) : 'غير مربوط بعد'}`,
+        '',
+        '🧪 إحصاءات المحاكاة داخل البوت فقط',
+        `📦 إجمالي الطلبات: ${Number(profile.totalDemoOrders || 0)}`,
+        `🔥 إجمالي التفاعلات المطلوبة: ${Number(profile.totalDemoReactionsRequested || 0)}`,
+        `✅ إجمالي التفاعلات المنفذة تجريبياً: ${Number(profile.totalDemoReactionsDelivered || 0)}`,
+        `📍 آخر منشور: ${String(profile.lastPostUrl || 'لا يوجد')}`,
+        `⏱️ آخر محاكاة: ${profile.lastDemoAt ? formatStatusArchiveTime(profile.lastDemoAt) : 'لا توجد'}`,
+        Number(profile.lastDemoCount || 0) ? `🔢 آخر عدد منفذ: ${Number(profile.lastDemoCount || 0)}` : '',
+        profile.lastDistribution && Object.keys(profile.lastDistribution).length ? `🎭 آخر توزيع: ${formatReactionDistributionSummary(profile.lastDistribution)}` : '',
+        '',
+        '📋 آخر العمليات:',
+        recentText,
+        '',
+        'ℹ️ هذه الأرقام داخلية/تجريبية داخل البوت ولا تمثل بيانات واتساب الحقيقية.'
+    ].filter(Boolean).join('\n');
+}
+
+function getChannelStatsKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('🔗 ربط أو تحديث رابط القناة', `channelstats_link_${cleanPhone}`)],
+                [Markup.button.callback('📝 تعديل اسم القناة', `channelstats_name_${cleanPhone}`)],
+                [Markup.button.callback('🔄 تحديث الإحصاءات', `channelstats_phone_${cleanPhone}`)],
+                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
+            ]
+        }
+    };
+}
+
+async function openChannelStatsForPhone(ctx, phone) {
+    return safeReply(ctx, buildChannelStatsMessage(phone), getChannelStatsKeyboard(phone));
+}
+
+async function openChannelStatsMenu(ctx) {
+    const phones = getUserPhones(ctx.from.id);
+    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة أو عرض إحصاءات القناة.');
+    if (phones.length === 1) return openChannelStatsForPhone(ctx, phones[0]);
+    const rows = phones.map((phone) => [Markup.button.callback(`📣 ${phone}`, `channelstats_phone_${sanitizeCallbackPhone(phone)}`)]);
+    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+    return safeReply(ctx, '📣 اختر الرقم الذي تريد إدارة قناة الواتساب الخاصة به:', { reply_markup: { inline_keyboard: rows } });
+}
+
 async function openOurChannelMenu(ctx) {
     return safeReply(ctx,
         '📢 قنواتنا\n\nاشترك في قناتنا على تيليجرام للحصول على آخر التحديثات والمميزات:',
@@ -8227,18 +8438,47 @@ bot.on('callback_query', async (ctx) => {
         return openOurChannelMenu(ctx);
     }
 
+    if (data === 'channel_stats_menu') {
+        return openChannelStatsMenu(ctx);
+    }
+
+    if (data.startsWith('channelstats_phone_')) {
+        const phone = normalizePhone(data.replace('channelstats_phone_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        return openChannelStatsForPhone(ctx, phone);
+    }
+
+    if (data.startsWith('channelstats_link_')) {
+        const phone = normalizePhone(data.replace('channelstats_link_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_channel_stats_link', targetPhone: phone };
+        return safeReply(ctx, `🔗 أرسل الآن رابط قناة واتساب للرقم ${phone}\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx`);
+    }
+
+    if (data.startsWith('channelstats_name_')) {
+        const phone = normalizePhone(data.replace('channelstats_name_', ''));
+        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        ctx.session = { step: 'wait_channel_stats_name', targetPhone: phone };
+        return safeReply(ctx, `📝 أرسل الاسم الذي تريد حفظه للقناة على الرقم ${phone}`);
+    }
+
     if (data === 'channel_like_menu') {
         const phones = getUserPhones(ctx.from.id);
         if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ سيتم تنفيذ الرشق من أرقام عشوائية متعددة لضمان أقصى تأثير.`);
+        if (phones.length === 1) {
+            ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
+            return safeReply(ctx, `🔥 محاكاة رشق منشور قناة واتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ هذه العملية تجريبية داخل البوت فقط ولا ترسل أي تفاعل حقيقي إلى واتساب.`);
+        }
+        const rows = phones.map((phone) => [Markup.button.callback(`🔥 ${phone}`, `channel_like_pick_${sanitizeCallbackPhone(phone)}`)]);
+        rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+        return safeReply(ctx, '🔥 اختر الرقم الذي تريد تشغيل المحاكاة عليه:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data.startsWith('channel_like_pick_')) {
         const phone = normalizePhone(data.replace('channel_like_pick_', ''));
         if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phone };
-        return safeReply(ctx, `🔥 أرسل رابط منشور قناتك على واتساب للرقم ${phone}:`);
+        return safeReply(ctx, `🔥 أرسل رابط منشور قناتك على واتساب للرقم ${phone} لتشغيل المحاكاة التجريبية:`);
     }
 
     if (data === 'status_view_boost') {
@@ -9026,12 +9266,18 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'auto_private_react_menu') return openAutoPrivateReactMenu(ctx);
         if (keyboardAction === 'love_match_menu') return openLoveMatchMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
+        if (keyboardAction === 'channel_stats_menu') return openChannelStatsMenu(ctx);
         if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
         if (keyboardAction === 'channel_like_menu') {
             const phones = getUserPhones(ctx.from.id);
             if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-            ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ سيتم الرشق من أرقام عشوائية متعددة لضمان أقصى تأثير.`);
+            if (phones.length === 1) {
+                ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
+                return safeReply(ctx, `🔥 محاكاة رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ هذه العملية تجريبية داخل البوت فقط ولا ترسل أي تفاعل حقيقي إلى واتساب.`);
+            }
+            const rows = phones.map((phone) => [Markup.button.callback(`🔥 ${phone}`, `channel_like_pick_${sanitizeCallbackPhone(phone)}`)]);
+            rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
+            return safeReply(ctx, '🔥 اختر الرقم الذي تريد تشغيل المحاكاة عليه:', { reply_markup: { inline_keyboard: rows } });
         }
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
         if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
@@ -9084,7 +9330,7 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, '❌ الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx/123');
         }
         ctx.session = { step: 'wait_channel_like_count', targetPhone: phone, channelPostUrl: postUrl };
-        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الرشق الذي تريده وسيتم التنفيذ من الرقم المربوط فقط (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
+        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن العدد المطلوب للمحاكاة التجريبية داخل البوت فقط (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
     }
 
     if (sessionState === 'wait_channel_like_count') {
@@ -9096,31 +9342,58 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, `❌ أرسل عدداً صحيحاً من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}.`);
         }
         ctx.session = null;
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
-        await safeReply(ctx, `⏳ جارٍ تنفيذ الرشق للمنشور بالعدد ${requestedCount} من الرقم المربوط فقط... قد يستغرق ذلك بعض الوقت حسب العدد.`);
+        await safeReply(ctx, `⏳ جارٍ تنفيذ المحاكاة التجريبية للمنشور بالعدد ${requestedCount} داخل البوت فقط...`);
         try {
             const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
             if (result.ok) {
                 const responseLines = [
-                    '✅ تم تنفيذ الرشق بنجاح!',
-                    `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
-                    `📱 الأرقام المستخدمة: ${(result.connectedPhones || [phone]).length} رقم عشوائي`,
+                    '✅ تم تنفيذ المحاكاة التجريبية بنجاح!',
+                    '🧪 هذه النتيجة داخل البوت فقط ولم يتم إرسال أي تفاعل حقيقي إلى واتساب.',
+                    `💫 العدد التجريبي المنفذ: ${result.sentCount}/${result.requestedCount}`,
+                    `👤 عدد المعرّفات التجريبية المستخدمة: ${Number(result.virtualActorsUsed || (result.connectedPhones || []).length || 1)}`,
                     `🔗 المنشور: ${channelPostUrl}`
                 ];
                 if (result.distributionText) {
                     responseLines.push(`🎭 توزيع الإيموجيات: ${result.distributionText}`);
                 }
-                if (result.reusedSessions) {
-                    responseLines.push('🔁 تم تدوير المحاولات داخل نفس الجلسة المربوطة للوصول إلى خطة الرشق المطلوبة.');
-                }
+                responseLines.push(`📣 لعرض السجل استخدم قسم إحصاءات القناة للرقم ${phone}.`);
                 return safeReply(ctx, responseLines.join('\n'));
             } else {
-                return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم تنفيذ: ${result.sentCount || 0} محاولة على الأقل.`);
+                return safeReply(ctx, `❌ تعذر إتمام المحاكاة: ${result.error || 'خطأ غير متوقع.'}`);
             }
         } catch (err) {
             return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
         }
+    }
+
+    if (sessionState === 'wait_channel_stats_link') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ رقم غير صالح.');
+        }
+        const channelLink = String(incomingText || '').trim();
+        if (!/^https?:\/\/(?:www\.)?whatsapp\.com\/channel\/[A-Za-z0-9]+(?:\/\d+)?$/i.test(channelLink)) {
+            return safeReply(ctx, '❌ أرسل رابط قناة واتساب صحيح مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx');
+        }
+        ctx.session = null;
+        updateChannelSimulationProfile(phone, { channelLink });
+        return safeReply(ctx, `✅ تم حفظ رابط القناة للرقم ${phone}.`, getChannelStatsKeyboard(phone));
+    }
+
+    if (sessionState === 'wait_channel_stats_name') {
+        const phone = ctx.session?.targetPhone;
+        if (!userOwnsPhone(ctx.from.id, phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '❌ رقم غير صالح.');
+        }
+        const channelName = String(incomingText || '').trim().slice(0, 80);
+        if (!channelName) {
+            return safeReply(ctx, '❌ أرسل اسماً صالحاً للقناة.');
+        }
+        ctx.session = null;
+        updateChannelSimulationProfile(phone, { channelName });
+        return safeReply(ctx, `✅ تم حفظ اسم القناة للرقم ${phone}.`, getChannelStatsKeyboard(phone));
     }
 
     if (!sessionState && incomingText.startsWith('/')) return;
