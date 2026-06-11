@@ -728,8 +728,53 @@ function buildNumberVariants(raw) {
   return [...new Set(variants.filter(Boolean))];
 }
 
+function extractValueByKnownKeys(payload, keysPriority) {
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = extractValueByKnownKeys(item, keysPriority);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  for (const key of keysPriority) {
+    const value = payload[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+
+    const nested = extractValueByKnownKeys(value, keysPriority);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  for (const value of Object.values(payload)) {
+    const nested = extractValueByKnownKeys(value, keysPriority);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
 function findCodeInPayload(payload) {
-  const keysPriority = [
+  return extractValueByKnownKeys(payload, [
     'pair_code',
     'pairing_code',
     'pairingCode',
@@ -737,42 +782,17 @@ function findCodeInPayload(payload) {
     'link_code',
     'linkCode',
     'authorizationCode',
-    'authCode',
-    'message'
-  ];
+    'authCode'
+  ]);
+}
 
-  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    for (const key of keysPriority) {
-      const value = payload[key];
-      if (value !== undefined && value !== null && String(value).trim()) {
-        return String(value).trim();
-      }
-    }
-    for (const value of Object.values(payload)) {
-      const found = findCodeInPayload(value);
-      if (found) {
-        return found;
-      }
-    }
-  }
-
-  if (Array.isArray(payload)) {
-    for (const item of payload) {
-      const found = findCodeInPayload(item);
-      if (found) {
-        return found;
-      }
-    }
-  }
-
-  if (typeof payload === 'string') {
-    const stripped = payload.trim();
-    if (stripped && stripped.length <= 128) {
-      return stripped;
-    }
-  }
-
-  return null;
+function findErrorMessageInPayload(payload) {
+  return extractValueByKnownKeys(payload, [
+    'message',
+    'error',
+    'details',
+    'description'
+  ]);
 }
 
 function resolvePairCodeApiUrl() {
@@ -824,11 +844,26 @@ async function requestPairCode(number) {
 
       const contentType = String(response.headers['content-type'] || '').toLowerCase();
       if (contentType.includes('application/json')) {
-        const code = findCodeInPayload(response.data);
+        const data = response.data;
+
+        if (data && typeof data === 'object' && data.ok === true && data.service === 'telegram-bot') {
+          lastError = new Error('رابط خدمة الربط يشير إلى سيرفر البوت أو health check بدل endpoint الصحيح لاستخراج كود واتساب. اضبط PAIR_CODE_API_URL على endpoint getAuthorizationCode الصحيح.');
+          continue;
+        }
+
+        if (data && typeof data === 'object' && data.status === false) {
+          const errorText = findErrorMessageInPayload(data) || `تعذّر الحصول على كود الربط للرقم ${cleanNumber}.`;
+          lastError = new Error(errorText);
+          continue;
+        }
+
+        const code = findCodeInPayload(data);
         if (code) {
           return code;
         }
-        lastError = new Error(`لم يتم العثور على كود داخل الاستجابة للرقم ${numberVariant}`);
+
+        const errorText = findErrorMessageInPayload(data);
+        lastError = new Error(errorText || `استجابة JSON لا تحتوي على حقل كود صالح للرقم ${numberVariant}`);
         continue;
       }
 
@@ -836,11 +871,11 @@ async function requestPairCode(number) {
         ? response.data.trim()
         : stringifyPayload(response.data || '').trim();
 
-      if (text) {
+      if (text && text.length <= 64 && !/[{}<>\n\r]/.test(text)) {
         return text;
       }
 
-      lastError = new Error(`الاستجابة فارغة للرقم ${numberVariant}`);
+      lastError = new Error(`الاستجابة لا تحتوي على كود صالح للرقم ${numberVariant}`);
     } catch (error) {
       const message = error?.name === 'AbortError'
         ? 'انتهت مهلة الاتصال بخدمة الربط.'
