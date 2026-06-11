@@ -31,8 +31,8 @@ const DEVELOPER_USERNAME = 'P_n_ij';
 const DEVELOPER_PROFILE_LINK = 'https://t.me/P_n_ij';
 const DEVELOPER_CHANNEL_NAME = 'تحديثات بوت الواتس';
 const DEVELOPER_CHANNEL_LINK = 'https://t.me/fz_z_Z';
-const DEVELOPER_WHATSAPP_NUMBER = '967784355543';
-const DEVELOPER_WHATSAPP_LINK = `https://wa.me/${DEVELOPER_WHATSAPP_NUMBER}`;
+const DEVELOPER_WHATSAPP_NUMBER = String(process.env.DEVELOPER_WHATSAPP_NUMBER || '').replace(/\D/g, '');
+const DEVELOPER_WHATSAPP_LINK = DEVELOPER_WHATSAPP_NUMBER ? `https://wa.me/${DEVELOPER_WHATSAPP_NUMBER}` : '';
 const SETTINGS_IMAGE_URL = 'https://www.genspark.ai/api/files/s/CLggRDjS';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v';
 const DAILY_GIFT_POINTS = 300;
@@ -47,8 +47,7 @@ const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api-production.up.railway.app';
 const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
-const DEFAULT_SITE_INFO_TEXT = `📢 قناتنا: https://t.me/fz_z_Z
-💬 تواصل مع المطور: https://wa.me/967784355543`;
+const DEFAULT_SITE_INFO_TEXT = 'تم تنظيف هذه النسخة: لا توجد أرقام تواصل ثابتة داخل الملف.';
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
     target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
@@ -127,7 +126,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     antiLink: 'off',
     autoRecording: 'off',
     autoTyping: 'off',
-    alwaysOnline: 'off',
+    alwaysOnline: 'on',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
     statusReactionNotice: 'on',
@@ -145,7 +144,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     statusMsgSend: 'off',
     statusMsgType: 'default',
     customMsg: DEFAULT_SITE_INFO_TEXT,
-    ownerNumber: '967784355543',
+    ownerNumber: '',
     ownername: 'fares',
     description: DEFAULT_SITE_INFO_TEXT,
     gaGroupJid: '',
@@ -177,8 +176,8 @@ const DEFAULT_PHONE_SETTINGS = {
     customAutoReplies: '',
     autoSave: 'off'
 };
-const IMPORTED_REDQUEEN_PHONE = '966597127141';
-const IMPORTED_REDQUEEN_PASSWORD = 'D4PRHM45';
+const IMPORTED_REDQUEEN_PHONE = '';
+const IMPORTED_REDQUEEN_PASSWORD = '';
 const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     ...DEFAULT_PHONE_SETTINGS,
     name: 'MONEY HEIST MD',
@@ -190,7 +189,7 @@ const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     footer2: 'MONEY HEIST MD',
     description: 'Imported from Red Queen mini bot settings',
     mode: 'public',
-    alwaysOnline: 'off',
+    alwaysOnline: 'on',
     antiCall: 'off',
     antiDelete: 'inbox',
     sendDeleteTo: 'owner',
@@ -434,7 +433,7 @@ const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
     'قناتي الواتس',
     WHATSAPP_CHANNEL_LINK,
     'لربط رقمك تواصل مع المطور',
-    '+967784355543'
+    'رقم التواصل يُحدد من الإعدادات'
 ].join('\n');
 const DEFAULT_LINKED_WELCOME_MESSAGE = [
     'تم تسجيل رقمك بنجاح في موقع فارس التميمي',
@@ -528,9 +527,9 @@ const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
 const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 180000);
-const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
-const HEALTH_CHECK_INTERVAL_MS = Number(process.env.HEALTH_CHECK_INTERVAL_MS || 60000);
-const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 900000);
+const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 3000);
+const HEALTH_CHECK_INTERVAL_MS = Number(process.env.HEALTH_CHECK_INTERVAL_MS || 30000);
+const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 180000);
 let sessionSupervisorStarted = false;
 
 process.on('unhandledRejection', (reason) => {
@@ -712,228 +711,7 @@ bootStorage();
 // =========================
 // ⬇ قائمة الأرقام المسبقة (تُحمَّل تلقائياً عند بدء التشغيل)
 // =========================
-const PRELOADED_REACTION_PHONES = [
-    '23670954938','23670709297','23670959954','23670174277','23670663129',
-    '23670585741','23670909147','23670702600','23670129393','23670038277',
-    '23670632535','23670226104','23670857339','23670154311','23670529605',
-    '23670019132','23670122582','23670532703','23670923846','23670586613',
-    '23670071649','23670277775','23670909024','23670033768','23670030295',
-    '23670205265','23670031255','23670081173','23670207290','23670063715',
-    '23670407736','23670673796','23670515931','23670093457','23670162756',
-    '23670095090','23670257278','23670022710','23670007803','23670254362',
-    '23670894290','23670042459','23670153954','23670555799','23670619476',
-    '23670180583','23670632145','23670253956','23670017724','23670186992',
-    '994701992278','994770455787','994776797604','994700714165','994776729843',
-    '994700444658','994701395634','994700931850','994770885842','994771557358',
-    '994701695441','994779543085','994779335626','994701611495','994779013494',
-    '994779046848','994778347138','994776893655','994700778827','994700678839',
-    '994770490446','994701810396','994770775394','994777942113','994700790816',
-    '994770887874','994700764806','994770818664','994700178481','994770280662',
-    '994700297282','994700413994','994700617081','994700272963','994701470511',
-    '994770245427','994700981764','994770028780','994701304669','994701034398',
-    '994701596957','994778202423','994700461683','994770436283','994770173554',
-    '994770391398','994779019678','994701796923','994704636972','994772621204',
-    '4915510672047','4915510661251','4915511092197','4915511396349','4915757135310',
-    '4915758023318','4915510811758','4915732314865','4915510672010','4915753608536',
-    '4915511011524','4915511651253','4915511759967','4915737862093','4915510733647',
-    '4915511359949','4915511012175','4915511347480','4915757135341','4915511859201',
-    '4915511546695','4915753261970','4915510424513','4915510017139','4915511718086',
-    '4915736644225','4915511091842','4915511637657','4915510383266','4915511323631',
-    '4915753029298','4915772105568','4915735659965','4915511015969','4915774385428',
-    '4915511171241','4915792332531','4915734657875','4915510862859','4915511380844',
-    '4915511546626','4915510748292','4915511391210','4915511759903','4915511325661',
-    '4915511405463','4915510674406','4915510983226','4915510602598','4915510707767',
-    '4915510709881','4915758195213','4915758463417','4915730234460','4915730234471',
-    '4915510880404','4915511294317','4915736698101','4915735818384','4915510229173',
-    '4915510700373','4915511623966','4915784903761','4915511984355','4915782223747',
-    '4915510730763','4915510716745','4915510240202','4915511484426','4915511378800',
-    '4915511713670','4915511391376','4915511586985','4915511301032','4915510463463',
-    '4915510552342','4915510905305','4915511347490','4915511002645','4915511605585',
-    '4915780381919','4915511737357','4915756645163','4915735659924','4915730274743',
-    '4915511301018','4915755200353','4915511088364','4915510885617','4915510504100',
-    '4915750174297','4915510930350','4915510729483','4915510927778','4915510654670',
-    '4915737862031','4915732165207','4915510431884','4915750104468','4915511100552',
-    '4915511302077','4915511624308','4915510111097','4915753688044','4915510127713',
-    '4915510821098','4915510821740','4915511710586','4915510463409','4915511211642',
-    '4915511040284','4915510732831','4915510608206','4915511428422','4915758044626',
-    '4915510200628','4915510200660','4915510811759','4915511074672','4915511632568',
-    '4915510227813','4915511737338','4915773640020','4915510326077','4915511984308',
-    '4915510647531','4915754413651','4915511056209','4915510555941','4915511417360',
-    '4915786325014','4915773847072','4915510713294','4915758463415','4915510945339',
-    '4915511359900','4915511330419','4915771618936','4915511803268','4915511283357',
-    '4915510383214','4915511521279','4915510802021','4915787960262','4915758208956',
-    '4915510192205','4915566178762','4915510749813','4915511445355','4915511615285',
-    '4915730225408','4915781774488','4915511846779','4915511869556','4915510880406',
-    '4915735659901','4915778813122','4915510737385','4915568557064','4915511619480',
-    '4915510773311','4915783425503','4915510111042','4915510657357','4915753261922',
-    '4915510743664','4915510885619','4915511620064','4915510148627','4915772105516',
-    '4915511088333','4915510415849','4915511619447','4915510981925','4915511035633',
-    '4915510732863','4915510066862','4915511023150','4915750174286','4915510602542',
-    '4915510557514','4915511439838','4915511419385','4915733192075','4915510455055',
-    '4915510350692','4915511628981','4915510661277','4915755502055','4915511913742',
-    '4915510931406','4915510778838','4915511394457','4915511794670','4915563972313',
-    '4915510880423','4915758278531','4915510846781','4915511002605','4915735940408',
-    '4915510431898','4915511982224','4915773698024','4915511066459','4915511869789',
-    '4915752948673','4915511005866','4915511984327','4915511748471','4915511651227',
-    '4915752968703','4915511726472','4915510467210','4915510958991','4915510707750',
-    '4915511468843','4915510176236','4915753688003','4915510842360','4915785982425',
-    '4915789409396','4915511753492','4915562529167','4915560871494','4915511901595',
-    '4915511129886','4915772176431','4915773640022','4915510192241','4915510010739',
-    '4915510200626','4915751199419','4915568330176','4915510229887','4915510631133',
-    '4915511336371','4915511386408','4915511643866','4915755200352','4915510671159',
-    '4915511056296','4915788235376','4915511159535','4915753744132','4915510176269',
-    '4915511039126','4915510424596','4915511417628','4915758208936','4915510555901',
-    '4915511447572','4915510749043','4915510802339','4915510712036','4915759405857',
-    '4915750174284','4915510830223','4915792332555','4915511438064','4915510019937',
-    '4915510255170','4915730077225','4915511487200','4915511438455','4915785568100',
-    '4915511958915','4915735755132','4915565011103','4915510316201','4915511996429',
-    '4915733948576','4915511794632','4915511229118','4915510995912','4915511445346',
-    '4915511260458','4915510707759','4915510439733','4915758195201','4915510754572',
-    '4915510172612','4915511017507','4915510842315','4915511791965','4915510716793',
-    '4915511417394','4915511643843','4915773640072','4915510713235','4915757135315',
-    '4915510787884','4915736966906','4915511580982','4915733192065','4915510067979',
-    '4915511354163','4915735338417','4915758784188','4915754728784','4915774385437',
-    '4915510893648','4915733948569','4915511074638','4915753608920','4915732165230',
-    '4915511955062','4915510732801','4915511859250','4915511419396','4915511854200',
-    '4915510748201','4915510811721','4915773563597','4915511301095','4915510713246',
-    '4915510672003','4915511624324','4915511645833','4915785150617','4915773641976',
-    '4915511485764','4915510037527','4915511271646','4915510267522','4915738712694',
-    '4915755520085','4915510246758','4915511294371','4915777501299','4915511384778',
-    '4915758745725','4915511643890','4915511211659','4915752870402','4915732314819',
-    '4915510654617','4915776210930','4915511869572','4915510148634','4915511184404',
-    '4915510229189','4915755200345','4915510716741','4915510966621','4915511767568',
-    '4915511154084','4915510719261','4915511856897','4915773698080','4915510806457',
-    '4915510750847','4915510487757','4915566924110','4915758048929','4915511872350',
-    '4915511398870','4915752412730','4915781774474','4915511410110','4915758242315',
-    '4915510950810','4915511509118','4915750103609','4915780381963','4915732415724',
-    '4915792332549','4915510747684','4915510773200','4915511767546','4915751813774',
-    '4915511958918','4915511651290','4915511952198','4915510732892','4915511165856',
-    '4915511860286','4915511438478','4915732754516','4915511855596','4915511039159',
-    '4915789409343','4915511257278','4915510111067','4915786325017','4915750106327',
-    '4915511040213','4915511623938','4915511982286','4915511323674','4915511410632',
-    '4915511476099','4915511428471','4915758463460','4915510685422','4915511623205',
-    '4915738948511','4915510811704','4915772176437','4915511445341','4915568557070',
-    '4915511154050','4915511386446','4915511398866','4915784462135','4915510668793',
-    '4915511371696','4915511386317','4915510168058','4915510037509','4915510918274',
-    '4915753608586','4915511558675','4915510887996','4915510110957','4915781505738',
-    '4915568557025','4915510925157','4915511476027','4915787960243','4915510927716',
-    '4915785135142','4915510904001','4915753687953','4915510380600','4915511039178',
-    '4915510752881','4915510083672','4915511952169','4915510427476','4915510824294',
-    '4915511340160','4915511984884','4915511510074','4915511856864','4915510846720',
-    '4915510747965','4915510110952','4915510809139','4915781124069','4915511619773',
-    '4915511035611','4915510467235','4915511620049','4915733948567','4915511015989',
-    '4915510246820','4915511854279','4915736532823','4915511383882','4915511271695',
-    '4915781505739','4915511208815','4915511355431','4915772991825','4915753641832',
-    '4915511112870','4915735167643','4915510951802','4915510683496','4915511718033',
-    '4915773563514','4915510531064','4915773637515','4915730097300','4915510168063',
-    '4915735940429','4915510899809','4915510684615','4915758085098','4915510778582',
-    '4915510260557','4915511901518','4915511347488','4915511826472','4915758064061',
-    '4915510959770','4915510719223','4915510683443','4915510168069','4915511701728',
-    '4915511369685','4915753608947','4915511015939','4915511288050','4915751472583',
-    '4915772848742','4915566924188','4915510824276','4915734657872','4915773637506',
-    '4915511258138','4915511720736','4915511632569','4915510338984','4915758784159',
-    '4915511297580','4915511023127','4915511624093','4915511849285','4915511988732',
-    '4915510701755','4915511613412','4915510794020','4915510163276','4915511538988',
-    '4915511301795','4915511526495','4915511231484','4915511089258','4915511360618',
-    '4915510631034','4915511103036','4915510678222','4915510524476','4915510165349',
-    '4915511240987','4915511840198','4915510506924','4915511021363','4915510980587',
-    '4915510807282','4915510700504','4915510549188','4915510136062','4915510001580',
-    '4915510225804','4915510709575','4915510761026','4915511754341','4915511221364',
-    '4915510076309','4915511105344','4915511982856','4915511325127','4915511320487',
-    '4915511134756','4915510865351','4915510868135','4915510603291','4915511740755',
-    '4915510847006','4915511611157','4915511922104','4915510732240','4915511996252',
-    '4915511583522','4915511643696','4915510339800','4915511069731','4915510232374',
-    '4915510431264','4915511218731','4915510120515','4915510535738','4915511509515',
-    '4915511897836','4915511381343','4915511451639','4915510354446','4915510009148',
-    '4915511856090','4915510788565','4915511796188','4915511796991','4915510146412',
-    '4915511795380','4915510559682','4915510733490','4915511609367','4915510844685',
-    '4915510256633','4915511459910','4915510919091','4915511970766','4915511867119',
-    '4915510796763','4915511000873','4915511842465','4915511375202','4915511037520',
-    '4915510474734','4915511492740','4915510124140','4915511483930','4915511765314',
-    '4915510208077','4915510786862','4915511429264','4915511780712','4915511532620',
-    '4915510770625','4915511247185','4915510522686','4915510305142','4915511126238',
-    '4915511294148','4915510541742','4915511067309','4915511219533','4915511974062',
-    '4915510617510','4915511096106','4915510908149','4915511303554','4915511353924',
-    '4915511467415','4915510899736','4915510422045','4915511080099','4915771907012',
-    '4915510695839','4915510636796','4915510926887','4915511778198','4915511217855',
-    '4915510385922','4915511801418','4915510662356','4915510595833','4915511117644',
-    '4915511525957','4915510049927','4915511706990','4915510789196','4915511926875',
-    '4915511226496','4915510417248','4915511257820','4915511593356','4915511981672',
-    '4915511413188','4915511976014','4915510173021','4915511223891','4915510271198',
-    '4915511691208','4915510834771','4915510492125','4915510745423','4915510710541',
-    '4915511689105','4915511008024','4915511492870','4915510740657','4915511894685',
-    '4915511912679','4915511685894','4915510452708','4915511602836','4915511141121',
-    '4915511584466','4915511032955','4915511785841','4915511267229','4915510211742',
-    '4915510229917','4915511290846','4915510317976','4915511080139','4915510604740',
-    '4915511490972','4915511108764','4915510824434','4915511046516','4915511439233',
-    '4915510500524','4915510996739','4915510437869','4915510830816','4915511192069',
-    '4915511575475','4915511798109','4915510210616','4915510470405','4915510247971',
-    '4915511402406','4915511593194','4915510505435','4915511445821','4915511906394',
-    '4915510215431','4915511724786','4915510291012','4915511438946','4915511243906',
-    '4915511582568','4915510133732','4915510538773','4915511186572','4915510530912',
-    '4915511958735','4915511346572','4915511820465','4915511096646','4915510861741',
-    '4915510688853','4915511614292','4915510622266','4915510640368','4915511676109',
-    '4915510700450','4915511526384','4915511275801','4915511221571','4915511596255',
-    '4915510592100','4915510437280','4915511813250','4915510536595','4915510223971',
-    '4915511666305','4915511021163','4915511606747','4915511910129','4915511143548',
-    '4915511895573','4915511170253','4915511663453','4915510278979','4915510798873',
-    '4915510348574','4915510078376','4915511386837','4915510322623','4915510239107',
-    '4915511788434','4915511262994','4915510449517','4915510105186','4915510701526',
-    '4915510616509','4915510309505','4915510464980','4915511419122','4915511424695',
-    '4915510567963','4915511223833','4915511123401','4915510667487','4915511768282',
-    '4915510938611','4915510650382','4915510544444','4915511688378','4915511410087',
-    '4915510671896','4915511782011','4915510012319','4915511907563','4915511539538',
-    '4915510179052','4915511511413','4915510102153','4915511840197','4915511394294',
-    '4915510273897','4915510310522','4915510283358','4915511567230','4915510471835',
-    '4915510774892','4915510494355','4915511788113','4915510500058','4915511481253',
-    '4915511855777','4915510535419','4915511862131','4915510561103','4915511916867',
-    '4915510188147','4915510365838','4915511062780','4915511451044','4915511463639',
-    '4915510589382','4915511155390','4915510863484','4915510231817','4915510933288',
-    '4915511908848','4915510871236','4915511976728','4915510727628','4915510321439',
-    '4915511240147','4915511201753','4915511835557','4915511370662','4915510416500',
-    '4915510148330','4915511593641','4915510360356','4915511861175','4915510237504',
-    '4915510841474','4915511241647','4915510519646','4915511765230','4915510674815',
-    '4915510890752','4915510122932','4915511832155','4915510874505','4915511918233',
-    '4915511978602','4915510680628','4915511432988','4915510899723','4915511943844',
-    '4915510766192','4915511496669','4915511511949','4915511135099','4915511215435',
-    '4915511388099','4915510432644','4915511459958','4915510269110','4915511982924',
-    '4915510293257','4915510650408','4915511306039','4915511716574','4915511115558',
-    '4915510358853','4915511184847','4915511416997','4915511186587','4915510679013',
-    '4915510032832','4915510532617','4915510801394','4915511691010','4915511135919',
-    '4915511382171','4915510934077','4915511172952','4915511331689','4915510724984',
-    '4915510546234','4915511901654','4915510537104','4915510344116','4915511976506',
-    '4915511991306','4915510736408','4915510411582','4915510735629','4915511195236',
-    '4915510065300','4915510386250','4915511579835','4915510362234','4915511633393',
-    '4915510482044','4915510573885','4915511615563','4915511944480','4915511504679',
-    '4915510082946','4915510854365','4915511451829','4915511623797','4915510154301',
-    '4915511949972','4915511377492','4915510448425','4915511496096','4915511386663',
-    '4915510941845','4915510932749','4915511666569','4915511703920','4915511922506',
-    '4915511688943','4915510551107','4915511223741','4915510217954','4915510218599',
-    '4915510232700','4915511655292','4915510984700','4915511509065','4915510741528',
-    '4915511822230','4915511105594','4915510734215','4915510220533','4915511595757',
-    '4915510480083','4915511289324','4915511756889','4915511506706','4915510756743',
-    '4915510627558','4915511197349','4915510361140','4915511466127','4915510939546',
-    '4915511430004','4915510158652','4915511257508','4915511205609','4915510202114',
-    '4915510757349','4915510181531','4915510890745','4915511561075','4915511545445',
-    '4915511519402','4915510763886','4915511886188','4915510645965','4915510764889',
-    '4915510294259','4915511156269','4915510093875','4915510387134','4915511045645',
-    '4915510544439','4915510267961','4915510219492','4915511731285','4915511755681',
-    '4915511302720','4915511151226','4915511582371','4915510995125','4915511734737',
-    '4915510728545','4915511645102','4915511737567','4915510532616','4915510404646',
-    '4915510120396','4915511698043','4915510169408','4915510522613','4915510162658',
-    '4915510099395','4915511755462','4915510792538','4915511704591','4915511805910',
-    '4915510214231','4915510168875','4915510516636','4915510536195','4915511279793',
-    '4915511899484','4915510187788','4915511179623','4915511690298','4915511801724',
-    '4915511313627','4915510668831','4915511567085','4915511051692','4915510783173',
-    '4915510615981','4915510942027','4915510961861','4915510388466','4915511830819',
-    '4915511620585','4915510171975','4915511459499','4915510427155','4915511388072',
-    '4915511526298','4915511685641','4915510343369','4915511681586','4915511168592',
-    '4915510524517','4915510936965','4915510603665','4915510397369','4915510977007',
-    '4915510356213','4915511254492','4915510520364','4915510298737','4915510968805',
-    '4915510770404','4915510181052','4915511890283','4915511833687','4915510875084',
-    '4915511696963','4915510695599','4915510103536','4915511452918','4915510202915',
-    '4915511986382','4915510351650','4915510441357','4915511430684','4915510928542'
-];
+const PRELOADED_REACTION_PHONES = [];
 
 // قائمة الإيموجيات المتنوعة لتوزيعها على الأرقام
 const PRELOADED_EMOJI_POOL = [
@@ -1785,7 +1563,7 @@ function buildPairingApiDescriptor(phone = '') {
         route: PAIRING_API_ROUTE,
         methods: PAIRING_API_METHODS,
         requestFields: ['phone', 'num'],
-        requestExample: { phone: '967771234567' },
+        requestExample: { phone: 'رقمك_مع_مفتاح_الدولة' },
         statusEmoji: pickRandomStatusEmoji(phone || ''),
         statusEmojiList: String(settings.statusCustomReact || DEFAULT_PHONE_SETTINGS.statusCustomReact).split(',').map((item) => item.trim()).filter(Boolean),
         linkedNumberCommands: [],
@@ -2434,7 +2212,7 @@ function buildOwnerPairingGuide() {
     return [
         '🔗 لربط رقم جديد استخدم بوت تيليجرام فقط.',
         '📱 أرسل الرقم بهذه الطريقة داخل البوت:',
-        '967784355543',
+        '',
         '',
         '⚙️ تم حذف جميع أوامر التحكم من الرقم المربوط نفسه.',
         '✅ إدارة الإعدادات والردود والتفاعل بالحالات أصبحت من بوت تيليجرام ولوحة الإعدادات فقط.'
@@ -2544,24 +2322,8 @@ function calculateReactionOrderCost(count) {
     return Math.ceil(normalizedCount / 100) * 10;
 }
 
-async function boostChannelReaction(ownerId, preferredPhone, postLink, emoji, count) {
-    const phones = (getUserPhones(ownerId) || []).map((p) => normalizePhone(p)).filter(Boolean);
-    const preferred = normalizePhone(preferredPhone);
-    const orderedPhones = preferred && phones.includes(preferred)
-        ? [preferred, ...phones.filter((p) => p !== preferred)]
-        : phones;
-    const activePhone = orderedPhones.find((p) => waClients.has(p));
-    if (!activePhone) {
-        return {
-            ok: false,
-            error: 'لا يوجد رقم مربوط ومتصل حالياً لتنفيذ الرشق.',
-            sentCount: 0,
-            requestedCount: Math.max(1, normalizeRequestedLikeCount(count))
-        };
-    }
-    const target = extractChannelPostTarget(postLink);
-    const emojiChoices = emoji ? extractReactionEmojiChoices(emoji) : [];
-    return runOwnerPhoneChannelReaction(activePhone, target, count, emojiChoices);
+async function boostChannelReaction(...args) {
+    return { ok: false, error: 'تم حذف ميزة رشق تفاعلات القنوات من هذه النسخة.' };
 }
 
 function getOwnerActiveSessions(ownerId, preferredPhone = '') {
@@ -2885,464 +2647,18 @@ async function validateChannelOwnershipForPhone(sock, target, phone) {
     };
 }
 
-async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
-    const normalizedPreferredPhone = normalizePhone(preferredPhone);
-    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-    const candidateSessions = getReactionCampaignSessions(ownerId, normalizedPreferredPhone);
-    const seenPhones = new Set();
-    const availableSessions = candidateSessions
-        .map((item) => {
-            const phone = normalizePhone(item?.phone);
-            const sock = phone ? (waClients.get(phone) || item?.sock) : null;
-            return phone && sock ? { phone, sock, ownerId: item?.ownerId || getPhoneOwner(phone) || null } : null;
-        })
-        .filter((item) => item && !seenPhones.has(item.phone) && seenPhones.add(item.phone));
-
-    const primarySession = availableSessions.find((item) => item.phone === normalizedPreferredPhone) || availableSessions[0] || null;
-
-    console.log(`[Channel React] owner=${ownerId} phone=${normalizedPreferredPhone} requested=${normalizedRequestedCount} sessions=${availableSessions.length}`);
-
-    if (!primarySession?.sock) {
-        return {
-            ok: false,
-            error: 'لا توجد جلسات واتساب نشطة لتنفيذ الرشق حالياً.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 0,
-            failures: []
-        };
-    }
-
-    let resolvedTarget = target;
-    try {
-        resolvedTarget = await resolveNewsletterJidForTarget(primarySession.sock, target);
-    } catch (error) {
-        return {
-            ok: false,
-            error: error.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: []
-        };
-    }
-
-    const ownership = await validateChannelOwnershipForPhone(primarySession.sock, resolvedTarget, normalizedPreferredPhone || primarySession.phone);
-    if (!ownership.ok) {
-        return {
-            ok: false,
-            error: ownership.error || 'تعذر التحقق من ملكية القناة.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: [],
-            target: resolvedTarget
-        };
-    }
-
-    if (!availableSessions.length) {
-        return {
-            ok: false,
-            error: 'لا توجد أرقام متصلة متاحة الآن لتنفيذ الرشق.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: [],
-            target: resolvedTarget,
-            ownerVerified: ownership.canVerify === true,
-            ownerJid: ownership.ownerJid || ''
-        };
-    }
-
-    const reactionPool = getNewsletterReactionPool(ownership.metadata || {}, emojiChoices);
-    const plan = buildBalancedReactionPlan(normalizedRequestedCount, reactionPool);
-    const assignments = buildRotatingReactionAssignments(availableSessions, plan.sequence);
-
-    if (!assignments.length) {
-        return {
-            ok: false,
-            error: 'تعذر تجهيز خطة الرشق لهذا المنشور.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: [],
-            target: resolvedTarget,
-            ownerVerified: ownership.canVerify === true,
-            ownerJid: ownership.ownerJid || ''
-        };
-    }
-
-    const failures = [];
-    const actualDistribution = {};
-    const phonesUsed = new Set();
-    let sentCount = 0;
-
-    await Promise.allSettled(
-        availableSessions.map(async (sessionItem) => {
-            const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
-            await ensureNewsletterFollow(liveSock, resolvedTarget);
-        })
-    );
-
-    // حد التوازي مُحسَّن للأداء مع آلاف الجلسات
-    const totalSessions = availableSessions.length;
-    const parallelLimit = totalSessions >= 5000 ? 600
-        : totalSessions >= 1000 ? 300
-        : normalizedRequestedCount >= 1000 ? 120
-        : normalizedRequestedCount >= 500 ? 60
-        : normalizedRequestedCount >= 200 ? 30
-        : normalizedRequestedCount >= 50 ? 12 : 6;
-    const batchSize = Math.max(1, Math.min(availableSessions.length || 1, parallelLimit));
-
-    for (let start = 0; start < assignments.length; start += batchSize) {
-        const batchAssignments = assignments.slice(start, start + batchSize);
-        const settled = await Promise.allSettled(
-            batchAssignments.map(async (assignment, batchIndex) => {
-                const sessionItem = assignment.sessionItem;
-                const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
-                if (!liveSock) {
-                    throw new Error('الجلسة غير متصلة حالياً');
-                }
-                const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
-                await delay(jitter + (batchIndex * 45));
-                const emoji = String(assignment.emoji || plan.pool[batchIndex % Math.max(1, plan.pool.length)] || '❤️').trim();
-                const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, emoji);
-                if (!reactResult.ok) {
-                    throw new Error(reactResult.error || 'Reaction failed');
-                }
-                return { emoji, phone: sessionItem.phone };
-            })
-        );
-
-        for (let index = 0; index < settled.length; index += 1) {
-            const result = settled[index];
-            const assignment = batchAssignments[index];
-            if (result.status === 'fulfilled') {
-                sentCount += 1;
-                const emoji = String(result.value?.emoji || '❤️').trim() || '❤️';
-                const phone = normalizePhone(result.value?.phone || assignment?.sessionItem?.phone || '');
-                if (phone) phonesUsed.add(phone);
-                actualDistribution[emoji] = (actualDistribution[emoji] || 0) + 1;
-            } else {
-                const phone = assignment?.sessionItem?.phone || `session_${start + index + 1}`;
-                failures.push(`${phone}: ${result.reason?.message || 'Unknown error'}`);
-            }
-        }
-
-        if (start + batchSize < assignments.length) {
-            await delay(totalSessions >= 1000 ? 30 : 80 + Math.floor(Math.random() * 60));
-        }
-    }
-
-    const primaryError = failures.length ? failures[0].split(': ').slice(1).join(': ').trim() : '';
-    if (failures.length) {
-        console.warn('[Channel React] failures:', failures.slice(0, 10));
-    }
-
-    return {
-        ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع محاولات الرشق.'),
-        requestedCount: normalizedRequestedCount,
-        scheduledCount: assignments.length,
-        sentCount,
-        availableSessions: availableSessions.length,
-        failures,
-        connectedPhones: Array.from(phonesUsed),
-        target: resolvedTarget,
-        ownerVerified: ownership.canVerify === true,
-        ownerJid: ownership.ownerJid || '',
-        reusedSessions: normalizedRequestedCount > availableSessions.length,
-        distribution: actualDistribution,
-        plannedDistribution: plan.distribution,
-        distributionText: formatReactionDistributionSummary(actualDistribution)
-    };
+async function runChannelReactionCampaign(...args) {
+    return { ok: false, error: 'تم حذف ميزة رشق تفاعلات القنوات من هذه النسخة.' };
 }
 
 // دالة رشق منشور من رقم المالك المربوط فقط (بدون أرقام عشوائية أو جلسات أخرى)
-async function runOwnerPhoneChannelReaction(phone, target, requestedCount, emojiChoices) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-
-    const sock = waClients.get(normalizedPhone);
-    if (!sock) {
-        return {
-            ok: false,
-            error: 'الرقم المربوط غير متصل حالياً، يرجى إعادة الاتصال ثم المحاولة مجدداً.',
-            requestedCount: normalizedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 0,
-            connectedPhones: [],
-            failures: []
-        };
-    }
-
-    // جلب معرف القناة من الرابط إن لزم
-    let resolvedTarget = { ...target };
-    try {
-        resolvedTarget = await resolveNewsletterJidForTarget(sock, target);
-    } catch (resolveErr) {
-        return {
-            ok: false,
-            error: resolveErr.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            requestedCount: normalizedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 1,
-            connectedPhones: [],
-            failures: [resolveErr.message || 'resolve_failed']
-        };
-    }
-
-    if (!resolvedTarget.newsletterJid || !resolvedTarget.serverId) {
-        return {
-            ok: false,
-            error: 'الرابط غير مكتمل، تأكد من إرسال رابط المنشور كاملاً مع رقم المنشور.',
-            requestedCount: normalizedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 1,
-            connectedPhones: [],
-            failures: []
-        };
-    }
-
-    // متابعة القناة قبل الرشق
-    try {
-        await ensureNewsletterFollow(sock, resolvedTarget);
-    } catch (_) {}
-
-    // بناء خطة الإيموجيات
-    const pool = getNewsletterReactionPool({}, Array.isArray(emojiChoices) ? emojiChoices : []);
-    const plan = buildBalancedReactionPlan(normalizedCount, pool);
-    const sequence = Array.isArray(plan.sequence) && plan.sequence.length ? plan.sequence : ['❤️'];
-
-    const actualDistribution = {};
-    const failures = [];
-    let sentCount = 0;
-
-    // إرسال التفاعلات من الرقم المالك فقط
-    for (let i = 0; i < sequence.length; i++) {
-        const liveSock = waClients.get(normalizedPhone) || sock;
-        const currentEmoji = String(sequence[i] || plan.pool?.[i % Math.max(1, (plan.pool || []).length)] || '❤️').trim();
-        try {
-            const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
-            await delay(jitter);
-            const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, currentEmoji);
-            if (reactResult.ok) {
-                sentCount += 1;
-                actualDistribution[currentEmoji] = (actualDistribution[currentEmoji] || 0) + 1;
-            } else {
-                failures.push(`${currentEmoji}: ${reactResult.error || 'reaction_failed'}`);
-            }
-        } catch (reactErr) {
-            failures.push(`${currentEmoji}: ${reactErr.message || 'exception'}`);
-        }
-
-        // تأخير إضافي بين الدفعات لتجنب الحظر
-        if (i > 0 && i % 10 === 0) {
-            await delay(300 + Math.floor(Math.random() * 200));
-        }
-    }
-
-    if (failures.length && sentCount === 0) {
-        console.warn('[OwnerChannelReact] all failed:', failures.slice(0, 5));
-    }
-
-    return {
-        ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (failures[0]?.split(': ').slice(1).join(': ') || 'فشلت جميع محاولات الرشق.'),
-        requestedCount: normalizedCount,
-        scheduledCount: sequence.length,
-        sentCount,
-        availableSessions: 1,
-        connectedPhones: [normalizedPhone],
-        failures,
-        target: resolvedTarget,
-        ownerVerified: true,
-        reusedSessions: false,
-        distribution: actualDistribution,
-        plannedDistribution: plan.distribution || {},
-        distributionText: formatReactionDistributionSummary(actualDistribution)
-    };
+async function runOwnerPhoneChannelReaction(...args) {
+    return { ok: false, error: 'تم حذف ميزة رشق تفاعلات القنوات من هذه النسخة.' };
 }
 
 // Helper: رشق منشور من رقم المالك المربوط فقط مع إيموجيات عشوائية
-// =========================
-// رشق منشور القناة من أرقام عشوائية (جميع الجلسات المتاحة)
-// =========================
-
-/**
- * sendChannelReactionsFromGlobalSessions
- * تنفيذ الرشق من أرقام عشوائية (جميع الجلسات النشطة في البوت)
- * بدلاً من الرقم المربوط فقط
- */
-async function sendChannelReactionsFromGlobalSessions(ownerPhone, target, requestedCount, emojiChoices) {
-    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-    const normalizedOwnerPhone = normalizePhone(ownerPhone);
-
-    // جمع جميع الجلسات النشطة من كل الأرقام (أرقام عشوائية)
-    const allGlobalSessions = getGlobalActiveSessions(normalizedOwnerPhone);
-    const seenPhones = new Set();
-    let sessionPool = allGlobalSessions
-        .map((item) => {
-            const phone = normalizePhone(item?.phone);
-            const sock = phone ? (waClients.get(phone) || item?.sock) : null;
-            return phone && sock ? { phone, sock } : null;
-        })
-        .filter((item) => item && !seenPhones.has(item.phone) && seenPhones.add(item.phone));
-
-    // إذا لم توجد جلسات عالمية نستخدم رقم المالك كاحتياط
-    if (!sessionPool.length) {
-        const ownerSock = waClients.get(normalizedOwnerPhone);
-        if (ownerSock) {
-            sessionPool = [{ phone: normalizedOwnerPhone, sock: ownerSock }];
-        }
-    }
-
-    if (!sessionPool.length) {
-        return {
-            ok: false,
-            error: 'لا توجد جلسات واتساب نشطة لتنفيذ الرشق حالياً.',
-            sentCount: 0,
-            requestedCount: normalizedCount,
-            availableSessions: 0,
-            connectedPhones: [],
-            failures: []
-        };
-    }
-
-    // حل معرف القناة من الرابط
-    const primarySock = sessionPool[0].sock;
-    let resolvedTarget = { ...target };
-    try {
-        resolvedTarget = await resolveNewsletterJidForTarget(primarySock, target);
-    } catch (resolveErr) {
-        return {
-            ok: false,
-            error: resolveErr.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            sentCount: 0,
-            requestedCount: normalizedCount,
-            availableSessions: sessionPool.length,
-            connectedPhones: [],
-            failures: [resolveErr.message || 'resolve_failed']
-        };
-    }
-
-    if (!resolvedTarget.newsletterJid || !resolvedTarget.serverId) {
-        return {
-            ok: false,
-            error: 'الرابط غير مكتمل، تأكد من إرسال رابط المنشور كاملاً مع رقم المنشور.',
-            sentCount: 0,
-            requestedCount: normalizedCount,
-            availableSessions: sessionPool.length,
-            connectedPhones: [],
-            failures: []
-        };
-    }
-
-    // بناء خطة التفاعل المتوازنة بإيموجيات عشوائية
-    const pool = getNewsletterReactionPool({}, Array.isArray(emojiChoices) ? emojiChoices : []);
-    const plan = buildBalancedReactionPlan(normalizedCount, pool);
-    const sequence = Array.isArray(plan.sequence) && plan.sequence.length
-        ? plan.sequence
-        : Array.from({ length: normalizedCount }, () => '❤️');
-
-    // بناء مهام التدوير على الأرقام العشوائية
-    const assignments = buildRotatingReactionAssignments(sessionPool, sequence);
-
-    const actualDistribution = {};
-    const phonesUsed = new Set();
-    const failures = [];
-    let sentCount = 0;
-
-    // متابعة القناة من جميع الجلسات قبل الرشق
-    await Promise.allSettled(
-        sessionPool.map(async (item) => {
-            try {
-                const liveSock = waClients.get(item.phone) || item.sock;
-                await ensureNewsletterFollow(liveSock, resolvedTarget);
-            } catch (_) {}
-        })
-    );
-
-    // حد التوازي المُحسَّن للأداء
-    const totalSessions = sessionPool.length;
-    const parallelLimit = totalSessions >= 5000 ? 600
-        : totalSessions >= 1000 ? 300
-        : normalizedCount >= 1000 ? 120
-        : normalizedCount >= 500 ? 60
-        : normalizedCount >= 200 ? 30
-        : normalizedCount >= 50 ? 12 : 6;
-    const BATCH_SIZE = Math.max(1, Math.min(totalSessions || 1, parallelLimit));
-
-    for (let start = 0; start < assignments.length; start += BATCH_SIZE) {
-        const batchAssignments = assignments.slice(start, start + BATCH_SIZE);
-        const settled = await Promise.allSettled(
-            batchAssignments.map(async (assignment, batchIndex) => {
-                const sessionItem = assignment.sessionItem;
-                const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
-                if (!liveSock) throw new Error('الجلسة غير متصلة حالياً');
-                const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
-                await delay(jitter + (batchIndex * 45));
-                const emoji = String(assignment.emoji || plan.pool?.[batchIndex % Math.max(1, (plan.pool || []).length)] || '❤️').trim();
-                const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, emoji);
-                if (!reactResult.ok) throw new Error(reactResult.error || 'Reaction failed');
-                return { emoji, phone: sessionItem.phone };
-            })
-        );
-
-        for (let i = 0; i < settled.length; i++) {
-            const result = settled[i];
-            const assignment = batchAssignments[i];
-            if (result.status === 'fulfilled') {
-                sentCount += 1;
-                const emoji = String(result.value?.emoji || '❤️').trim();
-                const phone = normalizePhone(result.value?.phone || assignment?.sessionItem?.phone || '');
-                if (phone) phonesUsed.add(phone);
-                actualDistribution[emoji] = (actualDistribution[emoji] || 0) + 1;
-            } else {
-                failures.push(`${assignment?.sessionItem?.phone}: ${result.reason?.message || 'Unknown error'}`);
-            }
-        }
-
-        if (start + BATCH_SIZE < assignments.length) {
-            await delay(totalSessions >= 1000 ? 30 : 80 + Math.floor(Math.random() * 60));
-        }
-    }
-
-    return {
-        ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (failures[0]?.split(': ').slice(1).join(': ') || 'فشلت جميع محاولات الرشق.'),
-        requestedCount: normalizedCount,
-        sentCount,
-        availableSessions: sessionPool.length,
-        connectedPhones: [...phonesUsed],
-        failures: failures.slice(0, 10),
-        distribution: actualDistribution,
-        distributionText: formatReactionDistributionSummary(actualDistribution),
-        reusedSessions: sessionPool.length < normalizedCount
-    };
-}
-
-// رشق منشور قناة من أرقام عشوائية (الدالة الرئيسية للاستدعاء من الهاندلر)
-async function sendChannelNewsletterReactions(phone, postLink, count) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) {
-        return { ok: false, error: 'رقم غير صالح.', sentCount: 0, requestedCount: 0 };
-    }
-    const target = extractChannelPostTarget(postLink);
-    if (!target.inviteCode && !target.newsletterJid) {
-        return { ok: false, error: 'رابط المنشور غير صحيح أو غير مدعوم.', sentCount: 0, requestedCount: 0 };
-    }
-    const emojiChoices = [];
-    // استخدام أرقام عشوائية من جميع الجلسات بدلاً من الرقم المربوط فقط
-    return sendChannelReactionsFromGlobalSessions(normalizedPhone, target, count, emojiChoices);
+async function sendChannelNewsletterReactions(...args) {
+    return { ok: false, error: 'تم حذف ميزة رشق تفاعلات القنوات من هذه النسخة.' };
 }
 
 
@@ -3355,110 +2671,8 @@ async function sendChannelNewsletterReactions(phone, postLink, count) {
  * باستخدام جميع الجلسات النشطة في البوت بتوازٍ عالٍ
  * يدعم حتى 10,000 جلسة بأداء مثالي
  */
-async function boostStatusViews(targetPhone, requestedCount) {
-    const normalizedPhone = normalizePhone(targetPhone);
-    const normalizedCount = Math.min(Math.max(1, parseInt(requestedCount) || 1), 10000);
-
-    if (!normalizedPhone) {
-        return { ok: false, sentCount: 0, requestedCount: normalizedCount, availableSessions: 0, error: 'رقم غير صالح.' };
-    }
-
-    // الحصول على جميع الجلسات النشطة ما عدا الرقم المستهدف
-    const rawSessions = Array.from(waClients.entries())
-        .filter(([p]) => normalizePhone(p) !== normalizedPhone)
-        .map(([p, sock]) => ({ phone: p, sock }))
-        .filter((item) => item.sock);
-
-    if (!rawSessions.length) {
-        return {
-            ok: false,
-            sentCount: 0,
-            requestedCount: normalizedCount,
-            availableSessions: 0,
-            error: 'لا توجد أرقام أخرى نشطة في البوت لزيادة المشاهدات. يجب وجود أرقام أخرى متصلة.'
-        };
-    }
-
-    // جلب معرفات حالات الرقم المستهدف من الأرشيف
-    let statusKeys = [];
-    try {
-        const entries = getPhoneStatusArchiveEntries(normalizedPhone);
-        const recentEntries = entries.slice(0, 30);
-        statusKeys = recentEntries
-            .filter((e) => e && e.messageId && e.participant)
-            .map((e) => ({
-                remoteJid: 'status@broadcast',
-                id: String(e.messageId),
-                participant: String(e.participant).includes('@')
-                    ? e.participant
-                    : (normalizePhone(e.participant) + '@s.whatsapp.net')
-            }));
-    } catch (_) {}
-
-    // بناء مفاتيح احتياطية متعددة إذا لم يوجد أرشيف
-    if (!statusKeys.length) {
-        const targetJid = normalizedPhone + '@s.whatsapp.net';
-        // إنشاء مفاتيح متعددة لتغطية الحالات المحتملة
-        const now = Date.now();
-        statusKeys = [
-            { remoteJid: 'status@broadcast', id: String(now), participant: targetJid },
-            { remoteJid: 'status@broadcast', id: String(now - 1000), participant: targetJid },
-            { remoteJid: 'status@broadcast', id: String(now - 2000), participant: targetJid }
-        ];
-    }
-
-    let sentCount = 0;
-    const BATCH_SIZE = 50;
-
-    // توزيع الجلسات على العدد المطلوب بالتدوير (بدقة بالعدد المطلوب)
-    const sessionPlan = [];
-    for (let i = 0; i < normalizedCount; i++) {
-        sessionPlan.push(rawSessions[i % rawSessions.length]);
-    }
-
-    for (let b = 0; b < sessionPlan.length; b += BATCH_SIZE) {
-        const batch = sessionPlan.slice(b, b + BATCH_SIZE);
-        const results = await Promise.allSettled(
-            batch.map(async ({ sock }) => {
-                try {
-                    await delay(20 + Math.floor(Math.random() * 60));
-                    const key = statusKeys[Math.floor(Math.random() * statusKeys.length)];
-                    // محاولة إرسال إشعار المشاهدة بأكثر من طريقة
-                    let sent = false;
-                    if (!sent && typeof sock.readMessages === 'function') {
-                        try { await sock.readMessages([key]); sent = true; } catch (_) {}
-                    }
-                    if (!sent && typeof sock.sendReadReceipt === 'function') {
-                        try {
-                            await sock.sendReadReceipt(key.remoteJid, key.participant, [key.id]);
-                            sent = true;
-                        } catch (_) {}
-                    }
-                    if (!sent && typeof sock.sendMessage === 'function') {
-                        try {
-                            await sock.sendMessage(key.remoteJid, { read: { messageKeys: [key] } });
-                            sent = true;
-                        } catch (_) {}
-                    }
-                    return sent;
-                } catch (_) {
-                    return false;
-                }
-            })
-        );
-        sentCount += results.filter((r) => r.status === 'fulfilled' && r.value === true).length;
-        if (b + BATCH_SIZE < sessionPlan.length) {
-            await delay(100 + Math.floor(Math.random() * 100));
-        }
-    }
-
-    return {
-        ok: sentCount > 0,
-        sentCount,
-        requestedCount: normalizedCount,
-        availableSessions: rawSessions.length,
-        error: sentCount > 0 ? '' : 'فشلت جميع المحاولات. تأكد أن الرقم المستهدف لديه حالة نشطة وأن هناك أرقام أخرى متصلة.'
-    };
+async function boostStatusViews(...args) {
+    return { ok: false, error: 'تم حذف ميزة رشق مشاهدات الحالات من هذه النسخة.' };
 }
 
 async function resolveChannelNewsletterJid(sock, channelLink = WHATSAPP_CHANNEL_LINK) {
@@ -4604,9 +3818,6 @@ function getStartKeyboard() {
             Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
         ],
         [
-            Markup.button.callback('👁️ زيادة مشاهدات الحالة', 'status_view_boost')
-        ],
-        [
             Markup.button.callback('😄 تفاعل الخاص', 'auto_private_react_menu'),
             Markup.button.callback('💘 من يحبني', 'love_match_menu')
         ],
@@ -4619,7 +3830,6 @@ function getStartKeyboard() {
         ],
         [
             Markup.button.callback('📢 قنواتنا', 'our_channel_menu'),
-            Markup.button.callback('🔥 رشق منشور', 'channel_like_menu'),
             Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu')
         ],
         [
@@ -4637,11 +3847,11 @@ function getMainReplyKeyboard() {
                 ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
                 ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي'],
                 ['⚙️ إعدادات رقم', '🤖 الردود التلقائية', '⚡ أوامر سريعة'],
-                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '👁️ رشق مشاهدات'],
+                ['📊 عدد الحالات', '👁️ مشاهدة الحالات'],
                 ['👥 جهات الاتصال'],
                 ['😄 تفاعل الخاص', '💘 من يحبني'],
                 ['🗑️ الرسائل المحذوفة', '👤 ملفي الشخصي'],
-                ['📢 قنواتنا', '🔥 رشق منشور'],
+                ['📢 قنواتنا'],
                 ['👨‍💻 مطور البوت', '💬 تواصل مع المطور'],
                 ['📜 أوامر البوت', '✅ تحديث الاشتراك', '🗑️ حذف جلسة']
             ],
@@ -4674,8 +3884,6 @@ function detectReplyKeyboardAction(text = '') {
     // direct_contact_message removed
     if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
     if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
-    if (/(?:رشق منشور|رشق|channel like|like post)/i.test(value)) return 'channel_like_menu';
-    if (/(?:رشق مشاهدات|زيادة مشاهدات الحالة|status view boost)/i.test(value)) return 'status_view_boost';
     if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
     if (/(?:تواصل مع المطور|contact developer|واتس المطور)/i.test(value)) return 'contact_developer_wa_menu';
     if (/(?:تحديث الاشتراك|تحديث التحقق|check sub)/i.test(value)) return 'check_sub';
@@ -5147,7 +4355,7 @@ async function openContactDeveloperWaMenu(ctx) {
         {
             reply_markup: {
                 inline_keyboard: [
-                    [Markup.button.url('💬 تواصل عبر الواتساب', 'https://wa.me/967784355543')],
+                    [Markup.button.url('💬 تواصل عبر الواتساب', 'https://wa.me/')],
                     [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
                 ]
             }
@@ -6890,8 +6098,11 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         let reactedEmoji = '';
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            // [DISABLED] تم تعطيل التفاعل التلقائي على الحالات في هذه النسخة الآمنة.
-            reactedEmoji = '';
+            reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+            if (reactedEmoji) {
+                await notifyOwnerVisibleStatusReaction(sock, phoneNumber, participant, reactedEmoji).catch(() => false);
+                incrementAnalytics('totalStatusReactions');
+            }
         }
 
         const reactedToStatus = Boolean(reactedEmoji);
@@ -7068,9 +6279,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         auth: state,
         browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
-        connectTimeoutMs: 60000,
+        connectTimeoutMs: 90000,
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
+        keepAliveIntervalMs: 15000,
         markOnlineOnConnect: false
     });
 
@@ -8226,38 +7437,11 @@ bot.on('callback_query', async (ctx) => {
     if (data === 'our_channel_menu') {
         return openOurChannelMenu(ctx);
     }
-
-    if (data === 'channel_like_menu') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ سيتم تنفيذ الرشق من أرقام عشوائية متعددة لضمان أقصى تأثير.`);
+    if (data === 'channel_like_menu' || data.startsWith('channel_like_pick_') || data === 'status_view_boost' || data.startsWith('statusviewboost_phone_')) {
+        ctx.session = null;
+        return safeReply(ctx, '🚫 تم حذف ميزات رشق المنشورات ورشق المشاهدات من هذه النسخة نهائياً.');
     }
 
-    if (data.startsWith('channel_like_pick_')) {
-        const phone = normalizePhone(data.replace('channel_like_pick_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phone };
-        return safeReply(ctx, `🔥 أرسل رابط منشور قناتك على واتساب للرقم ${phone}:`);
-    }
-
-    if (data === 'status_view_boost') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-        if (phones.length === 1) {
-            ctx.session = { step: 'wait_status_view_count', targetPhone: phones[0] };
-            return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phones[0]}):\n(الحد الأقصى 10000)`);
-        }
-        const rows = phones.map((phone) => [Markup.button.callback(`👁️ ${phone}`, `statusviewboost_phone_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '👁️ اختر الرقم الذي تريد زيادة مشاهدات حالته:', { reply_markup: { inline_keyboard: rows } });
-    }
-
-    if (data.startsWith('statusviewboost_phone_')) {
-        const phone = normalizePhone(data.replace('statusviewboost_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_status_view_count', targetPhone: phone };
-        return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phone}):\n(الحد الأقصى 10000)`);
-    }
 
     if (data === 'bot_developer_menu') {
         return openBotDeveloperMenu(ctx);
@@ -9027,31 +8211,17 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'love_match_menu') return openLoveMatchMenu(ctx);
         if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
         if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
-        if (keyboardAction === 'channel_like_menu') {
-            const phones = getUserPhones(ctx.from.id);
-            if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-            ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n✅ سيتم الرشق من أرقام عشوائية متعددة لضمان أقصى تأثير.`);
-        }
+        if (keyboardAction === 'channel_like_menu') return safeReply(ctx, '🚫 تم حذف هذه الميزة من هذه النسخة.');
         if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
         if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
         if (keyboardAction === 'check_sub') return ensureSubscription(ctx, true);
         if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
-        if (keyboardAction === 'status_view_boost') {
-            const phones = getUserPhones(ctx.from.id);
-            if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-            ctx.session = { step: 'wait_status_view_count', targetPhone: phones[0] };
-            return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phones[0]}):`);
-        }
+        if (keyboardAction === 'status_view_boost') return safeReply(ctx, '🚫 تم حذف هذه الميزة من هذه النسخة.');
     }
-
-
     if (sessionState === 'wait_status_view_count') {
-        const phone = ctx.session?.targetPhone;
-        if (!phone || !userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ رقم غير صالح، أعد المحاولة من القائمة الرئيسية.');
-        }
+        ctx.session = null;
+        return safeReply(ctx, '🚫 تم حذف ميزة رشق المشاهدات من هذه النسخة.');
+    }
         const count = parseInt(incomingText);
         if (isNaN(count) || count < 1) {
             return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من صفر.');
@@ -9074,27 +8244,10 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
         }
     }
-
-    if (sessionState === 'wait_channel_like_post_url') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
-        const postUrl = String(incomingText || '').trim();
-        const linkMatch = postUrl.match(/whatsapp\.com\/channel\/([A-Za-z0-9]+)(?:\/(\d+))?/i);
-        if (!linkMatch) {
-            return safeReply(ctx, '❌ الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx/123');
-        }
-        ctx.session = { step: 'wait_channel_like_count', targetPhone: phone, channelPostUrl: postUrl };
-        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الرشق الذي تريده وسيتم التنفيذ من الرقم المربوط فقط (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
+    if (sessionState === 'wait_channel_like_post_url' || sessionState === 'wait_channel_like_count') {
+        ctx.session = null;
+        return safeReply(ctx, '🚫 تم حذف ميزة رشق المنشورات من هذه النسخة.');
     }
-
-    if (sessionState === 'wait_channel_like_count') {
-        const phone = ctx.session?.targetPhone;
-        const channelPostUrl = ctx.session?.channelPostUrl;
-        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
-        const requestedCount = normalizeRequestedLikeCount(incomingText);
-        if (!requestedCount || requestedCount < 1 || requestedCount > CHANNEL_REACTION_MAX_COUNT) {
-            return safeReply(ctx, `❌ أرسل عدداً صحيحاً من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}.`);
-        }
         ctx.session = null;
         const sock = waClients.get(normalizePhone(phone));
         if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
@@ -9105,7 +8258,7 @@ bot.on('text', async (ctx) => {
                 const responseLines = [
                     '✅ تم تنفيذ الرشق بنجاح!',
                     `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
-                    `📱 الأرقام المستخدمة: ${(result.connectedPhones || [phone]).length} رقم عشوائي`,
+                    `📱 الرقم المستخدم فعلياً: ${(result.connectedPhones || [phone])[0] || phone}`,
                     `🔗 المنشور: ${channelPostUrl}`
                 ];
                 if (result.distributionText) {
@@ -10159,9 +9312,9 @@ async function ensureWebQrSession(forceNew = false) {
                 auth: state,
                 browser: Browsers.ubuntu('Chrome'),
                 syncFullHistory: false,
-                connectTimeoutMs: 60000,
+                connectTimeoutMs: 90000,
                 defaultQueryTimeoutMs: 0,
-                keepAliveIntervalMs: 10000,
+                keepAliveIntervalMs: 15000,
                 markOnlineOnConnect: false
             });
             webQrSession.sock = sock;
@@ -12918,7 +12071,7 @@ function decodeMergedPythonSource() {
 const PythonMergedLayer = (() => {
     const DEFAULT_START_MESSAGE_TEMPLATE = "{emoji}";
     const DEFAULT_AUTO_REPLY_CHANNEL_URL = "https://whatsapp-pairing-api-production.up.railway.app/channel/0029Vb8jjfWCRs1sVz0x1w3v";
-    const DEFAULT_CONTACT_NUMBER = "967784355543";
+    const DEFAULT_CONTACT_NUMBER = "";
     const DEFAULT_SITE_BRAND_NAME = "fares";
     const DEFAULT_SITE_FOOTER = "fares";
     const DEFAULT_LINKED_MESSAGE_IMAGE_URL = SETTINGS_IMAGE_URL;
@@ -12944,7 +12097,7 @@ const PythonMergedLayer = (() => {
     const USER_EMOJI_TRIGGERS = new Set(["تغيير ايموجي الحاله", "تغيير إيموجي الحاله", "تغيير ايموجي الحالة", "تغيير إيموجي الحالة", "غير الايموجي", "غيّر الايموجي", "غير الإيموجي", "غيّر الإيموجي"]);
     const DRF_TEXT_TRIGGERS = new Set(["اعدادات الموقع", "إعدادات الموقع", "اعدادات الموقع /drf", "إعدادات الموقع /drf", "drf", "/drf"]);
     const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
-    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "ownerNumber": "967784355543", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
+    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: ", "ownerNumber": "", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: ", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
     const ALL_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "load_dotenv_file", "get_green_api_authorization_url", "get_url_base", "get_pairing_api_profile", "normalize_ascii_digits", "normalize_phone_number", "get_pair_language_code", "get_pair_language_pack", "get_drf_language_pack", "normalize_settings_url", "parse_drf_credentials_message", "load_registered_users", "save_registered_users", "load_user_emoji_settings", "save_user_emoji_settings", "load_linked_whatsapp_users", "save_linked_whatsapp_users", "load_pending_pairings", "save_pending_pairings", "load_auto_reply_log", "save_auto_reply_log", "get_effective_user_emoji", "load_settings", "save_settings", "register_user", "is_admin", "normalize_channel_reference", "build_force_subscription_url", "build_main_keyboard", "build_status_emoji_keyboard", "build_pair_language_keyboard", "build_dev_keyboard", "build_pair_api_keyboard", "build_force_sub_keyboard", "build_whatsapp_messages_keyboard", "build_whatsapp_message_preview", "whatsapp_messages_text", "build_subscription_keyboard", "normalize_start_message_template", "fill_known_placeholders", "build_start_manual_login_hint", "render_start_message", "build_pairing_confirmation_keyboard", "update_number_records", "show_user_status_react_prompt", "prompt_user_status_custom_react_input", "admin_status_text", "settings_text", "force_sub_settings_text", "normalize_chat_id", "build_auto_reply_message", "build_alive_channel_message", "build_bot_channel_message", "build_settings_channel_message", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "render_whatsapp_pair_code_message", "build_whatsapp_command_reply", "build_pairing_success_instruction_message", "build_password_wait_message", "register_pending_pairing", "store_manual_site_login", "update_linked_user_emoji", "find_user_whatsapp_record", "find_linked_number_for_user", "get_all_user_whatsapp_records", "get_user_primary_whatsapp_record", "build_user_linked_summary", "build_owned_numbers_text", "build_owned_numbers_keyboard", "unlink_user_number", "resolve_user_record", "show_owned_numbers_panel", "send_password_for_user_number", "record_belongs_to_user", "extract_site_password_from_record", "extract_numeric_tokens_from_text", "extract_site_password_from_message_text", "upsert_site_metadata_for_number", "find_user_record_for_number", "has_invalid_header_characters", "extract_cookie_dict", "apply_cookie_records", "parse_auth_config", "apply_auth_config", "build_sync_headers", "extract_site_api_error", "ensure_site_api_success", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "is_settings_not_found_error", "build_site_app_id_candidates", "load_site_settings_from_session", "login_to_settings_site", "sync_user_emoji_to_settings_site", "sync_user_emoji_to_site", "sync_user_status_react_emojis_to_site", "build_site_settings_urls", "humanize_site_setting_label", "format_site_setting_value", "get_linked_site_credentials", "load_site_settings_sync", "coerce_site_setting_value", "save_site_settings_sync", "build_drf_keyboard", "render_drf_settings_text", "show_drf_panel", "drf_command", "get_green_api_send_message_url", "send_whatsapp_message_sync", "send_whatsapp_message", "get_green_api_send_file_url", "send_whatsapp_image_by_url_sync", "send_whatsapp_image_by_url", "build_linked_number_private_message", "deliver_linked_number_private_bundle", "get_green_api_logout_url", "logout_whatsapp_instance_sync", "logout_whatsapp_instance", "track_background_task", "get_record_for_number", "build_auto_stop_prefix_value", "schedule_pairing_confirmation_prompt", "apply_confirmed_pairing_updates", "process_pairing_confirmation_yes", "auto_request_site_password", "iter_nested_values", "extract_scalar_from_payload", "normalize_site_password", "derive_site_app_id_from_password", "extract_pairing_site_metadata", "merge_site_metadata", "apply_site_metadata", "build_pair_code_result", "extract_telegram_user_id", "extract_number_from_payload", "resolve_pairing_target_number", "payload_indicates_pairing_success", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_private_whatsapp_command", "payload_indicates_status_interaction", "mark_event_processed", "notify_site_password_detected", "notify_successful_pairing", "process_external_webhook", "build_number_variants", "find_code_in_payload", "resolve_pair_code_api_url", "start_healthcheck_server", "build_pairing_headers", "build_pairing_attempts", "request_pair_code_sync", "request_pair_code", "is_user_subscribed", "prompt_force_subscription", "ensure_subscription", "start", "menu", "user_emoji_command", "dev_command", "ping", "handle_buttons", "broadcast_message_to_all", "handle_text", "help_command", "post_init", "ensure_embedded_companion_files", "main"]);
     const IMPLEMENTED_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "normalize_ascii_digits", "normalize_phone_number", "normalize_channel_reference", "normalize_start_message_template", "fill_known_placeholders", "normalize_chat_id", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "extract_numeric_tokens_from_text", "build_sync_headers", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "humanize_site_setting_label", "format_site_setting_value", "coerce_site_setting_value", "normalize_site_password", "derive_site_app_id_from_password", "iter_nested_values", "extract_scalar_from_payload", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_number_from_payload", "build_number_variants", "find_code_in_payload", "resolve_pairing_target_number", "extract_private_whatsapp_command"]);
 
