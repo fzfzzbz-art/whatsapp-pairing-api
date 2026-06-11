@@ -250,17 +250,91 @@ function startHealthServer() {
     return null;
   }
 
-  const server = http.createServer((req, res) => {
-    const body = JSON.stringify({ ok: true, service: 'telegram-bot', timestamp: new Date().toISOString() });
-    res.writeHead(200, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Content-Length': Buffer.byteLength(body)
-    });
-    res.end(body);
+  const server = http.createServer(async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      const pathname = parsedUrl.pathname || '/';
+
+      if (req.method === 'GET' && (pathname === '/health' || pathname === '/api/health')) {
+        return sendJson(res, 200, { ok: true, service: 'telegram-bot', timestamp: new Date().toISOString() });
+      }
+
+      if (req.method === 'GET' && (pathname === '/' || pathname === LOCAL_PAIRING_PAGE_ROUTE)) {
+        return sendHtml(res, 200, buildLandingPageHtml());
+      }
+
+      if (req.method === 'GET' && pathname === '/settings') {
+        return sendHtml(res, 200, buildSettingsPageHtml());
+      }
+
+      if (req.method === 'POST' && pathname === '/api/login') {
+        const body = await parseRequestBody(req);
+        const authorized = isSiteAuthorized(req, body, parsedUrl);
+        return sendJson(res, authorized ? 200 : 401, { success: authorized, requiresPassword: Boolean(SITE_PASSWORD), message: authorized ? 'تم تسجيل الدخول بنجاح' : 'كلمة المرور غير صحيحة' });
+      }
+
+      if (req.method === 'GET' && pathname === '/api/settings/load') {
+        return sendJson(res, 200, {
+          success: true,
+          requiresPassword: Boolean(SITE_PASSWORD),
+          settings: buildSerializableSettings(),
+          pairing: buildPairingApiDescriptor()
+        });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/settings/save') {
+        const body = await parseRequestBody(req);
+        if (!isSiteAuthorized(req, body, parsedUrl)) {
+          return sendJson(res, 401, { success: false, error: 'كلمة المرور غير صحيحة' });
+        }
+
+        const patch = {};
+        if (body.current_emoji !== undefined) patch.current_emoji = normalizeEmojiValue(body.current_emoji, SETTINGS.current_emoji);
+        if (body.auto_reply_enabled !== undefined) patch.auto_reply_enabled = toBoolean(body.auto_reply_enabled, SETTINGS.auto_reply_enabled);
+        if (body.pair_code_api_url !== undefined) patch.pair_code_api_url = sanitizePairCodeApiUrl(body.pair_code_api_url);
+        if (body.pair_code_api_method !== undefined) patch.pair_code_api_method = String(body.pair_code_api_method || 'POST').trim().toUpperCase() === 'GET' ? 'GET' : 'POST';
+        if (body.pair_code_api_token !== undefined) patch.pair_code_api_token = String(body.pair_code_api_token || '').trim();
+        if (body.pair_code_api_number_field !== undefined) patch.pair_code_api_number_field = String(body.pair_code_api_number_field || 'phone').trim() || 'phone';
+
+        Object.assign(SETTINGS, ensureSettingsShape({ ...SETTINGS, ...patch }));
+        saveSettings();
+
+        return sendJson(res, 200, { success: true, settings: buildSerializableSettings(), pairing: buildPairingApiDescriptor() });
+      }
+
+      if (req.method === 'GET' && pathname === LOCAL_PAIRING_API_ROUTE) {
+        return sendJson(res, 200, { success: true, ...buildPairingApiDescriptor() });
+      }
+
+      if (req.method === 'POST' && (pathname === LOCAL_PAIRING_API_ROUTE || pathname === ALT_LOCAL_PAIRING_API_ROUTE)) {
+        const body = await parseRequestBody(req);
+        const phone = normalizePhoneNumber(body.phone || body.num || body.phoneNumber || body.number || '');
+        if (!phone || phone.length < 8 || phone.length > 15) {
+          return sendJson(res, 400, { success: false, error: 'رقم غير صالح' });
+        }
+
+        try {
+          const code = await requestPairCode(phone, { skipSelfApi: true });
+          return sendJson(res, 200, { success: true, phone, num: phone, code });
+        } catch (error) {
+          return sendJson(res, 500, { success: false, error: String(error?.message || 'فشل إنشاء كود الربط') });
+        }
+      }
+
+      return sendJson(res, 404, { success: false, error: 'Not found' });
+    } catch (error) {
+      console.error('HTTP server error:', error);
+      return sendJson(res, 500, { success: false, error: String(error?.message || 'Internal server error') });
+    }
   });
 
   server.listen(port, '0.0.0.0', () => {
-    console.log(`Health server listening on port ${port}`);
+    console.log(`HTTP server listening on port ${port}`);
+    const publicOrigin = getPrimaryPublicOrigin();
+    if (publicOrigin) {
+      console.log(`Public landing page: ${publicOrigin}/`);
+      console.log(`Public pairing API: ${publicOrigin}${LOCAL_PAIRING_API_ROUTE}`);
+    }
   });
 
   return server;
@@ -283,9 +357,20 @@ if (!BOT_TOKEN) {
 }
 
 const ADMIN_ID = parseInteger(process.env.ADMIN_ID, 0);
+const SITE_PASSWORD = String(process.env.SITE_PASSWORD || '').trim();
 const GREEN_API_BASE_URL = String(process.env.GREEN_API_BASE_URL || 'https://api.green-api.com').trim().replace(/\/+$/, '');
 const GREEN_API_ID_INSTANCE = String(process.env.GREEN_API_ID_INSTANCE || '').trim();
 const GREEN_API_TOKEN_INSTANCE = String(process.env.GREEN_API_TOKEN_INSTANCE || '').trim();
+const LOCAL_PAIRING_ENABLED = String(process.env.LOCAL_PAIRING_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const PAIRING_REQUEST_DELAY_MS = Math.max(parseInteger(process.env.PAIRING_REQUEST_DELAY_MS, 2500), 1500);
+const PAIRING_TTL_MS = Math.max(parseInteger(process.env.PAIRING_TTL_MS, 120000), 30000);
+const SESSIONS_DIR = path.join(BASE_DIR, 'wa_sessions');
+const LOCAL_PAIRING_PAGE_ROUTE = '/pair';
+const LOCAL_PAIRING_API_ROUTE = '/api/pairing';
+const ALT_LOCAL_PAIRING_API_ROUTE = '/api/pair';
+const activePairingPromises = new Map();
+const localPairingSessions = new Map();
+let cachedBaileysLoader = null;
 
 function getGreenApiAuthorizationUrl() {
   if (GREEN_API_ID_INSTANCE && GREEN_API_TOKEN_INSTANCE) {
@@ -326,6 +411,17 @@ function getBotPublicOriginCandidates() {
   return Array.from(new Set(rawCandidates.map(normalizeHttpUrl).filter(Boolean)));
 }
 
+function isAllowedSelfServicePath(pathname) {
+  const normalizedPath = normalizeHttpUrl(pathname || '/') || '/';
+  return [
+    /^\/api\/pair(?:ing)?$/i,
+    /^\/pair$/i,
+    /^\/settings$/i,
+    /^\/api\/settings\/(?:load|save)$/i,
+    /^\/api\/login$/i
+  ].some((pattern) => pattern.test(normalizedPath));
+}
+
 function looksLikeSelfOrHealthUrl(value) {
   const normalized = normalizeHttpUrl(value);
   if (!normalized || looksLikeGreenApiAuthorizationUrl(normalized)) {
@@ -340,7 +436,7 @@ function looksLikeSelfOrHealthUrl(value) {
   const origin = `${parsed.protocol}//${parsed.host}`;
   const pathname = normalizeHttpUrl(parsed.pathname || '/') || '/';
 
-  if (getBotPublicOriginCandidates().includes(origin)) {
+  if (getBotPublicOriginCandidates().includes(origin) && !isAllowedSelfServicePath(pathname)) {
     return true;
   }
 
@@ -348,22 +444,56 @@ function looksLikeSelfOrHealthUrl(value) {
     return true;
   }
 
-  if (/railway\.(app|internal)$/i.test(parsed.hostname) && !/getAuthorizationCode/i.test(pathname)) {
+  if (/railway\.(app|internal)$/i.test(parsed.hostname) && !/getAuthorizationCode/i.test(pathname) && !isAllowedSelfServicePath(pathname)) {
     return true;
   }
 
   return false;
 }
 
+function isLocalPairingApiUrl(value) {
+  const normalized = normalizeHttpUrl(value);
+  if (!normalized) {
+    return false;
+  }
+
+  if ([LOCAL_PAIRING_API_ROUTE, ALT_LOCAL_PAIRING_API_ROUTE].includes(normalized)) {
+    return true;
+  }
+
+  const parsed = tryParseUrl(normalized);
+  if (!parsed) {
+    return false;
+  }
+
+  const origin = `${parsed.protocol}//${parsed.host}`;
+  const pathname = normalizeHttpUrl(parsed.pathname || '/') || '/';
+  return getBotPublicOriginCandidates().includes(origin) && [LOCAL_PAIRING_API_ROUTE, ALT_LOCAL_PAIRING_API_ROUTE].includes(pathname);
+}
+
+function getPrimaryPublicOrigin() {
+  return getBotPublicOriginCandidates()[0] || '';
+}
+
+function buildLocalPairingApiUrl() {
+  const origin = getPrimaryPublicOrigin();
+  return origin ? `${origin}${LOCAL_PAIRING_API_ROUTE}` : '';
+}
+
+function buildLocalPairingPageUrl() {
+  const origin = getPrimaryPublicOrigin();
+  return origin ? `${origin}${LOCAL_PAIRING_PAGE_ROUTE}` : '';
+}
+
 function sanitizePairCodeApiUrl(value) {
   const normalized = normalizeHttpUrl(value);
-  const fallbackUrl = getGreenApiAuthorizationUrl();
+  const fallbackUrl = buildLocalPairingApiUrl() || getGreenApiAuthorizationUrl();
 
   if (!normalized) {
     return fallbackUrl;
   }
 
-  if (looksLikeGreenApiAuthorizationUrl(normalized)) {
+  if (looksLikeGreenApiAuthorizationUrl(normalized) || isLocalPairingApiUrl(normalized)) {
     return normalized;
   }
 
@@ -375,8 +505,8 @@ function sanitizePairCodeApiUrl(value) {
       return `${normalized}/${GREEN_API_TOKEN_INSTANCE}`;
     }
 
-    if (/green-api\.com$/i.test(parsed.hostname) && fallbackUrl) {
-      return fallbackUrl;
+    if (/green-api\.com$/i.test(parsed.hostname) && getGreenApiAuthorizationUrl()) {
+      return getGreenApiAuthorizationUrl();
     }
   }
 
@@ -396,7 +526,7 @@ function getPairCodeApiCandidates() {
     sanitizePairCodeApiUrl(SETTINGS?.pair_code_api_url),
     sanitizePairCodeApiUrl(process.env.PAIR_CODE_API_URL),
     getGreenApiAuthorizationUrl()
-  ]);
+  ]).filter((url) => !isLocalPairingApiUrl(url));
 }
 
 function getPairCodeMethodCandidates() {
@@ -412,18 +542,459 @@ function getPairCodeNumberFieldCandidates() {
   return uniqueNonEmptyValues([
     SETTINGS?.pair_code_api_number_field,
     process.env.PAIR_CODE_API_NUMBER_FIELD,
+    'phone',
+    'num',
     'phoneNumber',
     'number'
   ]);
 }
 
+
+function toBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'off', 'disabled'].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function sendJson(res, statusCode, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
+function sendHtml(res, statusCode, html) {
+  const body = String(html || '');
+  res.writeHead(statusCode, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
+async function parseRequestBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (!raw) {
+    return {};
+  }
+
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    return JSON.parse(raw);
+  }
+
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    return Object.fromEntries(new URLSearchParams(raw).entries());
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return Object.fromEntries(new URLSearchParams(raw).entries());
+  }
+}
+
+function getSiteSecret(req, body = {}, parsedUrl = null) {
+  return String(
+    body.password
+    || body.site_password
+    || req.headers['x-site-password']
+    || req.headers.authorization?.replace(/^Bearer\s+/i, '')
+    || parsedUrl?.searchParams?.get('password')
+    || ''
+  ).trim();
+}
+
+function isSiteAuthorized(req, body = {}, parsedUrl = null) {
+  if (!SITE_PASSWORD) {
+    return true;
+  }
+  return getSiteSecret(req, body, parsedUrl) === SITE_PASSWORD;
+}
+
+function buildSerializableSettings() {
+  return {
+    current_emoji: SETTINGS.current_emoji,
+    auto_reply_enabled: SETTINGS.auto_reply_enabled,
+    pair_code_api_url: SETTINGS.pair_code_api_url || buildLocalPairingApiUrl(),
+    pair_code_api_method: SETTINGS.pair_code_api_method,
+    pair_code_api_token: SETTINGS.pair_code_api_token ? 'configured' : '',
+    pair_code_api_number_field: SETTINGS.pair_code_api_number_field
+  };
+}
+
+function buildPairingApiDescriptor() {
+  return {
+    endpoint: resolvePairCodeApiUrl() || LOCAL_PAIRING_API_ROUTE,
+    route: LOCAL_PAIRING_API_ROUTE,
+    page: buildLocalPairingPageUrl() || LOCAL_PAIRING_PAGE_ROUTE,
+    methods: ['GET', 'POST'],
+    requestFields: ['phone', 'num', 'phoneNumber', 'number'],
+    requestExample: { phone: '201012345678' },
+    localPairingEnabled: LOCAL_PAIRING_ENABLED,
+    publicOrigin: getPrimaryPublicOrigin() || null
+  };
+}
+
+function buildLandingPageHtml() {
+  const pairingInfo = buildPairingApiDescriptor();
+  const currentEndpoint = escapeHtml(pairingInfo.endpoint || LOCAL_PAIRING_API_ROUTE);
+  const currentPage = escapeHtml(pairingInfo.page || LOCAL_PAIRING_PAGE_ROUTE);
+  const publicOrigin = escapeHtml(pairingInfo.publicOrigin || 'غير محدد');
+  const localStatus = LOCAL_PAIRING_ENABLED ? 'مفعل' : 'معطل';
+  const autoReplyStatus = SETTINGS.auto_reply_enabled ? 'مفعل' : 'معطل';
+
+  return `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>موقع ربط واتساب</title>
+  <style>
+    :root { --bg:#0d1117; --card:#161b22; --muted:#8b949e; --text:#e6edf3; --accent:#f0b34a; --accent2:#2f81f7; --border:#30363d; --ok:#238636; --danger:#da3633; }
+    *{box-sizing:border-box} body{margin:0;font-family:Tahoma,Arial,sans-serif;background:linear-gradient(180deg,#0d1117,#111827);color:var(--text)}
+    .wrap{max-width:880px;margin:0 auto;padding:24px} .card{background:rgba(22,27,34,.96);border:1px solid var(--border);border-radius:18px;padding:22px;box-shadow:0 18px 40px rgba(0,0,0,.25)}
+    .hero{display:grid;gap:16px;margin-bottom:18px} .title{font-size:30px;font-weight:700;margin:0} .muted{color:var(--muted);line-height:1.8}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(47,129,247,.12);color:#9ecbff;border:1px solid rgba(47,129,247,.22)}
+    .row{display:flex;gap:10px;flex-wrap:wrap}.info{background:#0f141b;border:1px solid var(--border);border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);margin-bottom:6px}.value{font-size:14px;word-break:break-word}
+    input,button{width:100%;border-radius:12px;border:1px solid var(--border);padding:14px 16px;font-size:15px} input{background:#0d1117;color:var(--text)} button{background:linear-gradient(135deg,var(--accent),#d18c19);color:#111;font-weight:700;cursor:pointer}
+    button.secondary{background:#1f2937;color:var(--text)} pre{white-space:pre-wrap;background:#0d1117;border:1px solid var(--border);padding:14px;border-radius:12px;min-height:58px}
+    a{color:#9ecbff;text-decoration:none} .foot{margin-top:14px;font-size:13px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero card">
+      <div class="badge">تم إصلاح موقع الربط داخل الملف</div>
+      <h1 class="title">موقع ربط واتساب + API</h1>
+      <div class="muted">هذه الصفحة حلت مشكلة ظهور JSON فقط في الصفحة الرئيسية، وصارت توفر واجهة جاهزة لطلب كود الربط وعرض حالة الخدمة ونقطة API الصحيحة.</div>
+      <div class="grid">
+        <div class="info"><div class="label">رابط الصفحة</div><div class="value"><a href="${currentPage}">${currentPage}</a></div></div>
+        <div class="info"><div class="label">رابط API</div><div class="value"><code>${currentEndpoint}</code></div></div>
+        <div class="info"><div class="label">الأصل العام</div><div class="value">${publicOrigin}</div></div>
+        <div class="info"><div class="label">الربط المحلي</div><div class="value">${escapeHtml(localStatus)}</div></div>
+        <div class="info"><div class="label">الرد التلقائي</div><div class="value">${escapeHtml(autoReplyStatus)}</div></div>
+        <div class="info"><div class="label">الإيموجي الافتراضي</div><div class="value">${escapeHtml(SETTINGS.current_emoji)}</div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h2 style="margin-top:0">طلب كود الربط</h2>
+      <div class="muted">أدخل الرقم بصيغة دولية بدون + أو مسافات، مثال: <b>201012345678</b></div>
+      <div class="row" style="margin-top:14px">
+        <input id="phone" placeholder="201012345678" />
+        <button id="pairBtn">استخراج الكود</button>
+      </div>
+      <pre id="result">النتيجة ستظهر هنا...</pre>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">روابط الإدارة</h2>
+      <div class="row">
+        <button class="secondary" onclick="location.href='/settings'">فتح صفحة الإعدادات</button>
+        <button class="secondary" onclick="window.open('${currentEndpoint}','_blank')">عرض وصف API</button>
+      </div>
+      <div class="foot">نقاط الطلب المدعومة: <code>phone</code> و <code>num</code> و <code>phoneNumber</code> و <code>number</code>.</div>
+    </div>
+  </div>
+  <script>
+    const btn = document.getElementById('pairBtn');
+    const phoneInput = document.getElementById('phone');
+    const result = document.getElementById('result');
+    btn.addEventListener('click', async () => {
+      const phone = String(phoneInput.value || '').replace(/\D/g, '');
+      if (!phone) {
+        result.textContent = 'اكتب الرقم أولاً.';
+        return;
+      }
+      btn.disabled = true;
+      result.textContent = 'جاري طلب كود الربط...';
+      try {
+        const response = await fetch('${LOCAL_PAIRING_API_ROUTE}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone })
+        });
+        const data = await response.json();
+        result.textContent = data.success ? ('✅ الرقم: ' + data.phone + '\n🔐 الكود: ' + data.code) : ('❌ ' + (data.error || 'فشل غير معروف'));
+      } catch (error) {
+        result.textContent = '❌ ' + (error.message || error);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function buildSettingsPageHtml() {
+  const requiresPassword = SITE_PASSWORD ? 'نعم' : 'لا';
+  return `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>إعدادات موقع الربط</title>
+  <style>
+    body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#0d1117;color:#e6edf3;padding:24px} .wrap{max-width:760px;margin:0 auto}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:18px;padding:22px}.grid{display:grid;gap:12px}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    input,select,button{width:100%;border-radius:12px;border:1px solid #30363d;padding:14px 16px;background:#0d1117;color:#e6edf3} button{background:#f0b34a;color:#111;font-weight:700;cursor:pointer}
+    .muted{color:#8b949e;line-height:1.8} pre{white-space:pre-wrap;background:#0d1117;border:1px solid #30363d;padding:14px;border-radius:12px}
+    @media(max-width:700px){.row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap card">
+    <h1 style="margin-top:0">إعدادات الموقع</h1>
+    <div class="muted">من هنا تقدر تعدل إعدادات الربط بدون الرجوع للملف. الحماية بكلمة المرور مطلوبة: <b>${requiresPassword}</b></div>
+    <div class="grid" style="margin-top:16px">
+      <input id="password" type="password" placeholder="كلمة مرور الموقع إن وجدت" />
+      <div class="row">
+        <input id="emoji" placeholder="الإيموجي الحالي" />
+        <select id="autoReply"><option value="true">تفعيل الرد التلقائي</option><option value="false">إيقاف الرد التلقائي</option></select>
+      </div>
+      <input id="apiUrl" placeholder="PAIR_CODE_API_URL" />
+      <div class="row">
+        <select id="apiMethod"><option value="POST">POST</option><option value="GET">GET</option></select>
+        <input id="numberField" placeholder="اسم حقل الرقم" />
+      </div>
+      <input id="apiToken" placeholder="PAIR_CODE_API_TOKEN (اختياري)" />
+      <div class="row">
+        <button id="loadBtn" type="button">تحميل الإعدادات</button>
+        <button id="saveBtn" type="button">حفظ الإعدادات</button>
+      </div>
+      <pre id="out">جاهز</pre>
+    </div>
+  </div>
+  <script>
+    const out = document.getElementById('out');
+    const fields = {
+      password: document.getElementById('password'),
+      emoji: document.getElementById('emoji'),
+      autoReply: document.getElementById('autoReply'),
+      apiUrl: document.getElementById('apiUrl'),
+      apiMethod: document.getElementById('apiMethod'),
+      apiToken: document.getElementById('apiToken'),
+      numberField: document.getElementById('numberField')
+    };
+
+    async function loadSettings() {
+      out.textContent = 'جاري تحميل الإعدادات...';
+      const response = await fetch('/api/settings/load');
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'فشل التحميل');
+      fields.emoji.value = data.settings.current_emoji || '';
+      fields.autoReply.value = String(Boolean(data.settings.auto_reply_enabled));
+      fields.apiUrl.value = data.pairing.endpoint || data.settings.pair_code_api_url || '';
+      fields.apiMethod.value = data.settings.pair_code_api_method || 'POST';
+      fields.numberField.value = data.settings.pair_code_api_number_field || 'phone';
+      fields.apiToken.value = '';
+      out.textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function saveSettings() {
+      out.textContent = 'جاري الحفظ...';
+      const response = await fetch('/api/settings/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: fields.password.value,
+          current_emoji: fields.emoji.value,
+          auto_reply_enabled: fields.autoReply.value,
+          pair_code_api_url: fields.apiUrl.value,
+          pair_code_api_method: fields.apiMethod.value,
+          pair_code_api_token: fields.apiToken.value,
+          pair_code_api_number_field: fields.numberField.value
+        })
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'فشل الحفظ');
+      out.textContent = JSON.stringify(data, null, 2);
+    }
+
+    document.getElementById('loadBtn').addEventListener('click', () => loadSettings().catch((error) => out.textContent = '❌ ' + (error.message || error)));
+    document.getElementById('saveBtn').addEventListener('click', () => saveSettings().catch((error) => out.textContent = '❌ ' + (error.message || error)));
+    loadSettings().catch((error) => out.textContent = '❌ ' + (error.message || error));
+  </script>
+</body>
+</html>`;
+}
+
+async function getBaileysModules() {
+  if (!cachedBaileysLoader) {
+    cachedBaileysLoader = (async () => {
+      let pinoFactory = null;
+      try {
+        pinoFactory = require('pino');
+      } catch (_) {
+        pinoFactory = null;
+      }
+
+      try {
+        const baileys = require('@whiskeysockets/baileys');
+        return { ...baileys, pinoFactory };
+      } catch (error) {
+        throw new Error('الحزمة @whiskeysockets/baileys غير مثبتة. ثبّت dependencies المرفقة ثم أعد التشغيل.');
+      }
+    })();
+  }
+  return cachedBaileysLoader;
+}
+
+function getSessionPath(phone) {
+  return path.join(SESSIONS_DIR, phone);
+}
+
+async function cleanupLocalPairingSession(phone, removeFiles = false) {
+  const key = normalizePhoneNumber(phone);
+  const session = localPairingSessions.get(key);
+  if (session?.timeout) {
+    clearTimeout(session.timeout);
+  }
+
+  localPairingSessions.delete(key);
+
+  if (session?.sock) {
+    try { session.sock.ws?.close?.(); } catch (_) {}
+    try { session.sock.end?.(); } catch (_) {}
+    try { await session.sock.logout?.(); } catch (_) {}
+  }
+
+  if (removeFiles) {
+    try {
+      fs.rmSync(getSessionPath(key), { recursive: true, force: true });
+    } catch (_) {}
+  }
+}
+
+function scheduleLocalPairingCleanup(phone, removeFiles = true) {
+  const key = normalizePhoneNumber(phone);
+  const session = localPairingSessions.get(key);
+  if (!session) {
+    return;
+  }
+
+  if (session.timeout) {
+    clearTimeout(session.timeout);
+  }
+
+  session.timeout = setTimeout(() => {
+    cleanupLocalPairingSession(key, removeFiles).catch((error) => {
+      console.error('Failed to cleanup local pairing session:', error.message);
+    });
+  }, PAIRING_TTL_MS);
+}
+
+async function requestPairCodeLocally(number) {
+  const phone = normalizePhoneNumber(number);
+  if (!LOCAL_PAIRING_ENABLED) {
+    throw new Error('خدمة الربط المحلي معطلة من متغيرات البيئة.');
+  }
+
+  if (!phone) {
+    throw new Error('رقم غير صالح.');
+  }
+
+  if (activePairingPromises.has(phone)) {
+    return activePairingPromises.get(phone);
+  }
+
+  const promise = (async () => {
+    await cleanupLocalPairingSession(phone, false);
+    ensureDir(SESSIONS_DIR);
+    ensureDir(getSessionPath(phone));
+
+    const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, pinoFactory } = await getBaileysModules();
+    const { state, saveCreds } = await useMultiFileAuthState(getSessionPath(phone));
+    const { version } = await fetchLatestBaileysVersion();
+    const logger = typeof pinoFactory === 'function' ? pinoFactory({ level: 'silent' }) : undefined;
+
+    const sock = makeWASocket({
+      version,
+      logger,
+      printQRInTerminal: false,
+      auth: state,
+      browser: Browsers.ubuntu('Chrome'),
+      syncFullHistory: false,
+      connectTimeoutMs: 90000,
+      defaultQueryTimeoutMs: 0,
+      keepAliveIntervalMs: 15000,
+      markOnlineOnConnect: false
+    });
+
+    sock.ev.setMaxListeners?.(0);
+    sock.ws?.setMaxListeners?.(0);
+    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('connection.update', async (update = {}) => {
+      const connection = update.connection;
+      const statusCode = Number(update.lastDisconnect?.error?.output?.statusCode || 0);
+
+      if (connection === 'open') {
+        scheduleLocalPairingCleanup(phone, false);
+        return;
+      }
+
+      if (connection === 'close' && statusCode !== Number(DisconnectReason?.loggedOut || 401)) {
+        scheduleLocalPairingCleanup(phone, true);
+      }
+    });
+
+    localPairingSessions.set(phone, { sock, createdAt: Date.now(), timeout: null });
+    await sleep(PAIRING_REQUEST_DELAY_MS);
+
+    if (!sock.requestPairingCode) {
+      throw new Error('تعذر إنشاء جلسة الربط.');
+    }
+
+    const code = await sock.requestPairingCode(phone);
+    scheduleLocalPairingCleanup(phone, true);
+    return code;
+  })();
+
+  activePairingPromises.set(phone, promise);
+  try {
+    return await promise;
+  } catch (error) {
+    await cleanupLocalPairingSession(phone, true);
+    throw error;
+  } finally {
+    activePairingPromises.delete(phone);
+  }
+}
+
 const DEFAULT_SETTINGS = {
   current_emoji: String(process.env.CURRENT_EMOJI || '🔥').trim() || '🔥',
   auto_reply_enabled: String(process.env.AUTO_REPLY_ENABLED || 'true').toLowerCase() === 'true',
-  pair_code_api_url: sanitizePairCodeApiUrl(process.env.PAIR_CODE_API_URL),
+  pair_code_api_url: sanitizePairCodeApiUrl(process.env.PAIR_CODE_API_URL || buildLocalPairingApiUrl()),
   pair_code_api_method: String(process.env.PAIR_CODE_API_METHOD || 'POST').trim().toUpperCase() || 'POST',
   pair_code_api_token: String(process.env.PAIR_CODE_API_TOKEN || '').trim(),
-  pair_code_api_number_field: String(process.env.PAIR_CODE_API_NUMBER_FIELD || 'phoneNumber').trim() || 'phoneNumber'
+  pair_code_api_number_field: String(process.env.PAIR_CODE_API_NUMBER_FIELD || 'phone').trim() || 'phone'
 };
 
 const DEFAULT_LINKED_NUMBERS = {
@@ -901,6 +1472,7 @@ function findCodeInPayload(payload) {
     'pair_code',
     'pairing_code',
     'pairingCode',
+    'pairCode',
     'code',
     'link_code',
     'linkCode',
@@ -914,18 +1486,20 @@ function findErrorMessageInPayload(payload) {
     'message',
     'error',
     'details',
-    'description'
+    'description',
+    'reason'
   ]);
 }
 
 function resolvePairCodeApiUrl() {
-  return getPairCodeApiCandidates()[0] || '';
+  return sanitizePairCodeApiUrl(SETTINGS?.pair_code_api_url) || buildLocalPairingApiUrl() || getPairCodeApiCandidates()[0] || '';
 }
 
-async function requestPairCode(number) {
-  const apiUrls = getPairCodeApiCandidates();
+async function requestPairCodeViaExternalApi(number, options = {}) {
+  const excludedUrls = new Set((options.excludeUrls || []).map((item) => normalizeHttpUrl(item)).filter(Boolean));
+  const apiUrls = getPairCodeApiCandidates().filter((item) => !excludedUrls.has(normalizeHttpUrl(item)));
   if (!apiUrls.length) {
-    throw new Error('خدمة الربط غير مضبوطة. أضف معلومات Green API داخل ملف .env أو من لوحة المطور.');
+    throw new Error('لا يوجد API خارجي صالح للربط حالياً.');
   }
 
   let lastError = null;
@@ -976,13 +1550,13 @@ async function requestPairCode(number) {
               const data = response.data;
 
               if (data && typeof data === 'object' && data.ok === true && data.service === 'telegram-bot') {
-                lastError = new Error('رابط خدمة الربط يشير إلى سيرفر البوت أو health check بدل endpoint الصحيح لاستخراج كود واتساب. تم تجاهل هذا الرابط والانتقال تلقائيًا إلى endpoint Green API الصحيح.');
+                lastError = new Error('تم إرسال الطلب إلى health check أو الصفحة الرئيسية بدل endpoint الربط الصحيح.');
                 continue;
               }
 
-              if (data && typeof data === 'object' && data.status === false) {
+              if (data && typeof data === 'object' && (data.status === false || data.success === false)) {
                 const errorText = findErrorMessageInPayload(data)
-                  || 'تعذّر الحصول على كود الربط. تأكد أن الجلسة غير مربوطة حاليًا في Green API ثم أعد المحاولة.';
+                  || 'تعذّر الحصول على كود الربط من الخدمة الخارجية.';
                 lastError = new Error(errorText);
                 continue;
               }
@@ -1009,11 +1583,11 @@ async function requestPairCode(number) {
               continue;
             }
 
-            const text = typeof response.data === 'string'
+            const textResponse = typeof response.data === 'string'
               ? response.data.trim()
               : stringifyPayload(response.data || '').trim();
 
-            if (text && text.length <= 64 && !/[{}<>\n\r]/.test(text)) {
+            if (textResponse && textResponse.length <= 64 && !/[{}<>\n\r]/.test(textResponse)) {
               if (SETTINGS.pair_code_api_url !== apiUrl) {
                 SETTINGS.pair_code_api_url = apiUrl;
                 saveSettings();
@@ -1026,7 +1600,7 @@ async function requestPairCode(number) {
                 SETTINGS.pair_code_api_number_field = numberField;
                 saveSettings();
               }
-              return text;
+              return textResponse;
             }
 
             lastError = new Error(`الاستجابة لا تحتوي على كود صالح للرقم ${numberVariant}`);
@@ -1041,17 +1615,31 @@ async function requestPairCode(number) {
     }
   }
 
-  throw new Error(`فشل استخراج كود الربط. آخر خطأ: ${lastError?.message || 'Unknown error'}`);
+  throw new Error(`فشل استخراج كود الربط من API خارجي. آخر خطأ: ${lastError?.message || 'Unknown error'}`);
 }
 
-async function safeEditMessageText(bot, chatId, messageId, text, options) {
-  try {
-    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...options });
-  } catch (error) {
-    if (String(error.message || '').includes('message is not modified')) {
-      return;
+async function requestPairCode(number, options = {}) {
+  const phone = normalizePhoneNumber(number);
+  let localError = null;
+
+  if (!options.skipLocal && LOCAL_PAIRING_ENABLED) {
+    try {
+      return await requestPairCodeLocally(phone);
+    } catch (error) {
+      localError = error;
+      console.error('Local pairing failed for %s:', phone, error.message);
     }
-    throw error;
+  }
+
+  try {
+    return await requestPairCodeViaExternalApi(phone, {
+      excludeUrls: options.skipSelfApi ? [buildLocalPairingApiUrl(), LOCAL_PAIRING_API_ROUTE, ALT_LOCAL_PAIRING_API_ROUTE] : []
+    });
+  } catch (externalError) {
+    if (localError) {
+      throw new Error(`فشل الربط المحلي: ${localError.message} | وفشل الربط الخارجي: ${externalError.message}`);
+    }
+    throw externalError;
   }
 }
 
@@ -1383,8 +1971,8 @@ async function bootstrap() {
   ensureLinkedFilesOnDisk();
   startHealthServer();
 
-  if (!resolvePairCodeApiUrl()) {
-    console.warn('Warning: pairing API is not configured yet.');
+  if (!resolvePairCodeApiUrl() && !LOCAL_PAIRING_ENABLED) {
+    console.warn('Warning: no pairing service is configured yet.');
   }
 
   const bot = new TelegramBot(BOT_TOKEN, {
