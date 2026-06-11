@@ -7,6 +7,6 @@ services:
     startCommand: node index.js
     envVars:
       - key: NODE_VERSION
-        value: 18.x
+        value: 20.x
       - key: BOT_TOKEN
         sync: false # سيطلب منك إدخاله يدوياً في الموقع لزيادة الأمان
