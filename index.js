@@ -1,10 +1,272 @@
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const TelegramBot = require('node-telegram-bot-api');
-const dotenv = require('dotenv');
+const http = require('http');
+const { EventEmitter } = require('events');
 
-dotenv.config({ path: path.join(__dirname, '.env') });
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return;
+    }
+
+    const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+    for (const rawLine of lines) {
+      const line = String(rawLine || '').trim();
+      if (!line || line.startsWith('#')) {
+        continue;
+      }
+
+      const separatorIndex = line.indexOf('=');
+      if (separatorIndex === -1) {
+        continue;
+      }
+
+      const key = line.slice(0, separatorIndex).trim();
+      if (!key || process.env[key] !== undefined) {
+        continue;
+      }
+
+      let value = line.slice(separatorIndex + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+
+      process.env[key] = value.replace(/\\n/g, '\n');
+    }
+  } catch (error) {
+    console.error('Failed to load .env file:', error.message);
+  }
+}
+
+async function httpRequest({ method = 'GET', url, headers = {}, query, data, timeout = 45000 }) {
+  const finalUrl = new URL(url);
+  if (query && typeof query === 'object') {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null || value === '') {
+        continue;
+      }
+      finalUrl.searchParams.set(key, String(value));
+    }
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const normalizedHeaders = { ...headers };
+    let body;
+
+    if (data !== undefined) {
+      body = typeof data === 'string' ? data : JSON.stringify(data);
+      const hasContentType = Object.keys(normalizedHeaders).some((key) => key.toLowerCase() === 'content-type');
+      if (!hasContentType) {
+        normalizedHeaders['Content-Type'] = 'application/json';
+      }
+    }
+
+    const response = await fetch(finalUrl, {
+      method,
+      headers: normalizedHeaders,
+      body,
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    let parsed = text;
+
+    if (contentType.includes('application/json')) {
+      try {
+        parsed = text ? JSON.parse(text) : {};
+      } catch {
+        parsed = text;
+      }
+    }
+
+    return {
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      data: parsed,
+      text
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function stringifyPayload(payload) {
+  if (payload === undefined || payload === null) {
+    return '';
+  }
+  if (typeof payload === 'string') {
+    return payload;
+  }
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return String(payload);
+  }
+}
+
+class TelegramBot extends EventEmitter {
+  constructor(token, options = {}) {
+    super();
+    this.token = token;
+    this.textHandlers = [];
+    this.offset = 0;
+    this.pollingTimeout = Number(options?.polling?.params?.timeout || 30);
+    this.isPolling = false;
+    this.stopped = false;
+
+    if (options.polling !== false) {
+      this.startPolling().catch((error) => {
+        this.emit('polling_error', error);
+      });
+    }
+  }
+
+  onText(regex, handler) {
+    this.textHandlers.push({ regex, handler });
+  }
+
+  async apiCall(method, params = {}) {
+    const response = await httpRequest({
+      method: 'POST',
+      url: `https://api.telegram.org/bot${this.token}/${method}`,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      data: params,
+      timeout: 60000
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Telegram API HTTP ${response.status}: ${stringifyPayload(response.data || response.text)}`);
+    }
+
+    if (!response.data || response.data.ok !== true) {
+      const description = response.data?.description || response.text || 'Unknown Telegram API error';
+      throw new Error(String(description));
+    }
+
+    return response.data.result;
+  }
+
+  async sendMessage(chatId, text, options = {}) {
+    return this.apiCall('sendMessage', {
+      chat_id: chatId,
+      text,
+      ...options
+    });
+  }
+
+  async editMessageText(text, options = {}) {
+    return this.apiCall('editMessageText', {
+      text,
+      ...options
+    });
+  }
+
+  async answerCallbackQuery(callbackQueryId, options = {}) {
+    return this.apiCall('answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      ...options
+    });
+  }
+
+  async setMyCommands(commands) {
+    return this.apiCall('setMyCommands', { commands });
+  }
+
+  async getUpdates() {
+    return this.apiCall('getUpdates', {
+      offset: this.offset,
+      timeout: this.pollingTimeout,
+      allowed_updates: ['message', 'callback_query']
+    });
+  }
+
+  async emitAsync(eventName, payload) {
+    const listeners = this.listeners(eventName);
+    for (const listener of listeners) {
+      await listener(payload);
+    }
+  }
+
+  async dispatchMessage(message) {
+    if (typeof message?.text === 'string') {
+      for (const { regex, handler } of this.textHandlers) {
+        regex.lastIndex = 0;
+        const match = regex.exec(message.text);
+        if (match) {
+          await handler(message, match);
+        }
+      }
+    }
+
+    await this.emitAsync('message', message);
+  }
+
+  async dispatchUpdate(update) {
+    if (update.callback_query) {
+      await this.emitAsync('callback_query', update.callback_query);
+    }
+
+    if (update.message) {
+      await this.dispatchMessage(update.message);
+    }
+  }
+
+  async startPolling() {
+    if (this.isPolling) {
+      return;
+    }
+
+    this.isPolling = true;
+    while (!this.stopped) {
+      try {
+        const updates = await this.getUpdates();
+        for (const update of updates) {
+          this.offset = Math.max(this.offset, Number(update.update_id || 0) + 1);
+          await this.dispatchUpdate(update);
+        }
+      } catch (error) {
+        this.emit('polling_error', error);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    this.isPolling = false;
+  }
+
+  stopPolling() {
+    this.stopped = true;
+  }
+}
+
+function startHealthServer() {
+  const port = Number.parseInt(String(process.env.PORT || '').trim(), 10);
+  if (!Number.isFinite(port) || port <= 0) {
+    return null;
+  }
+
+  const server = http.createServer((req, res) => {
+    const body = JSON.stringify({ ok: true, service: 'telegram-bot', timestamp: new Date().toISOString() });
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body)
+    });
+    res.end(body);
+  });
+
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`Health server listening on port ${port}`);
+  });
+
+  return server;
+}
+
+loadEnvFile(path.join(__dirname, '.env'));
 
 const BASE_DIR = __dirname;
 const SETTINGS_PATH = path.join(BASE_DIR, 'bot_settings.json');
@@ -542,22 +804,21 @@ async function requestPairCode(number) {
     };
 
     try {
-      const method = SETTINGS.pair_code_api_method === 'GET' ? 'get' : 'post';
-      const response = await axios({
+      const method = SETTINGS.pair_code_api_method === 'GET' ? 'GET' : 'POST';
+      const response = await httpRequest({
         method,
         url: apiUrl,
         timeout: 45000,
         headers: {
           ...headers,
-          ...(method === 'post' ? { 'Content-Type': 'application/json' } : {})
+          ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {})
         },
-        params: method === 'get' ? payload : undefined,
-        data: method === 'post' ? payload : undefined,
-        validateStatus: () => true
+        query: method === 'GET' ? payload : undefined,
+        data: method === 'POST' ? payload : undefined
       });
 
       if (response.status < 200 || response.status >= 300) {
-        lastError = new Error(`HTTP ${response.status}: ${JSON.stringify(response.data)}`);
+        lastError = new Error(`HTTP ${response.status}: ${stringifyPayload(response.data || response.text)}`);
         continue;
       }
 
@@ -573,7 +834,7 @@ async function requestPairCode(number) {
 
       const text = typeof response.data === 'string'
         ? response.data.trim()
-        : JSON.stringify(response.data || '').trim();
+        : stringifyPayload(response.data || '').trim();
 
       if (text) {
         return text;
@@ -581,7 +842,10 @@ async function requestPairCode(number) {
 
       lastError = new Error(`الاستجابة فارغة للرقم ${numberVariant}`);
     } catch (error) {
-      lastError = error;
+      const message = error?.name === 'AbortError'
+        ? 'انتهت مهلة الاتصال بخدمة الربط.'
+        : (error?.message || 'Unknown error');
+      lastError = new Error(message);
     }
   }
 
@@ -924,6 +1188,7 @@ async function handleText(bot, msg) {
 
 async function bootstrap() {
   ensureLinkedFilesOnDisk();
+  startHealthServer();
 
   if (!resolvePairCodeApiUrl()) {
     console.warn('Warning: pairing API is not configured yet.');
