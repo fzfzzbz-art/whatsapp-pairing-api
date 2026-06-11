@@ -14,7 +14,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { sendRobustStatusReaction } = require('./status-reaction-fix');
+let sendRobustStatusReaction;
+try {
+    ({ sendRobustStatusReaction } = require('./statusHelper'));
+} catch (_) {
+    ({ sendRobustStatusReaction } = require('./status-reaction-fix'));
+}
 
 // =========================
 // الإعدادات الأساسية
