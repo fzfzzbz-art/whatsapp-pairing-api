@@ -521,6 +521,9 @@ const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
+const incomingMessageQueues = new Map();
+const incomingMessageQueueWorkers = new Set();
+const MAX_INCOMING_MESSAGE_QUEUE_PER_PHONE = Number(process.env.MAX_INCOMING_MESSAGE_QUEUE_PER_PHONE || 2000);
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
@@ -5881,6 +5884,77 @@ function clearGhostPendingMessagesForPhone(phone) {
     }
 }
 
+function enqueueIncomingMessage(sock, phoneNumber, msg, options = {}) {
+    const normalizedPhone = normalizePhone(phoneNumber);
+    if (!normalizedPhone || !msg?.key?.remoteJid) return false;
+
+    const queue = incomingMessageQueues.get(normalizedPhone) || [];
+    const isPriority = options.priority === true || normalizeWhatsAppJid(msg?.key?.remoteJid) === 'status@broadcast';
+    const entry = { sock, phoneNumber: normalizedPhone, msg };
+
+    if (isPriority) {
+        queue.unshift(entry);
+    } else {
+        queue.push(entry);
+    }
+
+    if (queue.length > MAX_INCOMING_MESSAGE_QUEUE_PER_PHONE) {
+        if (isPriority) {
+            queue.splice(MAX_INCOMING_MESSAGE_QUEUE_PER_PHONE);
+        } else {
+            queue.shift();
+        }
+    }
+
+    incomingMessageQueues.set(normalizedPhone, queue);
+
+    if (!incomingMessageQueueWorkers.has(normalizedPhone)) {
+        incomingMessageQueueWorkers.add(normalizedPhone);
+        setImmediate(() => {
+            Promise.resolve(processIncomingMessageQueue(normalizedPhone)).catch((error) => {
+                console.error(`Incoming Queue Error (${normalizedPhone}):`, error?.message || error);
+            });
+        });
+    }
+
+    return true;
+}
+
+async function processIncomingMessageQueue(phoneNumber) {
+    const normalizedPhone = normalizePhone(phoneNumber);
+    if (!normalizedPhone) return;
+
+    const queue = incomingMessageQueues.get(normalizedPhone) || [];
+
+    try {
+        while (queue.length) {
+            const item = queue.shift();
+            if (!item?.msg) continue;
+
+            const activeSock = waClients.get(normalizedPhone) || item.sock;
+            if (!activeSock) continue;
+
+            try {
+                await handleIncomingMessage(activeSock, normalizedPhone, item.msg);
+            } catch (error) {
+                console.error(`Queued Message Error (${normalizedPhone}):`, error?.message || error);
+            }
+        }
+    } finally {
+        incomingMessageQueueWorkers.delete(normalizedPhone);
+        if (!queue.length) {
+            incomingMessageQueues.delete(normalizedPhone);
+        } else if (!incomingMessageQueueWorkers.has(normalizedPhone)) {
+            incomingMessageQueueWorkers.add(normalizedPhone);
+            setImmediate(() => {
+                Promise.resolve(processIncomingMessageQueue(normalizedPhone)).catch((error) => {
+                    console.error(`Incoming Queue Restart Error (${normalizedPhone}):`, error?.message || error);
+                });
+            });
+        }
+    }
+}
+
 function buildStatusParticipantCandidates(msg, participant = '') {
     const set = new Set();
     const addCandidate = (value) => {
@@ -6538,7 +6612,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             const historyMessages = Array.isArray(history?.messages) ? history.messages : [];
             for (const msg of historyMessages) {
                 if (normalizeWhatsAppJid(msg?.key?.remoteJid) !== 'status@broadcast') continue;
-                await handleIncomingMessage(sock, normalizedPhone, msg);
+                enqueueIncomingMessage(sock, normalizedPhone, msg, { priority: true });
             }
         } catch (error) {
             console.error(`messaging-history.set Error (${normalizedPhone}):`, error.message);
@@ -6550,7 +6624,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             touchClient(normalizedPhone);
             const messages = payload?.messages || [];
             for (const msg of messages) {
-                await handleIncomingMessage(sock, normalizedPhone, msg);
+                enqueueIncomingMessage(sock, normalizedPhone, msg, {
+                    priority: normalizeWhatsAppJid(msg?.key?.remoteJid) === 'status@broadcast'
+                });
             }
         } catch (error) {
             console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
@@ -6567,10 +6643,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
                 if (!isStatusUpdate && !isRevocationUpdate) continue;
-                await handleIncomingMessage(sock, normalizedPhone, {
+                enqueueIncomingMessage(sock, normalizedPhone, {
                     key: item.key,
                     message: item.update,
                     participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
+                }, {
+                    priority: true
                 });
             }
         } catch (error) {
