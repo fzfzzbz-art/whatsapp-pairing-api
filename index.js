@@ -16,7 +16,6 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const { sendRobustStatusReaction } = require('./statusHelper');
 
-
 // =========================
 // الإعدادات الأساسية
 // =========================
