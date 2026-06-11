@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { sendRobustStatusReaction } = require('./statusHelper');
+
 // =========================
 // الإعدادات الأساسية
 // =========================
@@ -4149,13 +4149,22 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const updateContent = unwrapMessageContent(item.update);
                 const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                if (!isStatusUpdate && !isRevocationUpdate) continue;
-                await handleIncomingMessage(sock, normalizedPhone, {
-                    key: item.key,
-                    message: item.update,
-                    participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
-                });
-            }
+                if (isStatusUpdate) {
+    await sock.readMessages([item.key]);
+    await sendRobustStatusReaction({
+        sock: sock,
+        msg: { key: item.key },
+        emoji: '❤️'
+    });
+} else {
+    await handleIncomingMessage(sock, normalizedPhone, {
+        key: item.key,
+        message: item.update,
+        participant: item.key?.participant || item.update?.participant
+    });
+}
+
+                
         } catch (error) {
             console.error(`messages.update Error (${normalizedPhone}):`, error.message);
         }
