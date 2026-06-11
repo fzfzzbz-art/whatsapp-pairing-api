@@ -154,7 +154,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     menu: SETTINGS_IMAGE_URL,
     alive: SETTINGS_IMAGE_URL,
     owner: SETTINGS_IMAGE_URL,
-    statusCustomReact: '💚',
+    statusCustomReact: '❤️',
     antiBug: 'off',
     antiBot: 'off',
     antiBotAction: 'delete',
@@ -201,7 +201,7 @@ const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     statusReactionNotice: 'off',
     autoPrivateReact: 'off',
     keepDeletedStatus: 'off',
-    statusCustomReact: '💚',
+    statusCustomReact: '❤️',
     menu: SETTINGS_IMAGE_URL,
     alive: SETTINGS_IMAGE_URL,
     owner: SETTINGS_IMAGE_URL,
@@ -519,7 +519,7 @@ const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
-const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '💚', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
+const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '❤️', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
 const CHANNEL_REACTION_MAX_COUNT = 5000;
 const CHANNEL_REACTION_MIN_DELAY_MS = 120;
 const CHANNEL_REACTION_MAX_DELAY_MS = 420;
@@ -1714,14 +1714,7 @@ async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, inco
     }
 
     try {
-        // هذا هو الكود الصحيح الذي يجب استخدامه بدلاً من سطر الـ text
-await sock.sendMessage(jid, {
-    react: {
-        text: '❤️', // يجب استخدام القلب الأحمر حصراً ليضيء باللون الأخضر
-        key: m.key // متاح في دالة استقبال الحالات
-    }
-});
-
+        await sock.sendMessage(remoteJid, { text: replyText });
             await sock.sendMessage(remoteJid, { text: replyText });
             return true;
         } catch (fallbackError) {
@@ -12595,6 +12588,13 @@ const PythonMergedLayer = (() => {
 
     return Object.freeze(api);
 })();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+;
 
 globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
 if (typeof module !== 'undefined' && module.exports) {
