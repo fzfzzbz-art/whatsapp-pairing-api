@@ -1714,10 +1714,14 @@ async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, inco
     }
 
     try {
-        await sock.sendMessage(remoteJid, { text: replyText }, { quoted: msg });
-        return true;
-    } catch (error) {
-        try {
+        // هذا هو الكود الصحيح الذي يجب استخدامه بدلاً من سطر الـ text
+await sock.sendMessage(jid, {
+    react: {
+        text: '❤️', // يجب استخدام القلب الأحمر حصراً ليضيء باللون الأخضر
+        key: m.key // متاح في دالة استقبال الحالات
+    }
+});
+
             await sock.sendMessage(remoteJid, { text: replyText });
             return true;
         } catch (fallbackError) {
