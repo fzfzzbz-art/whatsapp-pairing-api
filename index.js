@@ -959,89 +959,161 @@ async function requestPairCodeLocally(number) {
     ensureDir(SESSIONS_DIR);
     ensureDir(getSessionPath(phone));
 
-    const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, pinoFactory } = await getBaileysModules();
+    const { default: makeWASocket, useMultiFileAuthState, Browsers, DisconnectReason, pinoFactory } = await getBaileysModules();
     const { state, saveCreds } = await useMultiFileAuthState(getSessionPath(phone));
-    const { version } = await fetchLatestBaileysVersion();
     const logger = typeof pinoFactory === 'function' ? pinoFactory({ level: 'silent' }) : undefined;
 
-    const sock = makeWASocket({
-      version,
-      logger,
-      printQRInTerminal: false,
-      auth: state,
-      browser: Browsers.ubuntu('Chrome'),
-      syncFullHistory: false,
-      connectTimeoutMs: 90000,
-      defaultQueryTimeoutMs: 0,
-      keepAliveIntervalMs: 15000,
-      markOnlineOnConnect: false
-    });
-
     const sessionState = {
-      sock,
+      sock: null,
       createdAt: Date.now(),
       timeout: null,
       completed: false,
-      requestedCode: false
+      requestedCode: false,
+      restarting: false,
+      readyPromise: null,
+      readyResolve: null,
+      readyReject: null
     };
     localPairingSessions.set(phone, sessionState);
 
-    sock.ev.setMaxListeners?.(0);
-    sock.ws?.setMaxListeners?.(0);
-
-    sock.ev.on('creds.update', async () => {
-      try {
-        await saveCreds();
-      } catch (error) {
-        console.error('Failed to save pairing credentials for %s:', phone, error.message);
+    const createReadyPromise = () => {
+      if (!sessionState.readyPromise) {
+        sessionState.readyPromise = new Promise((resolve, reject) => {
+          sessionState.readyResolve = resolve;
+          sessionState.readyReject = reject;
+        });
       }
-    });
+      return sessionState.readyPromise;
+    };
 
-    sock.ev.on('connection.update', async (update = {}) => {
-      const connection = update.connection;
-      const session = localPairingSessions.get(phone);
-      if (!session || session.sock !== sock) {
-        return;
+    const resolveReady = () => {
+      if (typeof sessionState.readyResolve === 'function') {
+        sessionState.readyResolve();
       }
+      sessionState.readyPromise = null;
+      sessionState.readyResolve = null;
+      sessionState.readyReject = null;
+    };
 
-      if (connection === 'open') {
-        session.completed = true;
+    const rejectReady = (error) => {
+      if (typeof sessionState.readyReject === 'function') {
+        sessionState.readyReject(error instanceof Error ? error : new Error(String(error || 'Unknown error')));
+      }
+      sessionState.readyPromise = null;
+      sessionState.readyResolve = null;
+      sessionState.readyReject = null;
+    };
+
+    const createSocket = () => {
+      const sock = makeWASocket({
+        logger,
+        printQRInTerminal: false,
+        auth: state,
+        browser: Browsers.macOS('Google Chrome'),
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
+        markOnlineOnConnect: false
+      });
+
+      sessionState.sock = sock;
+      sock.ev.setMaxListeners?.(0);
+      sock.ws?.setMaxListeners?.(0);
+
+      sock.ev.on('creds.update', async () => {
         try {
           await saveCreds();
         } catch (error) {
-          console.error('Failed to persist open pairing session for %s:', phone, error.message);
+          console.error('Failed to save pairing credentials for %s:', phone, error.message);
         }
-        scheduleLocalPairingCleanup(phone, false, CONNECTED_PAIRING_CLEANUP_MS);
-        return;
-      }
+      });
 
-      if (connection === 'close') {
-        if (isPermanentDisconnect(update.lastDisconnect, DisconnectReason)) {
-          scheduleLocalPairingCleanup(phone, true, 1000);
+      sock.ev.on('connection.update', async (update = {}) => {
+        const connection = update.connection;
+        const session = localPairingSessions.get(phone);
+        if (!session || session.sock !== sock) {
           return;
         }
 
-        if (session.completed) {
-          scheduleLocalPairingCleanup(phone, false, Math.min(CONNECTED_PAIRING_CLEANUP_MS, 30000));
+        const statusCode = Number(update?.lastDisconnect?.error?.output?.statusCode || 0);
+
+        if ((connection === 'connecting' || !!update.qr) && !state?.creds?.registered) {
+          resolveReady();
+        }
+
+        if (connection === 'open') {
+          session.completed = true;
+          session.restarting = false;
+          resolveReady();
+          try {
+            await saveCreds();
+          } catch (error) {
+            console.error('Failed to persist open pairing session for %s:', phone, error.message);
+          }
+          scheduleLocalPairingCleanup(phone, false, CONNECTED_PAIRING_CLEANUP_MS);
           return;
         }
 
-        scheduleLocalPairingCleanup(phone, true, PAIRING_TTL_MS);
-      }
-    });
+        if (connection === 'close') {
+          if (statusCode === Number(DisconnectReason?.restartRequired || 515) && !session.completed) {
+            session.restarting = true;
+            closeSocketQuietly(sock);
+            setTimeout(() => {
+              const latestSession = localPairingSessions.get(phone);
+              if (!latestSession || latestSession.sock !== sock || latestSession.completed) {
+                return;
+              }
+              createSocket();
+            }, 1200);
+            return;
+          }
+
+          if (isPermanentDisconnect(update.lastDisconnect, DisconnectReason)) {
+            rejectReady(new Error('واتساب رفض الجلسة أو أنهى الربط. احذف أي جهاز قديم وحاول مرة ثانية.'));
+            scheduleLocalPairingCleanup(phone, true, 1000);
+            return;
+          }
+
+          if (session.completed) {
+            scheduleLocalPairingCleanup(phone, false, Math.min(CONNECTED_PAIRING_CLEANUP_MS, 30000));
+            return;
+          }
+
+          rejectReady(new Error('انقطع الاتصال أثناء تجهيز جلسة الربط. حاول مرة ثانية.'));
+          scheduleLocalPairingCleanup(phone, true, PAIRING_TTL_MS);
+        }
+      });
+
+      return sock;
+    };
+
+    createReadyPromise();
+    createSocket();
+
+    const readyTimeout = setTimeout(() => {
+      rejectReady(new Error('انتهت مهلة تجهيز جلسة الربط. حاول مرة ثانية.'));
+    }, Math.max(PAIRING_REQUEST_DELAY_MS * 4, 45000));
+
+    if (typeof readyTimeout?.unref === 'function') {
+      readyTimeout.unref();
+    }
+
+    try {
+      await createReadyPromise();
+    } finally {
+      clearTimeout(readyTimeout);
+    }
 
     if (state?.creds?.registered) {
       await cleanupLocalPairingSession(phone, true);
-      throw new Error('تم العثور على جلسة قديمة لهذا الرقم وتم حذفها. أعد طلب كود الربط مرة أخرى.');
+      throw new Error('هذا الرقم مربوط بالفعل أو توجد له جلسة محفوظة. احذف الجلسة القديمة ثم أعد المحاولة.');
     }
 
-    await sleep(Math.max(PAIRING_REQUEST_DELAY_MS, 5000));
-
-    if (!sock.requestPairingCode) {
+    if (!sessionState.sock?.requestPairingCode) {
       throw new Error('تعذر إنشاء جلسة الربط.');
     }
 
-    const code = await sock.requestPairingCode(phone);
+    const code = await sessionState.sock.requestPairingCode(phone);
     sessionState.requestedCode = true;
     scheduleLocalPairingCleanup(phone, true, PAIRING_TTL_MS);
     return code;
