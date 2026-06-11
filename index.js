@@ -21,7 +21,7 @@ const { EventEmitter } = require('events');
 const APP_PORT = Number(process.env.PORT || 8080);
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
-const DEFAULT_REACTION_EMOJI = '❤️';
+const DEFAULT_REACTION_EMOJI = '💚';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
@@ -154,7 +154,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     menu: SETTINGS_IMAGE_URL,
     alive: SETTINGS_IMAGE_URL,
     owner: SETTINGS_IMAGE_URL,
-    statusCustomReact: '❤️',
+    statusCustomReact: '💚',
     antiBug: 'off',
     antiBot: 'off',
     antiBotAction: 'delete',
@@ -201,7 +201,7 @@ const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
     statusReactionNotice: 'off',
     autoPrivateReact: 'off',
     keepDeletedStatus: 'off',
-    statusCustomReact: '❤️',
+    statusCustomReact: '💚',
     menu: SETTINGS_IMAGE_URL,
     alive: SETTINGS_IMAGE_URL,
     owner: SETTINGS_IMAGE_URL,
@@ -519,7 +519,7 @@ const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
-const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '❤️', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
+const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '💚', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
 const CHANNEL_REACTION_MAX_COUNT = 5000;
 const CHANNEL_REACTION_MIN_DELAY_MS = 120;
 const CHANNEL_REACTION_MAX_DELAY_MS = 420;
@@ -5805,64 +5805,25 @@ function clearGhostPendingMessagesForPhone(phone) {
     }
 }
 
-function buildStatusParticipantCandidates(msg, participant = '') {
-    const set = new Set();
-    const addCandidate = (value) => {
-        const raw = String(value || '').trim();
-        if (!raw) return;
-
-        const normalizedJid = normalizeWhatsAppJid(raw);
-        if (normalizedJid && normalizedJid !== 'status@broadcast' && !normalizedJid.endsWith('@g.us') && !normalizedJid.includes('@newsletter')) {
-            set.add(normalizedJid);
-        }
-
-        const normalizedPhone = normalizePhone(raw);
-        if (normalizedPhone) {
-            set.add(`${normalizedPhone}@s.whatsapp.net`);
-            set.add(`${normalizedPhone}@lid`);
-        }
-    };
-
-    const content = unwrapMessageContent(msg?.message);
-    [
-        participant,
-        msg?.key?.participant,
-        msg?.participant,
-        msg?.message?.messageContextInfo?.participant,
-        content?.messageContextInfo?.participant,
-        content?.extendedTextMessage?.contextInfo?.participant,
-        content?.imageMessage?.contextInfo?.participant,
-        content?.videoMessage?.contextInfo?.participant,
-        content?.documentMessage?.contextInfo?.participant,
-        content?.reactionMessage?.key?.participant,
-        content?.protocolMessage?.key?.participant
-    ].forEach(addCandidate);
-
-    return Array.from(set).filter(Boolean);
-}
-
 function buildStatusReactionKey(msg, participant = '') {
-    const participantCandidates = buildStatusParticipantCandidates(msg, participant);
-    const selectedParticipant = participantCandidates[0] || normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
+    const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
     return {
         ...(msg?.key || {}),
         remoteJid: 'status@broadcast',
-        participant: selectedParticipant,
+        participant: normalizedParticipant,
         fromMe: false
     };
 }
 
-function buildStatusReactionSendOptions(participants = []) {
-    const list = Array.isArray(participants)
-        ? participants.map((item) => normalizeWhatsAppJid(item)).filter(Boolean)
-        : buildStatusParticipantCandidates(null, participants);
-
+function buildStatusReactionSendOptions(participant = '') {
+    const normalizedParticipant = normalizeWhatsAppJid(participant);
     const options = {
         broadcast: true
     };
 
-    if (list.length) {
-        options.statusJidList = Array.from(new Set(list));
+    if (normalizedParticipant) {
+        options.statusJidList = [normalizedParticipant];
+        options.participant = normalizedParticipant;
     }
 
     return options;
@@ -5873,11 +5834,10 @@ function buildQuotedStatusMessage(msg, participant = '') {
         return null;
     }
 
-    const participantCandidates = buildStatusParticipantCandidates(msg, participant);
     return {
         ...msg,
-        key: buildStatusReactionKey(msg, participantCandidates[0] || participant),
-        participant: participantCandidates[0] || participant || msg?.participant || msg?.key?.participant
+        key: buildStatusReactionKey(msg, participant),
+        participant: participant || msg?.participant || msg?.key?.participant
     };
 }
 
@@ -5924,10 +5884,9 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
 }
 
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
-    const participantCandidates = buildStatusParticipantCandidates(msg, participant);
-    const primaryParticipant = participantCandidates.find((item) => item.endsWith('@s.whatsapp.net')) || participantCandidates[0] || normalizeWhatsAppJid(participant);
-    const reactionKey = buildStatusReactionKey(msg, primaryParticipant);
-    if (!sock || !primaryParticipant || !reactionKey.id) {
+    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
+    if (!sock || !normalizedParticipant || !reactionKey.id) {
         return '';
     }
 
@@ -5937,32 +5896,13 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     }
 
     reactionEmoji = emoji;
-    const sendOptions = buildStatusReactionSendOptions(participantCandidates);
-    const originalKey = msg?.key?.id
-        ? {
-            ...msg.key,
-            remoteJid: 'status@broadcast',
-            participant: msg?.key?.participant || primaryParticipant,
-            fromMe: false
-        }
-        : null;
+    const sendOptions = buildStatusReactionSendOptions(normalizedParticipant);
 
     const attempts = [
         async () => {
-            if (!originalKey) {
-                throw new Error('Original status key unavailable');
-            }
             await sock.sendMessage('status@broadcast', {
                 react: {
-                    text: '❤️',
-                    key: originalKey
-                }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: '❤️',
+                    text: emoji,
                     key: reactionKey
                 }
             }, sendOptions);
@@ -5970,23 +5910,28 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         async () => {
             await sock.sendMessage('status@broadcast', {
                 react: {
-                    text: '❤️',
+                    text: emoji,
                     key: {
-                        id: reactionKey.id,
+                        ...reactionKey,
                         remoteJid: 'status@broadcast',
-                        participant: primaryParticipant,
+                        participant: normalizedParticipant,
                         fromMe: false
                     }
                 }
             }, sendOptions);
         },
         async () => {
-            await sock.sendMessage(primaryParticipant, {
+            await sock.sendMessage('status@broadcast', {
                 react: {
-                    text: '❤️',
-                    key: buildQuotedStatusMessage(msg, primaryParticipant)?.key || reactionKey
+                    text: emoji,
+                    key: {
+                        id: reactionKey.id,
+                        remoteJid: 'status@broadcast',
+                        participant: normalizedParticipant,
+                        fromMe: false
+                    }
                 }
-            });
+            }, sendOptions);
         }
     ];
 
@@ -5994,12 +5939,9 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     for (const attempt of attempts) {
         try {
             if (typeof delay === 'function') {
-                await delay(180);
+                await delay(150);
             }
             await attempt();
-            try {
-                await sock.readMessages([reactionKey]);
-            } catch (_) {}
             return emoji;
         } catch (error) {
             lastError = error;
@@ -12591,13 +12533,6 @@ const PythonMergedLayer = (() => {
 
     return Object.freeze(api);
 })();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
-;
 
 globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
 if (typeof module !== 'undefined' && module.exports) {
