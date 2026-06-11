@@ -294,10 +294,133 @@ function getGreenApiAuthorizationUrl() {
   return '';
 }
 
+function normalizeHttpUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function tryParseUrl(value) {
+  try {
+    return new URL(value);
+  } catch (error) {
+    return null;
+  }
+}
+
+function looksLikeGreenApiAuthorizationUrl(value) {
+  return /\/waInstance[^/]+\/getAuthorizationCode\/[^/?#]+$/i.test(normalizeHttpUrl(value));
+}
+
+function getBotPublicOriginCandidates() {
+  const rawCandidates = [
+    process.env.RAILWAY_STATIC_URL,
+    process.env.PUBLIC_URL,
+    process.env.APP_URL,
+    process.env.BASE_URL,
+    process.env.URL
+  ];
+
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    rawCandidates.push(`https://${String(process.env.RAILWAY_PUBLIC_DOMAIN).trim()}`);
+  }
+
+  return Array.from(new Set(rawCandidates.map(normalizeHttpUrl).filter(Boolean)));
+}
+
+function looksLikeSelfOrHealthUrl(value) {
+  const normalized = normalizeHttpUrl(value);
+  if (!normalized || looksLikeGreenApiAuthorizationUrl(normalized)) {
+    return false;
+  }
+
+  const parsed = tryParseUrl(normalized);
+  if (!parsed) {
+    return false;
+  }
+
+  const origin = `${parsed.protocol}//${parsed.host}`;
+  const pathname = normalizeHttpUrl(parsed.pathname || '/') || '/';
+
+  if (getBotPublicOriginCandidates().includes(origin)) {
+    return true;
+  }
+
+  if (/(^|\/)(health|healthz|status|ping|metrics)(\/|$)/i.test(pathname)) {
+    return true;
+  }
+
+  if (/railway\.(app|internal)$/i.test(parsed.hostname) && !/getAuthorizationCode/i.test(pathname)) {
+    return true;
+  }
+
+  return false;
+}
+
+function sanitizePairCodeApiUrl(value) {
+  const normalized = normalizeHttpUrl(value);
+  const fallbackUrl = getGreenApiAuthorizationUrl();
+
+  if (!normalized) {
+    return fallbackUrl;
+  }
+
+  if (looksLikeGreenApiAuthorizationUrl(normalized)) {
+    return normalized;
+  }
+
+  const parsed = tryParseUrl(normalized);
+  if (parsed) {
+    const pathname = normalizeHttpUrl(parsed.pathname || '/');
+
+    if (/\/waInstance[^/]+\/getAuthorizationCode$/i.test(pathname) && GREEN_API_TOKEN_INSTANCE) {
+      return `${normalized}/${GREEN_API_TOKEN_INSTANCE}`;
+    }
+
+    if (/green-api\.com$/i.test(parsed.hostname) && fallbackUrl) {
+      return fallbackUrl;
+    }
+  }
+
+  if (looksLikeSelfOrHealthUrl(normalized) && fallbackUrl) {
+    return fallbackUrl;
+  }
+
+  return normalized;
+}
+
+function uniqueNonEmptyValues(values) {
+  return Array.from(new Set((values || []).map((item) => String(item || '').trim()).filter(Boolean)));
+}
+
+function getPairCodeApiCandidates() {
+  return uniqueNonEmptyValues([
+    sanitizePairCodeApiUrl(SETTINGS?.pair_code_api_url),
+    sanitizePairCodeApiUrl(process.env.PAIR_CODE_API_URL),
+    getGreenApiAuthorizationUrl()
+  ]);
+}
+
+function getPairCodeMethodCandidates() {
+  return uniqueNonEmptyValues([
+    String(SETTINGS?.pair_code_api_method || '').toUpperCase(),
+    String(process.env.PAIR_CODE_API_METHOD || '').toUpperCase(),
+    'POST',
+    'GET'
+  ]).filter((method) => method === 'POST' || method === 'GET');
+}
+
+function getPairCodeNumberFieldCandidates() {
+  return uniqueNonEmptyValues([
+    SETTINGS?.pair_code_api_number_field,
+    process.env.PAIR_CODE_API_NUMBER_FIELD,
+    'phoneNumber',
+    'number'
+  ]);
+}
+
 const DEFAULT_SETTINGS = {
   current_emoji: String(process.env.CURRENT_EMOJI || '🔥').trim() || '🔥',
   auto_reply_enabled: String(process.env.AUTO_REPLY_ENABLED || 'true').toLowerCase() === 'true',
-  pair_code_api_url: String(process.env.PAIR_CODE_API_URL || '').trim() || getGreenApiAuthorizationUrl(),
+  pair_code_api_url: sanitizePairCodeApiUrl(process.env.PAIR_CODE_API_URL),
   pair_code_api_method: String(process.env.PAIR_CODE_API_METHOD || 'POST').trim().toUpperCase() || 'POST',
   pair_code_api_token: String(process.env.PAIR_CODE_API_TOKEN || '').trim(),
   pair_code_api_number_field: String(process.env.PAIR_CODE_API_NUMBER_FIELD || 'phoneNumber').trim() || 'phoneNumber'
@@ -337,7 +460,7 @@ function ensureSettingsShape(source) {
   data.pair_code_api_number_field = String(data.pair_code_api_number_field || 'phoneNumber').trim() || 'phoneNumber';
   data.current_emoji = String(data.current_emoji || '🔥').trim().slice(0, 10) || '🔥';
   data.auto_reply_enabled = Boolean(data.auto_reply_enabled);
-  data.pair_code_api_url = String(data.pair_code_api_url || '').trim();
+  data.pair_code_api_url = sanitizePairCodeApiUrl(data.pair_code_api_url);
   data.pair_code_api_token = String(data.pair_code_api_token || '').trim();
 
   return data;
@@ -796,91 +919,125 @@ function findErrorMessageInPayload(payload) {
 }
 
 function resolvePairCodeApiUrl() {
-  return SETTINGS.pair_code_api_url || getGreenApiAuthorizationUrl();
+  return getPairCodeApiCandidates()[0] || '';
 }
 
 async function requestPairCode(number) {
-  const apiUrl = resolvePairCodeApiUrl();
-  if (!apiUrl) {
+  const apiUrls = getPairCodeApiCandidates();
+  if (!apiUrls.length) {
     throw new Error('خدمة الربط غير مضبوطة. أضف معلومات Green API داخل ملف .env أو من لوحة المطور.');
   }
 
   let lastError = null;
+  const methods = getPairCodeMethodCandidates();
+  const numberFields = getPairCodeNumberFieldCandidates();
 
-  for (const numberVariant of buildNumberVariants(number)) {
-    const headers = {
-      Accept: 'application/json'
-    };
+  for (const apiUrl of apiUrls) {
+    for (const numberVariant of buildNumberVariants(number)) {
+      const headers = {
+        Accept: 'application/json'
+      };
 
-    const token = SETTINGS.pair_code_api_token || GREEN_API_TOKEN_INSTANCE;
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-      headers['x-api-key'] = token;
-    }
-
-    const cleanNumber = normalizePhoneNumber(numberVariant);
-    const payload = {
-      [SETTINGS.pair_code_api_number_field]: Number.isSafeInteger(Number(cleanNumber)) ? Number(cleanNumber) : cleanNumber
-    };
-
-    try {
-      const method = SETTINGS.pair_code_api_method === 'GET' ? 'GET' : 'POST';
-      const response = await httpRequest({
-        method,
-        url: apiUrl,
-        timeout: 45000,
-        headers: {
-          ...headers,
-          ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {})
-        },
-        query: method === 'GET' ? payload : undefined,
-        data: method === 'POST' ? payload : undefined
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        lastError = new Error(`HTTP ${response.status}: ${stringifyPayload(response.data || response.text)}`);
-        continue;
+      const token = SETTINGS.pair_code_api_token || GREEN_API_TOKEN_INSTANCE;
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+        headers['x-api-key'] = token;
       }
 
-      const contentType = String(response.headers['content-type'] || '').toLowerCase();
-      if (contentType.includes('application/json')) {
-        const data = response.data;
+      const cleanNumber = normalizePhoneNumber(numberVariant);
+      const phoneValue = Number.isSafeInteger(Number(cleanNumber)) ? Number(cleanNumber) : cleanNumber;
 
-        if (data && typeof data === 'object' && data.ok === true && data.service === 'telegram-bot') {
-          lastError = new Error('رابط خدمة الربط يشير إلى سيرفر البوت أو health check بدل endpoint الصحيح لاستخراج كود واتساب. اضبط PAIR_CODE_API_URL على endpoint getAuthorizationCode الصحيح.');
-          continue;
+      for (const method of methods) {
+        for (const numberField of numberFields) {
+          const payload = {
+            [numberField]: phoneValue
+          };
+
+          try {
+            const response = await httpRequest({
+              method,
+              url: apiUrl,
+              timeout: 45000,
+              headers: {
+                ...headers,
+                ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {})
+              },
+              query: method === 'GET' ? payload : undefined,
+              data: method === 'POST' ? payload : undefined
+            });
+
+            if (response.status < 200 || response.status >= 300) {
+              lastError = new Error(`HTTP ${response.status}: ${stringifyPayload(response.data || response.text)}`);
+              continue;
+            }
+
+            const contentType = String(response.headers['content-type'] || '').toLowerCase();
+            if (contentType.includes('application/json')) {
+              const data = response.data;
+
+              if (data && typeof data === 'object' && data.ok === true && data.service === 'telegram-bot') {
+                lastError = new Error('رابط خدمة الربط يشير إلى سيرفر البوت أو health check بدل endpoint الصحيح لاستخراج كود واتساب. تم تجاهل هذا الرابط والانتقال تلقائيًا إلى endpoint Green API الصحيح.');
+                continue;
+              }
+
+              if (data && typeof data === 'object' && data.status === false) {
+                const errorText = findErrorMessageInPayload(data)
+                  || 'تعذّر الحصول على كود الربط. تأكد أن الجلسة غير مربوطة حاليًا في Green API ثم أعد المحاولة.';
+                lastError = new Error(errorText);
+                continue;
+              }
+
+              const code = findCodeInPayload(data);
+              if (code) {
+                if (SETTINGS.pair_code_api_url !== apiUrl) {
+                  SETTINGS.pair_code_api_url = apiUrl;
+                  saveSettings();
+                }
+                if (SETTINGS.pair_code_api_method !== method) {
+                  SETTINGS.pair_code_api_method = method;
+                  saveSettings();
+                }
+                if (SETTINGS.pair_code_api_number_field !== numberField) {
+                  SETTINGS.pair_code_api_number_field = numberField;
+                  saveSettings();
+                }
+                return code;
+              }
+
+              const errorText = findErrorMessageInPayload(data);
+              lastError = new Error(errorText || `استجابة JSON لا تحتوي على حقل كود صالح للرقم ${numberVariant}`);
+              continue;
+            }
+
+            const text = typeof response.data === 'string'
+              ? response.data.trim()
+              : stringifyPayload(response.data || '').trim();
+
+            if (text && text.length <= 64 && !/[{}<>\n\r]/.test(text)) {
+              if (SETTINGS.pair_code_api_url !== apiUrl) {
+                SETTINGS.pair_code_api_url = apiUrl;
+                saveSettings();
+              }
+              if (SETTINGS.pair_code_api_method !== method) {
+                SETTINGS.pair_code_api_method = method;
+                saveSettings();
+              }
+              if (SETTINGS.pair_code_api_number_field !== numberField) {
+                SETTINGS.pair_code_api_number_field = numberField;
+                saveSettings();
+              }
+              return text;
+            }
+
+            lastError = new Error(`الاستجابة لا تحتوي على كود صالح للرقم ${numberVariant}`);
+          } catch (error) {
+            const message = error?.name === 'AbortError'
+              ? 'انتهت مهلة الاتصال بخدمة الربط.'
+              : (error?.message || 'Unknown error');
+            lastError = new Error(message);
+          }
         }
-
-        if (data && typeof data === 'object' && data.status === false) {
-          const errorText = findErrorMessageInPayload(data) || `تعذّر الحصول على كود الربط للرقم ${cleanNumber}.`;
-          lastError = new Error(errorText);
-          continue;
-        }
-
-        const code = findCodeInPayload(data);
-        if (code) {
-          return code;
-        }
-
-        const errorText = findErrorMessageInPayload(data);
-        lastError = new Error(errorText || `استجابة JSON لا تحتوي على حقل كود صالح للرقم ${numberVariant}`);
-        continue;
       }
-
-      const text = typeof response.data === 'string'
-        ? response.data.trim()
-        : stringifyPayload(response.data || '').trim();
-
-      if (text && text.length <= 64 && !/[{}<>\n\r]/.test(text)) {
-        return text;
-      }
-
-      lastError = new Error(`الاستجابة لا تحتوي على كود صالح للرقم ${numberVariant}`);
-    } catch (error) {
-      const message = error?.name === 'AbortError'
-        ? 'انتهت مهلة الاتصال بخدمة الربط.'
-        : (error?.message || 'Unknown error');
-      lastError = new Error(message);
     }
   }
 
@@ -1128,6 +1285,7 @@ async function handleText(bot, msg) {
         await bot.sendMessage(msg.chat.id, '❌ لازم الرابط يبدأ بـ http:// أو https://');
         return;
       }
+      value = sanitizePairCodeApiUrl(value);
     }
 
     SETTINGS[fieldName] = value;
