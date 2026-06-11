@@ -364,6 +364,7 @@ const GREEN_API_TOKEN_INSTANCE = String(process.env.GREEN_API_TOKEN_INSTANCE || 
 const LOCAL_PAIRING_ENABLED = String(process.env.LOCAL_PAIRING_ENABLED || 'true').trim().toLowerCase() !== 'false';
 const PAIRING_REQUEST_DELAY_MS = Math.max(parseInteger(process.env.PAIRING_REQUEST_DELAY_MS, 2500), 1500);
 const PAIRING_TTL_MS = Math.max(parseInteger(process.env.PAIRING_TTL_MS, 300000), 30000);
+const CONNECTED_PAIRING_CLEANUP_MS = Math.max(parseInteger(process.env.CONNECTED_PAIRING_CLEANUP_MS, 120000), 15000);
 const SESSIONS_DIR = path.join(BASE_DIR, 'wa_sessions');
 const LOCAL_PAIRING_PAGE_ROUTE = '/pair';
 const LOCAL_PAIRING_API_ROUTE = '/api/pairing';
@@ -871,6 +872,35 @@ function getSessionPath(phone) {
   return path.join(SESSIONS_DIR, phone);
 }
 
+function closeSocketQuietly(sock) {
+  if (!sock) {
+    return;
+  }
+
+  try { sock.ws?.close?.(); } catch (_) {}
+  try { sock.end?.(); } catch (_) {}
+}
+
+function isPermanentDisconnect(lastDisconnect = null, DisconnectReason = {}) {
+  const statusCode = Number(lastDisconnect?.error?.output?.statusCode || 0);
+  const rawMessage = String(
+    lastDisconnect?.error?.data
+    || lastDisconnect?.error?.message
+    || lastDisconnect?.error?.output?.payload?.message
+    || ''
+  ).toLowerCase();
+
+  if (statusCode === Number(DisconnectReason?.loggedOut || 401)) {
+    return true;
+  }
+
+  if ([401, 403, 405].includes(statusCode)) {
+    return true;
+  }
+
+  return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced)/i.test(rawMessage);
+}
+
 async function cleanupLocalPairingSession(phone, removeFiles = false) {
   const key = normalizePhoneNumber(phone);
   const session = localPairingSessions.get(key);
@@ -879,11 +909,7 @@ async function cleanupLocalPairingSession(phone, removeFiles = false) {
   }
 
   localPairingSessions.delete(key);
-
-  if (session?.sock) {
-    try { session.sock.ws?.close?.(); } catch (_) {}
-    try { session.sock.end?.(); } catch (_) {}
-  }
+  closeSocketQuietly(session?.sock);
 
   if (removeFiles) {
     try {
@@ -908,6 +934,10 @@ function scheduleLocalPairingCleanup(phone, removeFiles = true, delayMs = PAIRIN
       console.error('Failed to cleanup local pairing session:', error.message);
     });
   }, Math.max(1000, Number(delayMs) || PAIRING_TTL_MS));
+
+  if (typeof session.timeout?.unref === 'function') {
+    session.timeout.unref();
+  }
 }
 
 async function requestPairCodeLocally(number) {
@@ -925,7 +955,7 @@ async function requestPairCodeLocally(number) {
   }
 
   const promise = (async () => {
-    await cleanupLocalPairingSession(phone, false);
+    await cleanupLocalPairingSession(phone, true);
     ensureDir(SESSIONS_DIR);
     ensureDir(getSessionPath(phone));
 
@@ -947,37 +977,73 @@ async function requestPairCodeLocally(number) {
       markOnlineOnConnect: false
     });
 
+    const sessionState = {
+      sock,
+      createdAt: Date.now(),
+      timeout: null,
+      completed: false,
+      requestedCode: false
+    };
+    localPairingSessions.set(phone, sessionState);
+
     sock.ev.setMaxListeners?.(0);
     sock.ws?.setMaxListeners?.(0);
-    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('creds.update', async () => {
+      try {
+        await saveCreds();
+      } catch (error) {
+        console.error('Failed to save pairing credentials for %s:', phone, error.message);
+      }
+    });
+
     sock.ev.on('connection.update', async (update = {}) => {
       const connection = update.connection;
-      const statusCode = Number(update.lastDisconnect?.error?.output?.statusCode || 0);
+      const session = localPairingSessions.get(phone);
+      if (!session || session.sock !== sock) {
+        return;
+      }
 
       if (connection === 'open') {
-        scheduleLocalPairingCleanup(phone, true, 15000);
+        session.completed = true;
+        try {
+          await saveCreds();
+        } catch (error) {
+          console.error('Failed to persist open pairing session for %s:', phone, error.message);
+        }
+        scheduleLocalPairingCleanup(phone, false, CONNECTED_PAIRING_CLEANUP_MS);
         return;
       }
 
       if (connection === 'close') {
-        if (statusCode === Number(DisconnectReason?.loggedOut || 401)) {
+        if (isPermanentDisconnect(update.lastDisconnect, DisconnectReason)) {
           scheduleLocalPairingCleanup(phone, true, 1000);
           return;
         }
 
-        scheduleLocalPairingCleanup(phone, false, PAIRING_TTL_MS);
+        if (session.completed) {
+          scheduleLocalPairingCleanup(phone, false, Math.min(CONNECTED_PAIRING_CLEANUP_MS, 30000));
+          return;
+        }
+
+        scheduleLocalPairingCleanup(phone, true, PAIRING_TTL_MS);
       }
     });
 
-    localPairingSessions.set(phone, { sock, createdAt: Date.now(), timeout: null });
-    await sleep(PAIRING_REQUEST_DELAY_MS);
+    if (state?.creds?.registered) {
+      await cleanupLocalPairingSession(phone, true);
+      throw new Error('تم العثور على جلسة قديمة لهذا الرقم وتم حذفها. أعد طلب كود الربط مرة أخرى.');
+    }
+
+    await sleep(Math.max(PAIRING_REQUEST_DELAY_MS, 5000));
 
     if (!sock.requestPairingCode) {
       throw new Error('تعذر إنشاء جلسة الربط.');
     }
 
     const code = await sock.requestPairingCode(phone);
-    scheduleLocalPairingCleanup(phone, false, PAIRING_TTL_MS);
+    sessionState.requestedCode = true;
+    scheduleLocalPairingCleanup(phone, true, PAIRING_TTL_MS);
     return code;
   })();
 
