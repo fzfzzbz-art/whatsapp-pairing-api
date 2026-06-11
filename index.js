@@ -8222,58 +8222,9 @@ bot.on('text', async (ctx) => {
         ctx.session = null;
         return safeReply(ctx, '🚫 تم حذف ميزة رشق المشاهدات من هذه النسخة.');
     }
-        const count = parseInt(incomingText);
-        if (isNaN(count) || count < 1) {
-            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من صفر.');
-        }
-        ctx.session = null;
-        await safeReply(ctx, `⏳ جارٍ زيادة مشاهدات الحالة للرقم ${phone}... قد يستغرق ذلك لحظة.`);
-        try {
-            const result = await boostStatusViews(phone, count);
-            if (result.ok) {
-                return safeReply(ctx, [
-                    '✅ تم الانتهاء من زيادة المشاهدات بنجاح!',
-                    `👁️ العدد المنفذ: ${result.sentCount}`,
-                    `📱 الرقم المستهدف: ${phone}`,
-                    `💫 الجلسات المتاحة: ${result.availableSessions}`
-                ].join('\n'));
-            } else {
-                return safeReply(ctx, `❌ فشلت العملية: ${result.error || 'تأكد أن هناك أرقام أخرى نشطة في البوت.'}`);
-            }
-        } catch (err) {
-            return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
-        }
-    }
     if (sessionState === 'wait_channel_like_post_url' || sessionState === 'wait_channel_like_count') {
         ctx.session = null;
         return safeReply(ctx, '🚫 تم حذف ميزة رشق المنشورات من هذه النسخة.');
-    }
-        ctx.session = null;
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
-        await safeReply(ctx, `⏳ جارٍ تنفيذ الرشق للمنشور بالعدد ${requestedCount} من الرقم المربوط فقط... قد يستغرق ذلك بعض الوقت حسب العدد.`);
-        try {
-            const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
-            if (result.ok) {
-                const responseLines = [
-                    '✅ تم تنفيذ الرشق بنجاح!',
-                    `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
-                    `📱 الرقم المستخدم فعلياً: ${(result.connectedPhones || [phone])[0] || phone}`,
-                    `🔗 المنشور: ${channelPostUrl}`
-                ];
-                if (result.distributionText) {
-                    responseLines.push(`🎭 توزيع الإيموجيات: ${result.distributionText}`);
-                }
-                if (result.reusedSessions) {
-                    responseLines.push('🔁 تم تدوير المحاولات داخل نفس الجلسة المربوطة للوصول إلى خطة الرشق المطلوبة.');
-                }
-                return safeReply(ctx, responseLines.join('\n'));
-            } else {
-                return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم تنفيذ: ${result.sentCount || 0} محاولة على الأقل.`);
-            }
-        } catch (err) {
-            return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
-        }
     }
 
     if (!sessionState && incomingText.startsWith('/')) return;
