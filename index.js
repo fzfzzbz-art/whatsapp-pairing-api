@@ -5954,7 +5954,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
             }
             await sock.sendMessage('status@broadcast', {
                 react: {
-                    text: emoji,
+                    text: '❤️',
                     key: originalKey
                 }
             }, sendOptions);
@@ -5962,7 +5962,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         async () => {
             await sock.sendMessage('status@broadcast', {
                 react: {
-                    text: emoji,
+                    text: '❤️',
                     key: reactionKey
                 }
             }, sendOptions);
@@ -5970,7 +5970,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         async () => {
             await sock.sendMessage('status@broadcast', {
                 react: {
-                    text: emoji,
+                    text: '❤️',
                     key: {
                         id: reactionKey.id,
                         remoteJid: 'status@broadcast',
@@ -5983,7 +5983,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         async () => {
             await sock.sendMessage(primaryParticipant, {
                 react: {
-                    text: emoji,
+                    text: '❤️',
                     key: buildQuotedStatusMessage(msg, primaryParticipant)?.key || reactionKey
                 }
             });
