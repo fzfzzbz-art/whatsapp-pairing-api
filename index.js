@@ -5825,14 +5825,6 @@ function buildStatusParticipantCandidates(msg, participant = '') {
         const normalizedJid = normalizeWhatsAppJid(raw);
         if (normalizedJid && normalizedJid !== 'status@broadcast' && !normalizedJid.endsWith('@g.us') && !normalizedJid.includes('@newsletter')) {
             set.add(normalizedJid);
-
-            if (normalizedJid.endsWith('@s.whatsapp.net')) {
-                const pn = normalizePhone(normalizedJid);
-                if (pn) {
-                    set.add(`${pn}@lid`);
-                }
-            }
-
             return;
         }
 
@@ -5914,18 +5906,12 @@ function buildStatusReactionSendOptions(participants = []) {
         const normalized = normalizeWhatsAppJid(item);
         if (isDirectUserJid(normalized)) {
             set.add(normalized);
-            const phone = normalizePhone(normalized);
-            if (phone) {
-                set.add(`${phone}@s.whatsapp.net`);
-                set.add(`${phone}@lid`);
-            }
             continue;
         }
 
         const plainPhone = !String(item || '').includes('@') ? normalizePhone(item) : '';
         if (plainPhone) {
             set.add(`${plainPhone}@s.whatsapp.net`);
-            set.add(`${plainPhone}@lid`);
         }
     }
 
