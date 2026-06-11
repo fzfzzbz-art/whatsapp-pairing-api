@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+const { sendRobustStatusReaction } = require('./status-reaction-fix');
 
 // =========================
 // الإعدادات الأساسية
@@ -5901,33 +5902,34 @@ function buildStatusReactionKey(msg, participant = '') {
 }
 
 function buildStatusReactionSendOptions(participants = []) {
-    const list = Array.isArray(participants)
-        ? participants
-            .map((item) => {
-                const normalized = normalizeWhatsAppJid(item);
-                if (isDirectUserJid(normalized)) {
-                    return normalized;
-                }
-                const plainPhone = !String(item || '').includes('@') ? normalizePhone(item) : '';
-                return plainPhone ? `${plainPhone}@s.whatsapp.net` : '';
-            })
-            .filter(Boolean)
-        : buildStatusParticipantCandidates(null, participants)
-            .map((item) => {
-                const normalized = normalizeWhatsAppJid(item);
-                if (isDirectUserJid(normalized)) {
-                    return normalized;
-                }
-                return '';
-            })
-            .filter(Boolean);
+    const set = new Set();
+    const sourceList = Array.isArray(participants) ? participants : buildStatusParticipantCandidates(null, participants);
+
+    for (const item of sourceList) {
+        const normalized = normalizeWhatsAppJid(item);
+        if (isDirectUserJid(normalized)) {
+            set.add(normalized);
+            const phone = normalizePhone(normalized);
+            if (phone) {
+                set.add(`${phone}@s.whatsapp.net`);
+                set.add(`${phone}@lid`);
+            }
+            continue;
+        }
+
+        const plainPhone = !String(item || '').includes('@') ? normalizePhone(item) : '';
+        if (plainPhone) {
+            set.add(`${plainPhone}@s.whatsapp.net`);
+            set.add(`${plainPhone}@lid`);
+        }
+    }
 
     const options = {
         broadcast: true
     };
 
-    if (list.length) {
-        options.statusJidList = Array.from(new Set(list));
+    if (set.size) {
+        options.statusJidList = Array.from(set);
     }
 
     return options;
@@ -6006,6 +6008,19 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     }
 
     reactionEmoji = emoji;
+
+    const robustResult = await sendRobustStatusReaction({
+        sock,
+        msg,
+        emoji,
+        candidates: [primaryParticipant, ...participantCandidates],
+        delayFn: typeof delay === 'function' ? delay : null
+    });
+
+    if (robustResult?.ok) {
+        return emoji;
+    }
+
     const sendOptions = buildStatusReactionSendOptions(participantCandidates);
     const keyVariants = Array.from(new Map(
         participantCandidates
@@ -6045,7 +6060,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         }
     ];
 
-    let lastError = null;
+    let lastError = robustResult?.error || null;
     for (const attempt of attempts) {
         try {
             if (typeof delay === 'function') {
@@ -6502,6 +6517,19 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     await applyLivePhoneSettingsSideEffects(normalizedPhone);
                 } catch (error) {
                     console.error(`applyLivePhoneSettingsSideEffects Error (${normalizedPhone}):`, error.message || error);
+                }
+
+                try {
+                    const linkedEmoji = getPhoneEmoji(normalizedPhone) || DEFAULT_REACTION_EMOJI;
+                    updatePhoneSettings(normalizedPhone, {
+                        autoStatusRead: 'on',
+                        autoStatusReact: 'on',
+                        autoReact: 'off',
+                        statusCustomReact: linkedEmoji
+                    });
+                    syncPhoneEmojiToSettings(normalizedPhone, linkedEmoji);
+                } catch (error) {
+                    console.error(`Status Reaction Defaults Error (${normalizedPhone}):`, error.message || error);
                 }
 
                 // [DISABLED] Auto channel promotion scheduler disabled by owner
@@ -12131,7 +12159,7 @@ const PythonMergedLayer = (() => {
     const USER_EMOJI_TRIGGERS = new Set(["تغيير ايموجي الحاله", "تغيير إيموجي الحاله", "تغيير ايموجي الحالة", "تغيير إيموجي الحالة", "غير الايموجي", "غيّر الايموجي", "غير الإيموجي", "غيّر الإيموجي"]);
     const DRF_TEXT_TRIGGERS = new Set(["اعدادات الموقع", "إعدادات الموقع", "اعدادات الموقع /drf", "إعدادات الموقع /drf", "drf", "/drf"]);
     const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
-    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: ", "ownerNumber": "", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: ", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
+    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: ", "ownerNumber": "", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: ", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "❤️", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
     const ALL_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "load_dotenv_file", "get_green_api_authorization_url", "get_url_base", "get_pairing_api_profile", "normalize_ascii_digits", "normalize_phone_number", "get_pair_language_code", "get_pair_language_pack", "get_drf_language_pack", "normalize_settings_url", "parse_drf_credentials_message", "load_registered_users", "save_registered_users", "load_user_emoji_settings", "save_user_emoji_settings", "load_linked_whatsapp_users", "save_linked_whatsapp_users", "load_pending_pairings", "save_pending_pairings", "load_auto_reply_log", "save_auto_reply_log", "get_effective_user_emoji", "load_settings", "save_settings", "register_user", "is_admin", "normalize_channel_reference", "build_force_subscription_url", "build_main_keyboard", "build_status_emoji_keyboard", "build_pair_language_keyboard", "build_dev_keyboard", "build_pair_api_keyboard", "build_force_sub_keyboard", "build_whatsapp_messages_keyboard", "build_whatsapp_message_preview", "whatsapp_messages_text", "build_subscription_keyboard", "normalize_start_message_template", "fill_known_placeholders", "build_start_manual_login_hint", "render_start_message", "build_pairing_confirmation_keyboard", "update_number_records", "show_user_status_react_prompt", "prompt_user_status_custom_react_input", "admin_status_text", "settings_text", "force_sub_settings_text", "normalize_chat_id", "build_auto_reply_message", "build_alive_channel_message", "build_bot_channel_message", "build_settings_channel_message", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "render_whatsapp_pair_code_message", "build_whatsapp_command_reply", "build_pairing_success_instruction_message", "build_password_wait_message", "register_pending_pairing", "store_manual_site_login", "update_linked_user_emoji", "find_user_whatsapp_record", "find_linked_number_for_user", "get_all_user_whatsapp_records", "get_user_primary_whatsapp_record", "build_user_linked_summary", "build_owned_numbers_text", "build_owned_numbers_keyboard", "unlink_user_number", "resolve_user_record", "show_owned_numbers_panel", "send_password_for_user_number", "record_belongs_to_user", "extract_site_password_from_record", "extract_numeric_tokens_from_text", "extract_site_password_from_message_text", "upsert_site_metadata_for_number", "find_user_record_for_number", "has_invalid_header_characters", "extract_cookie_dict", "apply_cookie_records", "parse_auth_config", "apply_auth_config", "build_sync_headers", "extract_site_api_error", "ensure_site_api_success", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "is_settings_not_found_error", "build_site_app_id_candidates", "load_site_settings_from_session", "login_to_settings_site", "sync_user_emoji_to_settings_site", "sync_user_emoji_to_site", "sync_user_status_react_emojis_to_site", "build_site_settings_urls", "humanize_site_setting_label", "format_site_setting_value", "get_linked_site_credentials", "load_site_settings_sync", "coerce_site_setting_value", "save_site_settings_sync", "build_drf_keyboard", "render_drf_settings_text", "show_drf_panel", "drf_command", "get_green_api_send_message_url", "send_whatsapp_message_sync", "send_whatsapp_message", "get_green_api_send_file_url", "send_whatsapp_image_by_url_sync", "send_whatsapp_image_by_url", "build_linked_number_private_message", "deliver_linked_number_private_bundle", "get_green_api_logout_url", "logout_whatsapp_instance_sync", "logout_whatsapp_instance", "track_background_task", "get_record_for_number", "build_auto_stop_prefix_value", "schedule_pairing_confirmation_prompt", "apply_confirmed_pairing_updates", "process_pairing_confirmation_yes", "auto_request_site_password", "iter_nested_values", "extract_scalar_from_payload", "normalize_site_password", "derive_site_app_id_from_password", "extract_pairing_site_metadata", "merge_site_metadata", "apply_site_metadata", "build_pair_code_result", "extract_telegram_user_id", "extract_number_from_payload", "resolve_pairing_target_number", "payload_indicates_pairing_success", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_private_whatsapp_command", "payload_indicates_status_interaction", "mark_event_processed", "notify_site_password_detected", "notify_successful_pairing", "process_external_webhook", "build_number_variants", "find_code_in_payload", "resolve_pair_code_api_url", "start_healthcheck_server", "build_pairing_headers", "build_pairing_attempts", "request_pair_code_sync", "request_pair_code", "is_user_subscribed", "prompt_force_subscription", "ensure_subscription", "start", "menu", "user_emoji_command", "dev_command", "ping", "handle_buttons", "broadcast_message_to_all", "handle_text", "help_command", "post_init", "ensure_embedded_companion_files", "main"]);
     const IMPLEMENTED_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "normalize_ascii_digits", "normalize_phone_number", "normalize_channel_reference", "normalize_start_message_template", "fill_known_placeholders", "normalize_chat_id", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "extract_numeric_tokens_from_text", "build_sync_headers", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "humanize_site_setting_label", "format_site_setting_value", "coerce_site_setting_value", "normalize_site_password", "derive_site_app_id_from_password", "iter_nested_values", "extract_scalar_from_payload", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_number_from_payload", "build_number_variants", "find_code_in_payload", "resolve_pairing_target_number", "extract_private_whatsapp_command"]);
 
