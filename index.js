@@ -1,12 +1,5 @@
- const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    Browsers,
-    DisconnectReason,
-    delay,
-    downloadContentFromMessage
-} = require('@whiskeysockets/baileys');
+ const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, delay, downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { sendRobustStatusReaction } = require('./statusHelper'); // استدعاء مباشر وبسيط
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
