@@ -1,5 +1,4 @@
- const { sendRobustStatusReaction } = require('./statusHelper');
-
+ const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
