@@ -1714,7 +1714,10 @@ async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, inco
     }
 
     try {
-        await sock.sendMessage(remoteJid, { text: replyText });
+        await sock.sendMessage(remoteJid, { text: replyText }, { quoted: msg });
+        return true;
+    } catch (error) {
+        try {
             await sock.sendMessage(remoteJid, { text: replyText });
             return true;
         } catch (fallbackError) {
