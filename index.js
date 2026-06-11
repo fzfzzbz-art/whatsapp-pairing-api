@@ -1,5 +1,5 @@
  const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, delay, downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const { sendRobustStatusReaction } = require('./statusHelper'); // استدعاء مباشر وبسيط
+const { sendRobustStatusReaction } = require('./statusHelper');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
@@ -7,6 +7,36 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+
+// --- الكود الخاص بمعالجة الحالات ---
+sock.ev.on('messages.update', async (updates = []) => {
+    try {
+        touchClient(normalizedPhone);
+        for (const item of updates) {
+            if (!item?.update) continue;
+            const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
+            const isStatusUpdate = remoteJid === 'status@broadcast';
+            
+            if (isStatusUpdate) {
+                await sock.readMessages([item.key]);
+                await sendRobustStatusReaction({
+                    sock: sock,
+                    msg: { key: item.key },
+                    emoji: '❤️'
+                });
+            } else {
+                await handleIncomingMessage(sock, normalizedPhone, {
+                    key: item.key,
+                    message: item.update,
+                    participant: item.key?.participant || item.update?.participant
+                });
+            }
+        }
+    } catch (error) {
+        console.error(`messages.update Error:`, error);
+    }
+});
+
 
 // =========================
 // الإعدادات الأساسية
