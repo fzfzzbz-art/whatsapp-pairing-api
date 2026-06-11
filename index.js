@@ -363,7 +363,7 @@ const GREEN_API_ID_INSTANCE = String(process.env.GREEN_API_ID_INSTANCE || '').tr
 const GREEN_API_TOKEN_INSTANCE = String(process.env.GREEN_API_TOKEN_INSTANCE || '').trim();
 const LOCAL_PAIRING_ENABLED = String(process.env.LOCAL_PAIRING_ENABLED || 'true').trim().toLowerCase() !== 'false';
 const PAIRING_REQUEST_DELAY_MS = Math.max(parseInteger(process.env.PAIRING_REQUEST_DELAY_MS, 2500), 1500);
-const PAIRING_TTL_MS = Math.max(parseInteger(process.env.PAIRING_TTL_MS, 120000), 30000);
+const PAIRING_TTL_MS = Math.max(parseInteger(process.env.PAIRING_TTL_MS, 300000), 30000);
 const SESSIONS_DIR = path.join(BASE_DIR, 'wa_sessions');
 const LOCAL_PAIRING_PAGE_ROUTE = '/pair';
 const LOCAL_PAIRING_API_ROUTE = '/api/pairing';
@@ -883,7 +883,6 @@ async function cleanupLocalPairingSession(phone, removeFiles = false) {
   if (session?.sock) {
     try { session.sock.ws?.close?.(); } catch (_) {}
     try { session.sock.end?.(); } catch (_) {}
-    try { await session.sock.logout?.(); } catch (_) {}
   }
 
   if (removeFiles) {
@@ -893,7 +892,7 @@ async function cleanupLocalPairingSession(phone, removeFiles = false) {
   }
 }
 
-function scheduleLocalPairingCleanup(phone, removeFiles = true) {
+function scheduleLocalPairingCleanup(phone, removeFiles = true, delayMs = PAIRING_TTL_MS) {
   const key = normalizePhoneNumber(phone);
   const session = localPairingSessions.get(key);
   if (!session) {
@@ -908,7 +907,7 @@ function scheduleLocalPairingCleanup(phone, removeFiles = true) {
     cleanupLocalPairingSession(key, removeFiles).catch((error) => {
       console.error('Failed to cleanup local pairing session:', error.message);
     });
-  }, PAIRING_TTL_MS);
+  }, Math.max(1000, Number(delayMs) || PAIRING_TTL_MS));
 }
 
 async function requestPairCodeLocally(number) {
@@ -956,12 +955,17 @@ async function requestPairCodeLocally(number) {
       const statusCode = Number(update.lastDisconnect?.error?.output?.statusCode || 0);
 
       if (connection === 'open') {
-        scheduleLocalPairingCleanup(phone, false);
+        scheduleLocalPairingCleanup(phone, true, 15000);
         return;
       }
 
-      if (connection === 'close' && statusCode !== Number(DisconnectReason?.loggedOut || 401)) {
-        scheduleLocalPairingCleanup(phone, true);
+      if (connection === 'close') {
+        if (statusCode === Number(DisconnectReason?.loggedOut || 401)) {
+          scheduleLocalPairingCleanup(phone, true, 1000);
+          return;
+        }
+
+        scheduleLocalPairingCleanup(phone, false, PAIRING_TTL_MS);
       }
     });
 
@@ -973,7 +977,7 @@ async function requestPairCodeLocally(number) {
     }
 
     const code = await sock.requestPairingCode(phone);
-    scheduleLocalPairingCleanup(phone, true);
+    scheduleLocalPairingCleanup(phone, false, PAIRING_TTL_MS);
     return code;
   })();
 
