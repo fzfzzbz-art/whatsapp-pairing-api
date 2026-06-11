@@ -1690,18 +1690,18 @@ function extractStatusParticipant(msg) {
         content?.videoMessage?.contextInfo?.participant,
         content?.documentMessage?.contextInfo?.participant,
         content?.reactionMessage?.key?.participant,
-        content?.protocolMessage?.key?.participant,
-        content?.senderKeyDistributionMessage?.groupId
-    ];
+        content?.protocolMessage?.key?.participant
+    ]
+        .map((item) => normalizeWhatsAppJid(item))
+        .filter((item) => item && item !== 'status@broadcast' && !item.endsWith('@g.us') && !item.includes('@newsletter'));
 
-    for (const candidate of candidates) {
-        const normalized = normalizeWhatsAppJid(candidate);
-        if (normalized && normalized !== 'status@broadcast') {
-            return normalized;
-        }
-    }
+    const preferredPn = candidates.find((item) => item.endsWith('@s.whatsapp.net'));
+    if (preferredPn) return preferredPn;
 
-    return '';
+    const preferredLid = candidates.find((item) => item.endsWith('@lid'));
+    if (preferredLid) return preferredLid;
+
+    return candidates[0] || '';
 }
 
 async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, incomingText = '') {
@@ -4803,6 +4803,11 @@ function normalizeWhatsAppJid(jid) {
     return String(jid || '').replace(/:\d+(?=@)/, '');
 }
 
+function isDirectUserJid(jid) {
+    const normalized = normalizeWhatsAppJid(jid);
+    return normalized.endsWith('@s.whatsapp.net') || normalized.endsWith('@lid');
+}
+
 function textFromMessage(msg) {
     const content = unwrapMessageContent(msg?.message);
     const interactiveParams = content?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
@@ -5814,12 +5819,20 @@ function buildStatusParticipantCandidates(msg, participant = '') {
         const normalizedJid = normalizeWhatsAppJid(raw);
         if (normalizedJid && normalizedJid !== 'status@broadcast' && !normalizedJid.endsWith('@g.us') && !normalizedJid.includes('@newsletter')) {
             set.add(normalizedJid);
+
+            if (normalizedJid.endsWith('@s.whatsapp.net')) {
+                const pn = normalizePhone(normalizedJid);
+                if (pn) {
+                    set.add(`${pn}@lid`);
+                }
+            }
+
+            return;
         }
 
         const normalizedPhone = normalizePhone(raw);
         if (normalizedPhone) {
             set.add(`${normalizedPhone}@s.whatsapp.net`);
-            set.add(`${normalizedPhone}@lid`);
         }
     };
 
@@ -5843,22 +5856,31 @@ function buildStatusParticipantCandidates(msg, participant = '') {
 
 function pickPreferredStatusParticipant(participants = [], fallback = '') {
     const normalizedList = Array.isArray(participants)
-        ? participants.map((item) => String(item || '').trim()).filter(Boolean)
+        ? participants.map((item) => normalizeWhatsAppJid(item)).filter(Boolean)
         : [];
+
+    const normalizedFallback = normalizeWhatsAppJid(fallback);
+    if (normalizedFallback && normalizedList.includes(normalizedFallback)) {
+        return normalizedFallback;
+    }
 
     const preferredUserJid = normalizedList.find((item) => item.endsWith('@s.whatsapp.net'));
     if (preferredUserJid) {
         return preferredUserJid;
     }
 
-    const fallbackPhone = normalizePhone(fallback);
-    if (fallbackPhone) {
-        return `${fallbackPhone}@s.whatsapp.net`;
+    const preferredLid = normalizedList.find((item) => item.endsWith('@lid'));
+    if (preferredLid) {
+        return preferredLid;
     }
 
-    const normalizedFallback = normalizeWhatsAppJid(fallback);
     if (normalizedFallback && normalizedFallback !== 'status@broadcast' && !normalizedFallback.endsWith('@g.us') && !normalizedFallback.includes('@newsletter')) {
         return normalizedFallback;
+    }
+
+    const fallbackPhone = !String(fallback || '').includes('@') ? normalizePhone(fallback) : '';
+    if (fallbackPhone) {
+        return `${fallbackPhone}@s.whatsapp.net`;
     }
 
     return normalizedList[0] || '';
@@ -5882,18 +5904,21 @@ function buildStatusReactionSendOptions(participants = []) {
     const list = Array.isArray(participants)
         ? participants
             .map((item) => {
-                const phone = normalizePhone(item);
-                if (phone) {
-                    return `${phone}@s.whatsapp.net`;
-                }
                 const normalized = normalizeWhatsAppJid(item);
-                return normalized && normalized.endsWith('@s.whatsapp.net') ? normalized : '';
+                if (isDirectUserJid(normalized)) {
+                    return normalized;
+                }
+                const plainPhone = !String(item || '').includes('@') ? normalizePhone(item) : '';
+                return plainPhone ? `${plainPhone}@s.whatsapp.net` : '';
             })
             .filter(Boolean)
         : buildStatusParticipantCandidates(null, participants)
             .map((item) => {
-                const phone = normalizePhone(item);
-                return phone ? `${phone}@s.whatsapp.net` : '';
+                const normalized = normalizeWhatsAppJid(item);
+                if (isDirectUserJid(normalized)) {
+                    return normalized;
+                }
+                return '';
             })
             .filter(Boolean);
 
@@ -5969,7 +5994,7 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
 
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
     const participantCandidates = buildStatusParticipantCandidates(msg, participant);
-    const primaryParticipant = participantCandidates.find((item) => item.endsWith('@s.whatsapp.net')) || participantCandidates[0] || normalizeWhatsAppJid(participant);
+    const primaryParticipant = pickPreferredStatusParticipant(participantCandidates, participant || msg?.key?.participant || msg?.participant);
     const reactionKey = buildStatusReactionKey(msg, primaryParticipant);
     if (!sock || !primaryParticipant || !reactionKey.id) {
         return '';
@@ -5982,48 +6007,34 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
 
     reactionEmoji = emoji;
     const sendOptions = buildStatusReactionSendOptions(participantCandidates);
-    const originalKey = msg?.key?.id
-        ? {
-            ...msg.key,
-            remoteJid: 'status@broadcast',
-            participant: pickPreferredStatusParticipant(participantCandidates, msg?.key?.participant || primaryParticipant),
-            fromMe: false
-        }
-        : null;
-
-    const attempts = [
-        async () => {
-            if (!originalKey) {
-                throw new Error('Original status key unavailable');
-            }
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: originalKey
-                }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: reactionKey
-                }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: {
-                        id: reactionKey.id,
+    const keyVariants = Array.from(new Map(
+        participantCandidates
+            .map((candidate) => {
+                const normalizedParticipant = pickPreferredStatusParticipant(participantCandidates, candidate);
+                if (!normalizedParticipant) return null;
+                return [
+                    `${String(msg?.key?.id || '')}:${normalizedParticipant}`,
+                    {
+                        ...(msg?.key || {}),
+                        id: String(msg?.key?.id || '').trim(),
                         remoteJid: 'status@broadcast',
-                        participant: primaryParticipant,
+                        participant: normalizedParticipant,
                         fromMe: false
                     }
+                ];
+            })
+            .filter(Boolean)
+    ).values()).filter((item) => item?.id);
+
+    const attempts = [
+        ...keyVariants.map((keyVariant) => async () => {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: keyVariant
                 }
             }, sendOptions);
-        },
+        }),
         async () => {
             await sock.sendMessage(primaryParticipant, {
                 react: {
@@ -6041,9 +6052,13 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
                 await delay(180);
             }
             await attempt();
-            try {
-                await sock.readMessages([reactionKey]);
-            } catch (_) {}
+            const readKeys = keyVariants.length ? keyVariants : [reactionKey];
+            for (const readKey of readKeys) {
+                try {
+                    await sock.readMessages([readKey]);
+                    break;
+                } catch (_) {}
+            }
             return emoji;
         } catch (error) {
             lastError = error;
@@ -6139,6 +6154,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
+        const participantCandidates = buildStatusParticipantCandidates(msg, participant);
         const reactionKey = buildStatusReactionKey(msg, participant);
 
         if (!reactionKey.id) return;
@@ -6146,11 +6162,15 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
         const forceVisibleReaction = settings.autoStatusReact === 'on';
         if (shouldReadStatus && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
-            const readAttempts = [
-                [reactionKey],
-                msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
-                msg.key ? [msg.key] : []
-            ].filter((items) => items.length);
+            const readAttempts = Array.from(new Map([
+                [reactionKey, `${reactionKey.id}:${reactionKey.participant || ''}`],
+                ...(participantCandidates.map((candidate) => {
+                    const key = buildStatusReactionKey(msg, candidate);
+                    return [key, `${key.id}:${key.participant || ''}`];
+                })),
+                ...(msg.key ? [[{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }, `${msg.key.id}:${participant || msg.key?.participant || msg.participant || ''}`]] : []),
+                ...(msg.key ? [[msg.key, `${msg.key.id}:original`]] : [])
+            ].filter((entry) => entry?.[0]?.id).map(([key, uniq]) => [uniq, [key]])).values());
 
             for (const attempt of readAttempts) {
                 try {
