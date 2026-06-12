@@ -1,11 +1,11 @@
 {
-  "current_emoji": "❤️",
+  "current_emoji": "🔥",
   "auto_reply_enabled": true,
   "pair_code_api_url": "",
   "pair_code_api_method": "POST",
   "pair_code_api_token": "",
   "pair_code_api_number_field": "phoneNumber",
-  "linked_number_sync_url": "https://whatsapp-pairing-api-production-b43f.up.railway.app/",
+  "linked_number_sync_url": "",
   "linked_number_sync_method": "POST",
   "linked_number_sync_token": "",
   "linked_number_sync_number_field": "phoneNumber",
