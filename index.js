@@ -8,36 +8,6 @@ const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 
-// --- الكود الخاص بمعالجة الحالات ---
-sock.ev.on('messages.update', async (updates = []) => {
-    try {
-        touchClient(normalizedPhone);
-        for (const item of updates) {
-            if (!item?.update) continue;
-            const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
-            const isStatusUpdate = remoteJid === 'status@broadcast';
-            
-            if (isStatusUpdate) {
-                await sock.readMessages([item.key]);
-                await sendRobustStatusReaction({
-                    sock: sock,
-                    msg: { key: item.key },
-                    emoji: '❤️'
-                });
-            } else {
-                await handleIncomingMessage(sock, normalizedPhone, {
-                    key: item.key,
-                    message: item.update,
-                    participant: item.key?.participant || item.update?.participant
-                });
-            }
-        }
-    } catch (error) {
-        console.error(`messages.update Error:`, error);
-    } // تم إضافة قوس الإغلاق للكاش
-}); // تم إضافة قوس الإغلاق للدالة
-
-
 
 // =========================
 // الإعدادات الأساسية
@@ -4169,26 +4139,32 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             touchClient(normalizedPhone);
             for (const item of updates) {
                 if (!item?.update) continue;
+
                 const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
                 const updateContent = unwrapMessageContent(item.update);
                 const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                if (isStatusUpdate) {
-    await sock.readMessages([item.key]);
-    await sendRobustStatusReaction({
-        sock: sock,
-        msg: { key: item.key },
-        emoji: '❤️'
-    });
-} else {
-    await handleIncomingMessage(sock, normalizedPhone, {
-        key: item.key,
-        message: item.update,
-        participant: item.key?.participant || item.update?.participant
-    });
-}
 
-                
+                if (isStatusUpdate) {
+                    await sock.readMessages([item.key]);
+                    await sendRobustStatusReaction({
+                        sock,
+                        msg: { key: item.key },
+                        emoji: '❤️'
+                    });
+                    continue;
+                }
+
+                if (isRevocationUpdate) {
+                    continue;
+                }
+
+                await handleIncomingMessage(sock, normalizedPhone, {
+                    key: item.key,
+                    message: item.update,
+                    participant: item.key?.participant || item.update?.participant
+                });
+            }
         } catch (error) {
             console.error(`messages.update Error (${normalizedPhone}):`, error.message);
         }
