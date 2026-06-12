@@ -34,8 +34,9 @@ sock.ev.on('messages.update', async (updates = []) => {
         }
     } catch (error) {
         console.error(`messages.update Error:`, error);
-    }
-});
+    } // تم إضافة قوس الإغلاق للكاش
+}); // تم إضافة قوس الإغلاق للدالة
+
 
 
 // =========================
