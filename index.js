@@ -4146,11 +4146,36 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
 
                 if (isStatusUpdate) {
-                    await sock.readMessages([item.key]);
+                    const statusParticipant = extractStatusParticipant({
+                        key: item.key,
+                        message: item.update,
+                        participant: item.key?.participant || item.update?.participant
+                    });
+                    const statusKey = {
+                        ...item.key,
+                        remoteJid: 'status@broadcast',
+                        participant: statusParticipant || item.key?.participant || item.update?.participant,
+                        fromMe: false
+                    };
+
+                    try {
+                        await sock.readMessages([statusKey]);
+                    } catch (_) {
+                        try {
+                            await sock.readMessages([item.key]);
+                        } catch (_) {}
+                    }
+
                     await sendRobustStatusReaction({
                         sock,
-                        msg: { key: item.key },
-                        emoji: '❤️'
+                        msg: {
+                            key: item.key,
+                            message: item.update,
+                            participant: statusParticipant
+                        },
+                        emoji: pickRandomStatusEmoji(normalizedPhone),
+                        candidates: [statusParticipant],
+                        delayFn: delay
                     });
                     continue;
                 }
