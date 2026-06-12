@@ -1,4 +1,12 @@
- const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, delay, downloadContentFromMessage } = require('@whiskeysockets/baileys');
+ const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    Browsers,
+    DisconnectReason,
+    delay,
+    downloadContentFromMessage
+} = require('@whiskeysockets/baileys');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
@@ -6,7 +14,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-
 
 // =========================
 // الإعدادات الأساسية
@@ -4138,40 +4145,15 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             touchClient(normalizedPhone);
             for (const item of updates) {
                 if (!item?.update) continue;
-
                 const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
                 const updateContent = unwrapMessageContent(item.update);
                 const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-
-                if (isStatusUpdate) {
-                    const statusParticipant = extractStatusParticipant({
-                        key: item.key,
-                        message: item.update,
-                        participant: item.key?.participant || item.update?.participant
-                    });
-
-                    await handleStatusReaction(sock, normalizedPhone, {
-                        key: {
-                            ...item.key,
-                            remoteJid: 'status@broadcast',
-                            participant: statusParticipant || item.key?.participant || item.update?.participant,
-                            fromMe: false
-                        },
-                        message: item.update,
-                        participant: statusParticipant || item.key?.participant || item.update?.participant
-                    });
-                    continue;
-                }
-
-                if (isRevocationUpdate) {
-                    continue;
-                }
-
+                if (!isStatusUpdate && !isRevocationUpdate) continue;
                 await handleIncomingMessage(sock, normalizedPhone, {
                     key: item.key,
                     message: item.update,
-                    participant: item.key?.participant || item.update?.participant
+                    participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
                 });
             }
         } catch (error) {
@@ -4330,6 +4312,9 @@ bot.command('setemoji', async (ctx) => {
         ctx.session = { step: 'wait_emoji', targetPhone: phones[0] };
         return safeReply(ctx, `😍 أرسل الآن الإيموجي الجديد للرقم ${phones[0]}`);
     }
+if (config.autoStatusReact === "on") {
+    await client.sendMessage(jid, { react: { text: config.statusCustomReact, key: statusKey } });
+}
 
     const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
     await safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
