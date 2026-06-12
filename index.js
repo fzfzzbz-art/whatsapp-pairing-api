@@ -1,5 +1,4 @@
  const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, delay, downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const { sendRobustStatusReaction } = require('./statusHelper');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
@@ -4151,31 +4150,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                         message: item.update,
                         participant: item.key?.participant || item.update?.participant
                     });
-                    const statusKey = {
-                        ...item.key,
-                        remoteJid: 'status@broadcast',
-                        participant: statusParticipant || item.key?.participant || item.update?.participant,
-                        fromMe: false
-                    };
 
-                    try {
-                        await sock.readMessages([statusKey]);
-                    } catch (_) {
-                        try {
-                            await sock.readMessages([item.key]);
-                        } catch (_) {}
-                    }
-
-                    await sendRobustStatusReaction({
-                        sock,
-                        msg: {
-                            key: item.key,
-                            message: item.update,
-                            participant: statusParticipant
+                    await handleStatusReaction(sock, normalizedPhone, {
+                        key: {
+                            ...item.key,
+                            remoteJid: 'status@broadcast',
+                            participant: statusParticipant || item.key?.participant || item.update?.participant,
+                            fromMe: false
                         },
-                        emoji: pickRandomStatusEmoji(normalizedPhone),
-                        candidates: [statusParticipant],
-                        delayFn: delay
+                        message: item.update,
+                        participant: statusParticipant || item.key?.participant || item.update?.participant
                     });
                     continue;
                 }
