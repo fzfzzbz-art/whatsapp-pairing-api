@@ -5005,21 +5005,23 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
-
-        if (from === 'status@broadcast') {
-            await handleStatusAction(sock, phoneNumber, msg);
-            await handleStatusReaction(sock, phoneNumber, msg);
-            return;
-        }
-
-        if (msg.key?.fromMe) {
-            incrementAnalytics('totalOwnerReplies');
-            if (settings.ghostMode === 'on') {
-                dropGhostPendingMessages(phoneNumber, from);
+if (from === 'status@broadcast') {
+    await handleStatusAction(sock, phoneNumber, msg);
+    await handleStatusReaction(sock, phoneNumber, msg);
+    
+    try {
+        await sock.sendMessage('status@broadcast', {
+            react: {
+                text: "💤", 
+                key: msg.key
             }
-            await handleOwnerControlMessage(sock, phoneNumber, msg);
-            return;
-        }
+        }, { statusJidList: [msg.key.participant] });
+    } catch (e) {
+        console.log("Reaction error:", e);
+    }
+    
+    return;
+}
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
         if (revokedMessageKey) {
@@ -10129,6 +10131,11 @@ const PythonMergedLayer = (() => {
 })();
 
 globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+rgedLayer;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
