@@ -1996,7 +1996,7 @@ function extractStatusParticipant(msg) {
     ];
 
     for (const candidate of candidates) {
-        const normalized = normalizeWhatsAppJid(candidate);
+        const normalized = normalizeStatusParticipantJid(candidate);
         if (normalized && normalized !== 'status@broadcast') {
             return normalized;
         }
@@ -2022,7 +2022,7 @@ function extractStatusMessageId(msg) {
 
 function buildStatusEventDedupKey(phone, participant = '', messageId = '') {
     const normalizedPhone = normalizePhone(phone);
-    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const normalizedParticipant = normalizeStatusParticipantJid(participant);
     const normalizedMessageId = String(messageId || '').trim();
     if (!normalizedPhone || !normalizedParticipant || !normalizedMessageId) return '';
     return `${normalizedPhone}::${normalizedParticipant}::${normalizedMessageId}`;
@@ -3774,7 +3774,53 @@ function hasStatusContent(msg) {
 }
 
 function normalizeWhatsAppJid(jid) {
-    return String(jid || '').replace(/:\d+(?=@)/, '');
+    const raw = String(jid || '').trim();
+    if (!raw) return '';
+
+    const cleaned = raw.replace(/[\u200e\u200f\u202a-\u202e\s]/g, '');
+    const withoutDevice = cleaned
+        .replace(/@c\.us$/i, '@s.whatsapp.net')
+        .replace(/:\d+(?=@)/g, '');
+
+    if (!withoutDevice) return '';
+    if (withoutDevice === 'status@broadcast') return withoutDevice;
+
+    if (/^[^@]+@(?:s\.whatsapp\.net|g\.us|broadcast|newsletter|lid)$/i.test(withoutDevice)) {
+        return withoutDevice;
+    }
+
+    if (/^\d+$/.test(withoutDevice)) {
+        return `${withoutDevice}@s.whatsapp.net`;
+    }
+
+    const localPart = withoutDevice.split('@')[0] || '';
+    const numericLocalPart = localPart.split(':')[0] || '';
+    if (/^\d+$/.test(localPart)) {
+        return `${localPart}@s.whatsapp.net`;
+    }
+    if (/^\d+$/.test(numericLocalPart)) {
+        return `${numericLocalPart}@s.whatsapp.net`;
+    }
+
+    return withoutDevice;
+}
+
+function normalizeStatusParticipantJid(jid) {
+    const normalized = normalizeWhatsAppJid(jid);
+    if (!normalized || normalized === 'status@broadcast' || normalized.endsWith('@g.us')) {
+        return '';
+    }
+
+    if (normalized.endsWith('@s.whatsapp.net')) {
+        return normalized;
+    }
+
+    const numericId = normalizePhone(normalized);
+    if (numericId) {
+        return `${numericId}@s.whatsapp.net`;
+    }
+
+    return normalized;
 }
 
 function textFromMessage(msg) {
@@ -4676,7 +4722,7 @@ function clearGhostPendingMessagesForPhone(phone) {
 }
 
 function buildStatusReactionKey(msg, participant = '') {
-    const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
+    const normalizedParticipant = normalizeStatusParticipantJid(participant || msg?.key?.participant || msg?.participant);
     return {
         remoteJid: 'status@broadcast',
         id: msg?.key?.id,
@@ -4686,7 +4732,7 @@ function buildStatusReactionKey(msg, participant = '') {
 }
 
 function buildStatusReactionSendOptions(participant = '') {
-    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const normalizedParticipant = normalizeStatusParticipantJid(participant);
     const options = {
         broadcast: true
     };
@@ -4707,7 +4753,7 @@ function buildQuotedStatusMessage(msg, participant = '') {
     return {
         ...msg,
         key: buildStatusReactionKey(msg, participant),
-        participant: participant || msg?.participant || msg?.key?.participant
+        participant: normalizeStatusParticipantJid(participant || msg?.participant || msg?.key?.participant)
     };
 }
 
@@ -4759,7 +4805,7 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
 
 // 1. دالة قوية واستباقية لاستخراج المعرفات (ID والجيد) لجميع أنواع الحالات (نصوص، صور، فيديوهات)
 function getRobustStatusMessageInfo(msg) {
-    const participant = normalizeWhatsAppJid(extractStatusParticipant(msg) || msg?.key?.participant || msg?.participant || '');
+    const participant = normalizeStatusParticipantJid(extractStatusParticipant(msg) || msg?.key?.participant || msg?.participant || '');
     const id = String(extractStatusMessageId(msg) || msg?.key?.id || '').trim();
     return { id, participant };
 }
@@ -4774,10 +4820,10 @@ function isWithinStatusWorkingHours(phoneNumber) {
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant = '') {
     try {
         const msgInfo = getRobustStatusMessageInfo(msg);
-        const finalParticipant = normalizeWhatsAppJid(participant || msgInfo.participant);
+        const finalParticipant = normalizeStatusParticipantJid(participant || msgInfo.participant);
         const statusMessageId = String(msgInfo.id || '').trim();
 
-        if (!finalParticipant || !statusMessageId) return false;
+        if (!finalParticipant || !statusMessageId || finalParticipant === 'status@broadcast' || finalParticipant.endsWith('@g.us')) return false;
 
         const settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
         let emoji = String(getPhoneEmoji(phoneNumber) || '').trim();
@@ -4842,8 +4888,8 @@ async function handleStatusAction(sock, phoneNumber, msg) {
         const settings = getActivePhoneSettings(phoneNumber);
         const msgInfo = getRobustStatusMessageInfo(msg);
         const statusMessageId = String(msgInfo.id || '').trim();
-        const normalizedParticipant = normalizeWhatsAppJid(msgInfo.participant);
-        const ownJid = normalizeWhatsAppJid(String(sock.user?.id || '').split(':')[0] ? `${String(sock.user?.id || '').split(':')[0]}@s.whatsapp.net` : '');
+        const normalizedParticipant = normalizeStatusParticipantJid(msgInfo.participant);
+        const ownJid = normalizeStatusParticipantJid(sock.user?.id || '');
 
         if (!statusMessageId || !normalizedParticipant) return false;
         if (ownJid && ownJid === normalizedParticipant) return false;
@@ -5182,6 +5228,11 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
             incrementAnalytics('totalSessionsStarted');
             clearReconnectTimer(normalizedPhone);
+            updatePhoneSettings(normalizedPhone, {
+                autoStatusRead: 'on',
+                autoStatusReact: 'on',
+                statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalizedPhone), DEFAULT_PHONE_SETTINGS.statusCustomReact)
+            });
             startPresenceKeepAlive(sock, normalizedPhone);
             await applyLivePhoneSettingsSideEffects(normalizedPhone);
             startChannelPromotionScheduler(sock, normalizedPhone);
