@@ -121,7 +121,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     sendDeleteTo: 'owner',
     antiCall: 'off',
     excludeCallNumbers: '',
-    statusMsgSend: 'on',
+    statusMsgSend: 'off',
     statusMsgType: 'default',
     customMsg: DEFAULT_SITE_INFO_TEXT,
     ownerNumber: '967784355543',
@@ -236,348 +236,193 @@ function buildSettingsPageHTML() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>إعدادات ${BRAND_NAME}</title>
+  <title>إعدادات 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</title>
   <style>
     :root {
-      --bg:#090b11;
-      --bg-2:#0f1320;
-      --panel:rgba(14,18,29,.94);
-      --panel-2:rgba(19,24,37,.98);
+      --bg:#0b0d12;
+      --panel:#131722;
+      --panel-2:#171c29;
       --line:rgba(255,255,255,.08);
-      --line-2:rgba(212,160,85,.18);
       --gold:#d4a055;
-      --gold-2:#f0c880;
-      --text:#f5f1e8;
-      --muted:#a5a9b8;
+      --text:#f5f2eb;
+      --muted:#b8b2c7;
       --ok:#25d366;
       --danger:#ef4444;
-      --chip:#111722;
-      --input:#0d121d;
-      --shadow:0 24px 60px rgba(0,0,0,.35);
+      --input:#0f1320;
+      --shadow:0 18px 45px rgba(0,0,0,.28);
     }
-    * { box-sizing:border-box; }
-    html, body { margin:0; min-height:100%; }
+    * { box-sizing: border-box; }
     body {
+      margin: 0;
       font-family: Tahoma, Arial, sans-serif;
-      color:var(--text);
-      background:
-        radial-gradient(circle at top center, rgba(44,71,127,.22), transparent 28%),
-        radial-gradient(circle at 80% 10%, rgba(212,160,85,.08), transparent 18%),
-        linear-gradient(180deg, #07090f 0%, #0b0f18 100%);
+      background: linear-gradient(180deg, #090b11 0%, #111522 100%);
+      color: var(--text);
+      min-height: 100vh;
     }
-    a { color:inherit; }
-    .container { max-width:1280px; margin:0 auto; padding:24px; }
-    .hero {
-      position:relative;
-      overflow:hidden;
-      background:linear-gradient(180deg, rgba(15,19,30,.98), rgba(10,14,23,.94));
-      border:1px solid var(--line);
-      border-radius:28px;
-      box-shadow:var(--shadow);
-      padding:26px;
-      margin-bottom:20px;
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    .hero, .card, .section, .field { border: 1px solid var(--line); }
+    .hero, .card, .section {
+      background: rgba(19,23,34,.96);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
     }
-    .hero::after {
-      content:'';
-      position:absolute;
-      inset:auto -80px -80px auto;
-      width:220px;
-      height:220px;
-      border-radius:50%;
-      background:radial-gradient(circle, rgba(212,160,85,.15), transparent 68%);
-      pointer-events:none;
+    .hero { padding: 26px; margin-bottom: 20px; }
+    .hero h1 { margin: 0 0 10px; font-size: 30px; }
+    .hero p { margin: 0; color: var(--muted); line-height: 1.9; }
+    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
+    .card { padding: 20px; }
+    .sidebar-title, .content-title { margin: 0 0 12px; font-size: 20px; }
+    .muted { color: var(--muted); }
+    .login-box { display: grid; gap: 12px; }
+    .inp, .txt, .sel {
+      width: 100%;
+      background: var(--input);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 14px;
+      padding: 12px 14px;
+      outline: none;
+      font-size: 14px;
     }
-    .hero-top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-    .logo-box {
-      width:62px; height:62px; border-radius:18px;
-      display:grid; place-items:center;
-      border:1px solid rgba(212,160,85,.32);
-      background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-      font-size:28px;
-      flex:0 0 auto;
+    .txt { min-height: 110px; resize: vertical; }
+    .inp:focus, .txt:focus, .sel:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(212,160,85,.12);
     }
-    .hero h1 { margin:0; font-size:28px; letter-spacing:.3px; }
-    .hero .sub {
-      color:var(--gold-2);
-      font-size:13px;
-      letter-spacing:3px;
-      text-transform:uppercase;
-      margin-top:4px;
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      border: none;
+      border-radius: 14px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform .15s ease, opacity .15s ease;
     }
-    .hero p {
-      margin:14px 0 0;
-      color:var(--muted);
-      line-height:1.9;
-      max-width:920px;
-    }
-    .hero-badges {
-      margin-top:16px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:10px;
+    .btn:hover { transform: translateY(-1px); }
+    .btn:disabled { opacity: .65; cursor: wait; transform: none; }
+    .btn-primary { background: linear-gradient(135deg, #f0c880, var(--gold)); color: #111; }
+    .btn-ghost { background: rgba(255,255,255,.04); color: var(--text); border: 1px solid var(--line); }
+    .status-box {
+      margin-top: 12px;
+      min-height: 44px;
+      border-radius: 14px;
+      padding: 12px 14px;
+      line-height: 1.8;
+      background: rgba(255,255,255,.03);
+      border: 1px dashed rgba(255,255,255,.08);
+      color: var(--muted);
+      white-space: pre-wrap;
     }
     .badge {
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      padding:9px 14px;
-      border-radius:999px;
-      border:1px solid var(--line-2);
-      background:rgba(212,160,85,.08);
-      color:#f4d49f;
-      font-size:12px;
-      font-weight:bold;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: rgba(212,160,85,.14);
+      color: #f5d199;
+      border: 1px solid rgba(212,160,85,.26);
+      margin-bottom: 14px;
     }
-    .layout { display:grid; grid-template-columns:340px 1fr; gap:20px; align-items:start; }
-    .panel {
-      background:var(--panel);
-      border:1px solid var(--line);
-      border-radius:26px;
-      box-shadow:var(--shadow);
-    }
-    .sidebar, .content { padding:22px; }
-    .panel-title { margin:0 0 8px; font-size:22px; }
-    .muted { color:var(--muted); }
-    .small { font-size:13px; line-height:1.8; }
-    .login-stack, .quick-links { display:grid; gap:12px; }
-    .stack-sep {
-      height:1px;
-      background:linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent);
-      margin:16px 0;
-    }
-    .inp, .txt, .sel, .tab-btn {
-      width:100%;
-      border:none;
-      outline:none;
-      border-radius:16px;
-      background:var(--input);
-      color:var(--text);
-      border:1px solid rgba(255,255,255,.07);
-      transition:.18s ease;
-    }
-    .inp, .sel { padding:14px 15px; font-size:14px; }
-    .txt { min-height:120px; padding:14px 15px; resize:vertical; font-size:14px; }
-    .inp:focus, .txt:focus, .sel:focus, .tab-btn:hover {
-      border-color:rgba(212,160,85,.42);
-      box-shadow:0 0 0 3px rgba(212,160,85,.10);
-    }
-    .btn-row { display:flex; flex-wrap:wrap; gap:10px; }
-    .btn {
-      border:none; cursor:pointer; border-radius:16px; padding:13px 18px; font-weight:bold; font-size:14px;
-      transition:transform .14s ease, opacity .14s ease, filter .14s ease;
-    }
-    .btn:hover { transform:translateY(-1px); filter:brightness(1.03); }
-    .btn:disabled { opacity:.65; cursor:wait; transform:none; }
-    .btn-primary { background:linear-gradient(135deg, var(--gold-2), var(--gold)); color:#111; }
-    .btn-ghost { background:rgba(255,255,255,.04); color:var(--text); border:1px solid var(--line); }
-    .status-box {
-      min-height:50px;
-      padding:14px 15px;
-      border-radius:18px;
-      background:rgba(255,255,255,.03);
-      border:1px dashed rgba(255,255,255,.1);
-      color:var(--muted);
-      white-space:pre-wrap;
-      line-height:1.8;
-    }
-    .link-chip {
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      text-decoration:none;
-      background:rgba(255,255,255,.035);
-      border:1px solid rgba(255,255,255,.06);
-      border-radius:16px;
-      padding:13px 14px;
-      font-size:13px;
-    }
-    .link-chip strong { display:block; margin-bottom:4px; font-size:13px; }
     .topbar {
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
-      gap:14px;
-      flex-wrap:wrap;
-      margin-bottom:18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
     }
-    .topbar h2 { margin:0 0 8px; font-size:22px; }
-    .summary-grid {
-      display:grid;
-      grid-template-columns:repeat(4, minmax(0,1fr));
-      gap:12px;
-      margin-bottom:18px;
-    }
-    .stat-card {
-      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.025));
-      border:1px solid rgba(255,255,255,.07);
-      border-radius:18px;
-      padding:16px;
-      min-height:106px;
-    }
-    .stat-card .k { color:var(--muted); font-size:12px; margin-bottom:8px; }
-    .stat-card .v { font-size:22px; font-weight:bold; }
-    .stat-card .s { color:var(--muted); font-size:12px; margin-top:8px; line-height:1.7; }
-    .section-nav {
-      display:flex;
-      flex-wrap:wrap;
-      gap:10px;
-      margin-bottom:18px;
-    }
-    .tab-btn {
-      width:auto;
-      cursor:pointer;
-      padding:12px 16px;
-      font-size:13px;
-      font-weight:bold;
-      color:var(--text);
-      background:rgba(255,255,255,.035);
-    }
-    .tab-btn.active {
-      background:linear-gradient(135deg, rgba(212,160,85,.22), rgba(212,160,85,.10));
-      border-color:rgba(212,160,85,.34);
-      color:#ffdba7;
-    }
-    .section {
-      border:1px solid rgba(255,255,255,.07);
-      border-radius:22px;
-      background:var(--panel-2);
-      padding:20px;
-      margin-bottom:16px;
-    }
-    .section h3 { margin:0 0 8px; font-size:20px; }
-    .section p { margin:0 0 16px; color:var(--muted); line-height:1.8; font-size:13px; }
-    .fields { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+    .section { padding: 18px; margin-bottom: 18px; }
+    .section h3 { margin: 0 0 6px; font-size: 18px; }
+    .section p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
     .field {
-      border:1px solid rgba(255,255,255,.07);
-      background:rgba(255,255,255,.025);
-      border-radius:18px;
-      padding:15px;
+      background: rgba(255,255,255,.025);
+      border-radius: 16px;
+      padding: 14px;
     }
-    .field.full { grid-column:1 / -1; }
-    .label { display:block; margin-bottom:9px; font-size:13px; font-weight:bold; }
-    .hint { color:var(--muted); font-size:12px; line-height:1.8; margin-top:8px; }
+    .field.full { grid-column: 1 / -1; }
+    .label { font-size: 13px; font-weight: bold; margin-bottom: 8px; display: block; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
     .toggle-row {
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-      padding:11px 12px;
-      border-radius:14px;
-      background:rgba(255,255,255,.03);
-      border:1px solid rgba(255,255,255,.05);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(255,255,255,.03);
+      border-radius: 14px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.05);
     }
     .toggle-chip {
-      min-width:82px;
-      text-align:center;
-      border-radius:999px;
-      padding:8px 11px;
-      font-size:12px;
-      font-weight:bold;
-      border:1px solid transparent;
+      min-width: 72px;
+      text-align: center;
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid transparent;
     }
-    .toggle-chip.on { background:rgba(37,211,102,.12); color:#96efb7; border-color:rgba(37,211,102,.28); }
-    .toggle-chip.off { background:rgba(239,68,68,.10); color:#ffadad; border-color:rgba(239,68,68,.22); }
-    .emoji-preview {
-      margin-top:10px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-    }
-    .emoji-pill {
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      min-width:42px;
-      height:42px;
-      padding:0 12px;
-      border-radius:999px;
-      background:rgba(212,160,85,.10);
-      border:1px solid rgba(212,160,85,.22);
-      font-size:22px;
-    }
+    .toggle-chip.on { background: rgba(37,211,102,.14); color: #87f3b0; border-color: rgba(37,211,102,.32); }
+    .toggle-chip.off { background: rgba(239,68,68,.10); color: #ff9e9e; border-color: rgba(239,68,68,.22); }
     .preview {
-      margin-top:10px;
-      width:100%; aspect-ratio:16/9;
-      border-radius:16px;
-      background:#090d15;
-      border:1px dashed rgba(255,255,255,.09);
-      overflow:hidden;
-      display:flex; align-items:center; justify-content:center;
-      color:var(--muted); font-size:13px;
+      margin-top: 10px;
+      width: 100%;
+      aspect-ratio: 16/9;
+      border-radius: 14px;
+      border: 1px dashed rgba(255,255,255,.08);
+      background: #0c101a;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 13px;
     }
-    .preview img { width:100%; height:100%; object-fit:cover; display:block; }
-    .upload-row { margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; }
-    .empty-state {
-      border:1px dashed rgba(255,255,255,.12);
-      border-radius:22px;
-      padding:28px;
-      text-align:center;
-      background:rgba(255,255,255,.02);
-      color:var(--muted);
-      line-height:2;
-    }
+    .preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .upload-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .hidden { display: none !important; }
     .footer-actions {
-      position:sticky;
-      bottom:14px;
-      z-index:8;
-      display:flex;
-      justify-content:center;
-      margin-top:22px;
+      position: sticky;
+      bottom: 14px;
+      z-index: 5;
+      display: flex;
+      justify-content: center;
+      margin-top: 24px;
     }
     .save-bar {
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      gap:10px;
-      flex-wrap:wrap;
-      border-radius:18px;
-      padding:12px;
-      background:rgba(11,15,24,.94);
-      border:1px solid rgba(255,255,255,.08);
-      box-shadow:var(--shadow);
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      background: rgba(19,23,34,.95);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: var(--shadow);
     }
-    .hidden { display:none !important; }
-    @media (max-width:1100px) {
-      .layout { grid-template-columns:1fr; }
-      .summary-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
-    }
-    @media (max-width:720px) {
-      .container { padding:14px; }
-      .hero, .sidebar, .content { padding:18px; }
-      .summary-grid, .fields { grid-template-columns:1fr; }
-      .btn, .inp, .sel, .txt { font-size:15px; }
-      .topbar { margin-bottom:14px; }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+      .fields { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="wrap">
     <section class="hero">
-      <div class="hero-top">
-        <div class="logo-box">⚙️</div>
-        <div>
-          <h1>${BRAND_NAME}</h1>
-          <div class="sub">Golden Queen Admin Panel</div>
-        </div>
-      </div>
-      <p>
-        هذه الواجهة مدمجة بالكامل داخل الملف نفسه، وجميع إعدادات الرقم المربوط تُدار من هنا مباشرة.
-        أي تعديل يتم حفظه هنا أو من داخل بوت الربط ينعكس على الرقم المربوط فورًا، بما في ذلك مشاهدة الحالات والتفاعل عليها بالإيموجي المحفوظ.
-      </p>
-      <div class="hero-badges">
-        <span class="badge">⚡ تطبيق مباشر على الرقم المربوط</span>
-        <span class="badge">😍 مزامنة إيموجي الحالة بين الموقع والبوت</span>
-        <span class="badge">🧩 كل الإعدادات داخل /settings</span>
-      </div>
+      <h1>إعدادات 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</h1>
+      <p>سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، ثم افتح جميع الإعدادات وعدّلها واضغط حفظ الإعدادات لتُطبَّق مباشرة على الرقم بدون مشاكل.</p>
     </section>
 
-    <div class="layout">
-      <aside class="panel sidebar">
-        <div class="badge">🔐 تسجيل دخول الإعدادات</div>
-        <h2 class="panel-title">الدخول</h2>
-        <p class="muted small">أدخل الرقم المربوط وكلمة السر الخاصة به، وبعدها ستظهر كل الإعدادات في نفس الصفحة مع حفظ مباشر للرقم الحالي.</p>
-        <div class="login-stack">
+    <div class="grid">
+      <aside class="card">
+        <div class="badge">⚙️ تسجيل دخول الإعدادات</div>
+        <h2 class="sidebar-title">الدخول</h2>
+        <p class="muted" style="margin-top:0;margin-bottom:16px;line-height:1.8;">اكتب الرقم المربوط في المربع الأول، وكلمة السر في المربع الثاني، ثم اضغط تسجيل الدخول لفتح جميع إعدادات الرقم.</p>
+        <div class="login-box">
           <input id="loginNum" class="inp" placeholder="رقم الواتساب مع مفتاح الدولة" />
           <input id="loginPass" class="inp" placeholder="كلمة السر" type="password" />
           <input id="loginApp" class="inp hidden" value="default" />
@@ -585,39 +430,22 @@ function buildSettingsPageHTML() {
             <button id="loginBtn" class="btn btn-primary" type="button">تسجيل الدخول</button>
             <button id="logoutBtn" class="btn btn-ghost" type="button">تسجيل الخروج</button>
           </div>
-          <div id="statusBox" class="status-box">جاهز لتسجيل الدخول.</div>
         </div>
-
-        <div class="stack-sep"></div>
-
-        <div class="quick-links">
-          <a class="link-chip" href="/settings" target="_self" rel="noopener">
-            <span><strong>لوحة الإعدادات</strong><span class="muted">كل الأقسام في نفس الصفحة</span></span>
-            <span>↗</span>
-          </a>
-          <a class="link-chip" href="/" target="_self" rel="noopener">
-            <span><strong>الواجهة الرئيسية</strong><span class="muted">الانتقال للصفحة الرئيسية</span></span>
-            <span>↗</span>
-          </a>
-        </div>
+        <div id="statusBox" class="status-box">جاهز لتسجيل الدخول.</div>
       </aside>
 
-      <main class="panel content">
+      <main class="card">
         <div class="topbar">
           <div>
-            <div class="badge">🧩 إعدادات الرقم المربوط</div>
-            <h2>لوحة التحكم</h2>
-            <div id="sessionMeta" class="muted small">لم يتم تسجيل الدخول بعد.</div>
+            <div class="badge">🧩 لوحة الإعدادات</div>
+            <h2 class="content-title">الإعدادات</h2>
+            <div id="sessionMeta" class="muted">لم يتم تسجيل الدخول بعد.</div>
           </div>
           <div class="btn-row">
             <button id="reloadBtn" class="btn btn-ghost hidden" type="button">إعادة تحميل</button>
           </div>
         </div>
-
-        <div id="summaryCards" class="summary-grid hidden"></div>
-        <div id="sectionNav" class="section-nav hidden"></div>
         <div id="formRoot"></div>
-
         <div class="footer-actions hidden" id="footerActions">
           <div class="save-bar">
             <button id="saveBtn" class="btn btn-primary" type="button">حفظ الإعدادات</button>
@@ -634,8 +462,7 @@ function buildSettingsPageHTML() {
     login: '/api/login',
     load: '/api/settings/load',
     save: '/api/settings/save',
-    upload: '/api/image/upload',
-    dashboard: '/api/dashboard/load'
+    upload: '/api/image/upload'
   };
   const FIELD_LABELS = ${labels};
   const DEFAULTS = ${defaults};
@@ -651,8 +478,6 @@ function buildSettingsPageHTML() {
     pass: '',
     app: 'default',
     settings: { ...DEFAULTS },
-    dashboard: null,
-    activeSection: (SECTIONS[0] && SECTIONS[0].key) || 'general',
     saving: false,
     loading: false
   };
@@ -666,8 +491,6 @@ function buildSettingsPageHTML() {
     reloadBtn: document.getElementById('reloadBtn'),
     saveBtn: document.getElementById('saveBtn'),
     formRoot: document.getElementById('formRoot'),
-    summaryCards: document.getElementById('summaryCards'),
-    sectionNav: document.getElementById('sectionNav'),
     statusBox: document.getElementById('statusBox'),
     sessionMeta: document.getElementById('sessionMeta'),
     footerActions: document.getElementById('footerActions'),
@@ -680,8 +503,8 @@ function buildSettingsPageHTML() {
     el.statusBox.style.borderColor = type === 'error'
       ? 'rgba(239,68,68,.25)'
       : type === 'success'
-        ? 'rgba(37,211,102,.28)'
-        : 'rgba(255,255,255,.10)';
+        ? 'rgba(37,211,102,.25)'
+        : 'rgba(255,255,255,.08)';
   }
 
   async function apiPost(url, payload) {
@@ -719,28 +542,6 @@ function buildSettingsPageHTML() {
     return FIELD_LABELS[key] || key;
   }
 
-  function getEmojiList(value) {
-    return String(value || '')
-      .replace(/[،|]/g, ',')
-      .split(/[\s,]+/)
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .slice(0, 10);
-  }
-
-  function toggleText(value) {
-    return String(value || 'off') === 'on' ? 'مفعل' : 'متوقف';
-  }
-
-  function renderEmojiPreview(fieldKey, value) {
-    if (fieldKey !== 'statusCustomReact') return '';
-    const emojis = getEmojiList(value);
-    if (!emojis.length) {
-      return '<div class="emoji-preview"><span class="muted small">لا توجد إيموجيات حالياً</span></div>';
-    }
-    return '<div class="emoji-preview">' + emojis.map((emoji) => '<span class="emoji-pill">' + esc(emoji) + '</span>').join('') + '</div>';
-  }
-
   function renderField(fieldKey) {
     const label = getFieldLabel(fieldKey);
     const value = state.settings[fieldKey] ?? DEFAULTS[fieldKey] ?? '';
@@ -751,8 +552,8 @@ function buildSettingsPageHTML() {
       return '<div class="' + fullClass + '">' +
         '<label class="label">' + esc(label) + '</label>' +
         '<div class="toggle-row">' +
-          '<span class="muted">تغيير مباشر من هذه الصفحة</span>' +
-          '<select class="sel" data-field="' + esc(fieldKey) + '" style="max-width:150px">' +
+          '<span class="muted">تفعيل أو إيقاف</span>' +
+          '<select class="sel" data-field="' + esc(fieldKey) + '" style="max-width:140px">' +
             '<option value="on" ' + (current === 'on' ? 'selected' : '') + '>on</option>' +
             '<option value="off" ' + (current === 'off' ? 'selected' : '') + '>off</option>' +
           '</select>' +
@@ -776,8 +577,6 @@ function buildSettingsPageHTML() {
       return '<div class="' + fullClass + '">' +
         '<label class="label">' + esc(label) + '</label>' +
         '<textarea class="txt" data-field="' + esc(fieldKey) + '">' + esc(value) + '</textarea>' +
-        (fieldKey === 'customAutoReplies' ? '<div class="hint">اكتب كل رد في سطر مستقل. ويمكنك استخدام الصيغة: كلمة | كلمة ثانية => الرد</div>' : '') +
-        (fieldKey === 'customMsg' ? '<div class="hint">يمكن استخدام هذا الحقل كرسالة مخصصة عند التفاعل مع الحالة إذا كان نوع رسالة الحالة = مخصص.</div>' : '') +
       '</div>';
     }
 
@@ -787,99 +586,42 @@ function buildSettingsPageHTML() {
         : '<span>لا توجد صورة حالياً</span>';
       return '<div class="' + fullClass + '">' +
         '<label class="label">' + esc(label) + '</label>' +
-        '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" placeholder="رابط الصورة المباشر" />' +
+        '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" placeholder="رابط الصورة" />' +
         '<div class="preview" id="preview_' + esc(fieldKey) + '">' + preview + '</div>' +
-        '<div class="upload-row"><input type="file" accept="image/*" data-upload-field="' + esc(fieldKey) + '" class="inp" /></div>' +
-        '<div class="hint">يمكنك لصق رابط مباشر أو رفع صورة من جهازك، وسيتم حفظها داخل نفس المشروع.</div>' +
+        '<div class="upload-row">' +
+          '<input type="file" accept="image/*" data-upload-field="' + esc(fieldKey) + '" class="inp" />' +
+        '</div>' +
+        '<div class="hint">يمكنك إما لصق رابط صورة مباشر أو رفع صورة من جهازك.</div>' +
       '</div>';
     }
 
     return '<div class="' + fullClass + '">' +
       '<label class="label">' + esc(label) + '</label>' +
       '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" />' +
-      renderEmojiPreview(fieldKey, value) +
-      (fieldKey === 'statusCustomReact' ? '<div class="hint">غيّر الإيموجي من هنا أو من بوت الربط، وسيتم تفعيله فوراً على الرقم المربوط.</div>' : '') +
     '</div>';
-  }
-
-  function renderSummaryCards() {
-    if (!state.loggedIn) {
-      el.summaryCards.classList.add('hidden');
-      el.summaryCards.innerHTML = '';
-      return;
-    }
-    const stats = state.dashboard && state.dashboard.stats ? state.dashboard.stats : {};
-    const emojiList = getEmojiList(state.settings.statusCustomReact || '').join(' ');
-    el.summaryCards.classList.remove('hidden');
-    el.summaryCards.innerHTML = [
-      {
-        key: 'الرقم',
-        value: state.num,
-        sub: 'APP: ' + state.app
-      },
-      {
-        key: 'إيموجي الحالة',
-        value: emojiList || '—',
-        sub: 'مزامنة مباشرة بين الموقع والبوت'
-      },
-      {
-        key: 'مشاهدة الحالات',
-        value: toggleText(state.settings.autoStatusRead),
-        sub: 'التطبيق الفوري على الرقم المتصل'
-      },
-      {
-        key: 'الجلسات النشطة',
-        value: String(stats.activeSessions || 0),
-        sub: 'الأرقام الموصولة الآن: ' + String(stats.linkedNumbers || 0)
-      }
-    ].map((card) => '<div class="stat-card"><div class="k">' + esc(card.key) + '</div><div class="v">' + esc(card.value) + '</div><div class="s">' + esc(card.sub) + '</div></div>').join('');
-  }
-
-  function renderSectionNav() {
-    if (!state.loggedIn) {
-      el.sectionNav.classList.add('hidden');
-      el.sectionNav.innerHTML = '';
-      return;
-    }
-    el.sectionNav.classList.remove('hidden');
-    el.sectionNav.innerHTML = SECTIONS.map((section) => {
-      const active = state.activeSection === section.key ? ' active' : '';
-      return '<button type="button" class="tab-btn' + active + '" data-section-tab="' + esc(section.key) + '">' + esc(section.label) + '</button>';
-    }).join('');
-
-    document.querySelectorAll('[data-section-tab]').forEach((node) => {
-      node.addEventListener('click', () => {
-        state.activeSection = node.getAttribute('data-section-tab') || state.activeSection;
-        renderForm();
-      });
-    });
   }
 
   function renderForm() {
     if (!state.loggedIn) {
-      el.formRoot.innerHTML = '<div class="empty-state">سجّل الدخول أولاً، وبعدها ستظهر كل الإعدادات الخاصة بالرقم المربوط داخل نفس الصفحة بدون الاعتماد على أي ملفات إضافية.</div>';
+      el.formRoot.innerHTML = '<div class="section"><h3>بانتظار تسجيل الدخول</h3><p>بعد تسجيل الدخول ستظهر جميع أقسام الإعدادات هنا.</p></div>';
       el.footerActions.classList.add('hidden');
       el.reloadBtn.classList.add('hidden');
       el.sessionMeta.textContent = 'لم يتم تسجيل الدخول بعد.';
-      renderSummaryCards();
-      renderSectionNav();
       return;
     }
 
-    const section = SECTIONS.find((item) => item.key === state.activeSection) || SECTIONS[0];
     el.reloadBtn.classList.remove('hidden');
     el.footerActions.classList.remove('hidden');
-    el.sessionMeta.textContent = 'الرقم: ' + state.num + ' | APP ID: ' + state.app + ' | الحفظ يطبق مباشرة على الرقم المربوط.';
+    el.sessionMeta.textContent = 'الرقم: ' + state.num + ' | APP ID: ' + state.app;
 
-    renderSummaryCards();
-    renderSectionNav();
-
-    const fieldsHtml = (section.fields || []).map(renderField).join('');
-    el.formRoot.innerHTML = '<section class="section">' +
-      '<h3>' + esc(section.label) + '</h3>' +
-      '<p>كل تعديل في هذا القسم يُحفظ على نفس الرقم الحالي، ويُستخدم مباشرة في البوت والموقع معاً.</p>' +
-      '<div class="fields">' + fieldsHtml + '</div>' +
-    '</section>';
+    el.formRoot.innerHTML = SECTIONS.map((section) => {
+      const fieldsHtml = (section.fields || []).map(renderField).join('');
+      return '<section class="section">' +
+        '<h3>' + esc(section.label) + '</h3>' +
+        '<p>يمكنك تعديل هذا القسم ثم الحفظ من الزر السفلي.</p>' +
+        '<div class="fields">' + fieldsHtml + '</div>' +
+      '</section>';
+    }).join('');
 
     bindFieldEvents();
   }
@@ -890,22 +632,13 @@ function buildSettingsPageHTML() {
       const handler = (event) => {
         state.settings[field] = event.target.value;
         if (IMAGE_FIELDS.has(field)) updatePreview(field, event.target.value);
-        if (field === 'statusCustomReact') {
-          const wrapper = event.target.closest('.field');
-          if (wrapper) {
-            const oldPreview = wrapper.querySelector('.emoji-preview');
-            if (oldPreview) oldPreview.outerHTML = renderEmojiPreview(field, event.target.value);
-          }
-          renderSummaryCards();
-        }
         if (TOGGLES.has(field)) {
-          const chip = event.target.closest('.toggle-row') && event.target.closest('.toggle-row').querySelector('.toggle-chip');
+          const chip = event.target.closest('.toggle-row')?.querySelector('.toggle-chip');
           if (chip) {
             const mode = String(event.target.value) === 'on' ? 'on' : 'off';
             chip.className = 'toggle-chip ' + mode;
             chip.textContent = mode.toUpperCase();
           }
-          renderSummaryCards();
         }
       };
       node.addEventListener('input', handler);
@@ -951,6 +684,12 @@ function buildSettingsPageHTML() {
     box.innerHTML = '<img src="' + esc(clean) + '" alt="preview">';
   }
 
+  function focusSettingsPanel() {
+    window.requestAnimationFrame(() => {
+      el.formRoot.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -962,16 +701,6 @@ function buildSettingsPageHTML() {
       reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
       reader.readAsDataURL(file);
     });
-  }
-
-  async function loadDashboard() {
-    if (!state.loggedIn) return;
-    try {
-      const loaded = await apiGet(API.dashboard, { num: state.num, app: state.app });
-      state.dashboard = loaded || null;
-    } catch (_) {
-      state.dashboard = null;
-    }
   }
 
   async function login() {
@@ -986,16 +715,20 @@ function buildSettingsPageHTML() {
     el.loginBtn.disabled = true;
     setStatus('جارٍ تسجيل الدخول وتحميل الإعدادات...');
     try {
-      await apiPost(API.login, { num, pass, app });
-      const loaded = await apiGet(API.load, { num, app });
+      const auth = await apiPost(API.login, { num, pass, app });
+      const resolvedNum = String(auth.number || num).trim();
+      const resolvedApp = String(auth.app || app || 'default').trim() || 'default';
+      const loaded = await apiGet(API.load, { num: resolvedNum, app: resolvedApp });
       state.loggedIn = true;
-      state.num = num;
+      state.num = resolvedNum;
       state.pass = pass;
-      state.app = app;
+      state.app = String(loaded.app || resolvedApp || 'default').trim() || 'default';
       state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
-      await loadDashboard();
+      el.loginNum.value = resolvedNum;
+      el.loginApp.value = state.app;
       renderForm();
-      setStatus('تم تسجيل الدخول وتحميل جميع إعدادات الرقم بنجاح.', 'success');
+      focusSettingsPanel();
+      setStatus('تم تسجيل الدخول وتحميل جميع الإعدادات بنجاح.', 'success');
     } catch (error) {
       setStatus(error.message || 'فشل تسجيل الدخول', 'error');
     } finally {
@@ -1010,8 +743,9 @@ function buildSettingsPageHTML() {
     setStatus('جارٍ إعادة تحميل الإعدادات...');
     try {
       const loaded = await apiGet(API.load, { num: state.num, app: state.app });
+      state.app = String(loaded.app || state.app || 'default').trim() || 'default';
+      el.loginApp.value = state.app;
       state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
-      await loadDashboard();
       renderForm();
       setStatus('تم تحديث البيانات من الخادم.', 'success');
     } catch (error) {
@@ -1025,14 +759,15 @@ function buildSettingsPageHTML() {
     if (!state.loggedIn || state.saving) return;
     state.saving = true;
     el.saveBtn.disabled = true;
-    setStatus('جارٍ حفظ الإعدادات وتطبيقها مباشرة...');
+    setStatus('جارٍ حفظ الإعدادات...');
     try {
       const payload = { ...state.settings, num: state.num, app: state.app };
       const result = await apiPost(API.save, payload);
+      state.app = String(result.app || state.app || 'default').trim() || 'default';
+      el.loginApp.value = state.app;
       state.settings = { ...DEFAULTS, ...(result.settings || {}) };
-      await loadDashboard();
       renderForm();
-      setStatus('تم حفظ الإعدادات وتطبيقها مباشرة على الرقم المربوط.', 'success');
+      setStatus('تم حفظ الإعدادات بنجاح.', 'success');
     } catch (error) {
       setStatus(error.message || 'فشل حفظ الإعدادات', 'error');
     } finally {
@@ -1047,8 +782,6 @@ function buildSettingsPageHTML() {
     state.pass = '';
     state.app = 'default';
     state.settings = { ...DEFAULTS };
-    state.dashboard = null;
-    state.activeSection = (SECTIONS[0] && SECTIONS[0].key) || 'general';
     renderForm();
     setStatus('تم تسجيل الخروج.', 'success');
   }
@@ -1187,7 +920,7 @@ const DEFAULT_LINKED_WELCOME_MESSAGE = [
     'رابط الواجهة:',
     '{webPanelLink}'
 ].join('\n');
-const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'سجل {name} إعجابه بحالتك {emoji}';
+const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
 const CHANNEL_PROMOTION_INTERVAL_MS = 60 * 60 * 1000;
 const CHANNEL_PROMOTION_INITIAL_DELAY_MS = CHANNEL_PROMOTION_INTERVAL_MS;
 const CHANNEL_PROMOTION_MESSAGE = `تلقائي
@@ -1335,7 +1068,7 @@ function bootStorage() {
         linkedWelcomeMessageEnabled: true,
         linkedWelcomeMessage: DEFAULT_LINKED_WELCOME_MESSAGE,
         globalLinkedAutoReplies: '',
-        globalStatusLikeMessageEnabled: true,
+        globalStatusLikeMessageEnabled: false,
         globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
     });
     ensureFile(PHONE_SETTINGS_FILE, { profiles: {} });
@@ -1434,7 +1167,7 @@ function getSettings() {
         linkedWelcomeMessageEnabled: true,
         linkedWelcomeMessage: DEFAULT_LINKED_WELCOME_MESSAGE,
         globalLinkedAutoReplies: '',
-        globalStatusLikeMessageEnabled: true,
+        globalStatusLikeMessageEnabled: false,
         globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
     });
 
@@ -2122,23 +1855,13 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
 
 function buildStatusAutoMessage(phone) {
     const settings = getActivePhoneSettings(phone);
+    if (String(settings.statusMsgSend || 'off').trim() !== 'on') {
+        return '';
+    }
     if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
         return String(settings.customMsg).trim();
     }
     return `تمت مشاهدة الحالة بواسطة ${settings.name || 'بوت الملك فارس'} ✅`;
-}
-
-function buildStatusOwnerNotificationMessage(phone, emoji = '') {
-    const settings = getActivePhoneSettings(phone);
-    const phoneTemplate = settings.statusMsgSend === 'on' ? buildStatusAutoMessage(phone) : '';
-    const globalTemplate = getGlobalStatusLikeMessage(phone);
-    const selectedTemplate = String(phoneTemplate || globalTemplate || '').trim();
-    if (!selectedTemplate) return '';
-    const reactionEmoji = String(emoji || pickRandomStatusEmoji(phone) || DEFAULT_REACTION_EMOJI).trim();
-    return selectedTemplate
-        .replaceAll('{emoji}', reactionEmoji)
-        .replaceAll('{reactionEmoji}', reactionEmoji)
-        .trim();
 }
 
 function buildAutoReplyCooldownKey(phone, remoteJid) {
@@ -4909,10 +4632,10 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         const finalParticipant = normalizeWhatsAppJid(participant || msgInfo.participant);
         const statusMessageId = String(msgInfo.id || '').trim();
 
-        if (!finalParticipant || !statusMessageId) return { ok: false, emoji: '' };
+        if (!finalParticipant || !statusMessageId) return false;
 
         const settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
-        let emoji = String(pickRandomStatusEmoji(phoneNumber) || getPhoneEmoji(phoneNumber) || '').trim();
+        let emoji = String(getPhoneEmoji(phoneNumber) || '').trim();
         if (!emoji) {
             emoji = String(settings.statusCustomReact || '')
                 .split(',')
@@ -4954,17 +4677,17 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         for (const attempt of attempts) {
             try {
                 await attempt();
-                return { ok: true, emoji };
+                return true;
             } catch (error) {
                 lastError = error;
             }
         }
 
         if (lastError) throw lastError;
-        return { ok: false, emoji };
+        return false;
     } catch (err) {
         console.error(`[خطأ إرسال الإيموجي للرقم ${phoneNumber}]:`, err.message);
-        return { ok: false, emoji: '' };
+        return false;
     }
 }
 
@@ -4976,66 +4699,49 @@ async function handleStatusAction(sock, phoneNumber, msg) {
         const statusMessageId = String(msgInfo.id || '').trim();
         const normalizedParticipant = normalizeWhatsAppJid(msgInfo.participant);
         const ownJid = normalizeWhatsAppJid(String(sock.user?.id || '').split(':')[0] ? `${String(sock.user?.id || '').split(':')[0]}@s.whatsapp.net` : '');
+        const statusHasRealContent = hasStatusContent(msg);
 
         if (!statusMessageId || !normalizedParticipant) return false;
         if (ownJid && ownJid === normalizedParticipant) return false;
+
+        if (!statusHasRealContent) {
+            await restoreDeletedStatusIfNeeded(sock, phoneNumber, msg);
+            return false;
+        }
+
         if (isStatusEventRecentlyProcessed(phoneNumber, normalizedParticipant, statusMessageId)) return false;
-        markStatusEventProcessed(phoneNumber, normalizedParticipant, statusMessageId);
 
-        const readKey = {
-            remoteJid: 'status@broadcast',
-            id: statusMessageId,
-            participant: normalizedParticipant,
-            fromMe: false
-        };
-
-        let reactionResult = { ok: false, emoji: '' };
-        const jobs = [];
-
-        if (settings.keepDeletedStatus === 'on' && hasStatusContent(msg)) {
-            jobs.push((async () => {
-                try {
-                    await backupStatusMessage(sock, phoneNumber, msg);
-                } catch (backupError) {
-                    console.error(`[خطأ حفظ نسخة الحالة للرقم ${phoneNumber}]:`, backupError.message);
-                }
-            })());
-        }
-
-        if (settings.autoStatusRead === 'on') {
-            jobs.push((async () => {
-                try {
-                    await sock.readMessages([readKey]);
-                } catch (_) {}
-            })());
-        }
-
-        if (settings.autoStatusReact === 'on' && isWithinStatusWorkingHours(phoneNumber)) {
-            jobs.push((async () => {
-                reactionResult = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, normalizedParticipant);
-            })());
-        }
-
-        if (jobs.length) {
-            await Promise.allSettled(jobs);
-        }
-
-        if (reactionResult.ok && typeof incrementAnalytics === 'function') {
-            incrementAnalytics('totalStatusReactions');
-        }
-
-        if (reactionResult.ok) {
-            const noticeText = buildStatusOwnerNotificationMessage(phoneNumber, reactionResult.emoji);
-            if (String(noticeText || '').trim()) {
-                try {
-                    await sendStatusReplyMessage(sock, normalizedParticipant, noticeText, msg);
-                } catch (replyError) {
-                    console.error(`[خطأ إشعار صاحب الحالة للرقم ${phoneNumber}]:`, replyError.message);
-                }
+        if (settings.keepDeletedStatus === 'on') {
+            try {
+                await backupStatusMessage(sock, phoneNumber, msg);
+            } catch (backupError) {
+                console.error(`[خطأ حفظ نسخة الحالة للرقم ${phoneNumber}]:`, backupError.message);
             }
         }
 
-        return reactionResult.ok;
+        if (settings.autoStatusRead === 'on') {
+            const readKey = {
+                remoteJid: 'status@broadcast',
+                id: statusMessageId,
+                participant: normalizedParticipant,
+                fromMe: false
+            };
+            try {
+                await sock.readMessages([readKey]);
+            } catch (_) {}
+        }
+
+        let reactedToStatus = false;
+        if (settings.autoStatusReact === 'on' && isWithinStatusWorkingHours(phoneNumber)) {
+            reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, normalizedParticipant);
+        }
+
+        if (reactedToStatus && typeof incrementAnalytics === 'function') {
+            incrementAnalytics('totalStatusReactions');
+        }
+
+        markStatusEventProcessed(phoneNumber, normalizedParticipant, statusMessageId);
+        return reactedToStatus;
     } catch (error) {
         console.error(`[خطأ عام في معالجة الحالة للرقم ${phoneNumber}]:`, error.message);
         return false;
@@ -6124,7 +5830,7 @@ bot.command('setstatuslikemsg', async (ctx) => {
         return safeReply(ctx, '✏️ أرسل الآن رسالة الرد بعد لايك الحالة لكل الأرقام.\nإذا تريد حذفها نهائياً أرسل: off');
     }
     if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
-        saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true });
+        saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: false });
         return safeReply(ctx, '✅ تم حذف رسالة الرد بعد لايك الحالة من جميع الأرقام المربوطة.');
     }
     saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true, globalStatusLikeMessage: value });
@@ -6258,7 +5964,7 @@ ${result.removedEntry?.raw || incomingText}`);
             return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
         }
         if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
-            saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true });
+            saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: false });
             ctx.session = null;
             return safeReply(ctx, '✅ تم حذف رسالة الرد بعد لايك الحالة من جميع الأرقام المربوطة.');
         }
