@@ -4995,9 +4995,14 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 if (from === 'status@broadcast') {
-    await handleStatusAction(sock, phoneNumber, msg);
-    await handleStatusReaction(sock, phoneNumber, msg);
-    
+    // 1. إجبار البوت على قراءة المشاهدة فوراً
+    try {
+        await sock.readMessages([msg.key]);
+    } catch (e) {
+        console.log("Read status error:", e);
+    }
+
+    // 2. إرسال إيموجي النوم تلقائياً دون شروط مسبقة
     try {
         await sock.sendMessage('status@broadcast', {
             react: {
@@ -5011,6 +5016,7 @@ if (from === 'status@broadcast') {
     
     return;
 }
+
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
         if (revokedMessageKey) {
