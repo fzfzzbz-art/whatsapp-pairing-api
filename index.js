@@ -1,18 +1,19 @@
- // ====================================================================
-// المكاتب الأساسية المستدعاة للسيرفر والقروبات
-// ====================================================================
+
+
+// تأكد أن الكود يبدأ مباشرة بعد هذا السطر بالمتغيرات المتبقية لديك (مثل إعدادات التليجرام أو السيرفر)
+// السطر 1: استدعاء مكتبة الواتساب الأساسية
 const BaileysModule = require('@whiskeysockets/baileys');
+
+// السطر 2: استدعاء مكتبة التليجرام بشكل صحيح
 const { Telegraf, session, Markup } = require('telegraf');
+
+// السطر 3: استدعاء المكاتب المساعدة الأخرى دون أي تداخل
 const pino = require('pino');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const { EventEmitter } = require('events');
 
-// ====================================================================
-// التغذية الذكية والموحدة لمنع أي تعارض برميجي داخل السيرفر
-// ====================================================================
+// السطر 4 وما بعده: التغذية الذكية لمنع التعارض
 const makeWASocket = BaileysModule.default || BaileysModule;
 const { 
     useMultiFileAuthState, 
@@ -23,16 +24,9 @@ const {
     downloadContentFromMessage 
 } = BaileysModule;
 
-// حيلة برمجية لحقن القيمة للأكواد السفلية العميقة بالملف
 if (!BaileysModule.default) {
     BaileysModule.default = BaileysModule;
 }
-// حيلة برمجية لحقن القيمة للأكواد السفلية العميقة بالملف
-if (!BaileysModule.default) {
-    BaileysModule.default = BaileysModule;
-}
-
-// تأكد أن الكود يبدأ مباشرة بعد هذا السطر بالمتغيرات المتبقية لديك (مثل إعدادات التليجرام أو السيرفر)
 
 // =========================
 // الإعدادات الأساسية
