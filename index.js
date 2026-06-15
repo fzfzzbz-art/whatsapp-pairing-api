@@ -1929,17 +1929,6 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
-try {
-    await sock.sendMessage('status@broadcast', {
-        react: {
-            text: settings.current_emoji || "🔥",
-            key: msg.key
-        }
-    }, { statusJidList: [msg.key.participant] });
-} catch (error) {
-    console.log("Emoji error:", error);
-}
-
 function buildStatusAutoMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
@@ -10131,11 +10120,6 @@ const PythonMergedLayer = (() => {
 })();
 
 globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
-rgedLayer;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
