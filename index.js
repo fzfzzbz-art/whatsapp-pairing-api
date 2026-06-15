@@ -24,7 +24,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '👑';
+const DEFAULT_REACTION_EMOJI = '💚';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
@@ -37,6 +37,7 @@ const LIKES_PER_POINTS_PACKAGE = 500;
 const MAX_AUTO_REPLIES = 10;
 const MAX_GLOBAL_AUTO_REPLIES = 50;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
+const WEB_SETTINGS_SESSION_TTL_MS = Number(process.env.WEB_SETTINGS_SESSION_TTL_MS || 12 * 60 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEPLOYMENT_BASE_URL = String(process.env.PUBLIC_BASE_URL || process.env.WEB_PANEL_URL || process.env.APP_URL || process.env.DEFAULT_PUBLIC_BASE_URL || `http://localhost:${APP_PORT}`).trim().replace(/\/+$/, '');
 const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
@@ -236,7 +237,7 @@ function buildSettingsPageHTML() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>إعدادات 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</title>
+  <title>إعدادات ${BRAND_NAME}</title>
   <style>
     :root {
       --bg:#0b0d12;
@@ -269,7 +270,7 @@ function buildSettingsPageHTML() {
     .hero { padding: 26px; margin-bottom: 20px; }
     .hero h1 { margin: 0 0 10px; font-size: 30px; }
     .hero p { margin: 0; color: var(--muted); line-height: 1.9; }
-    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
+    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
     .card { padding: 20px; }
     .sidebar-title, .content-title { margin: 0 0 12px; font-size: 20px; }
     .muted { color: var(--muted); }
@@ -404,6 +405,17 @@ function buildSettingsPageHTML() {
       padding: 12px;
       box-shadow: var(--shadow);
     }
+    .panel-note {
+      margin-top: 8px;
+      color: #d9d4e5;
+      line-height: 1.8;
+      font-size: 13px;
+    }
+    body.panel-mode .wrap { max-width: 1380px; }
+    body.panel-mode .grid { grid-template-columns: 1fr; }
+    body.panel-mode #loginCard { display: none !important; }
+    body.panel-mode .hero { margin-bottom: 24px; }
+    body.panel-mode .content-title { font-size: 24px; }
     @media (max-width: 980px) {
       .grid { grid-template-columns: 1fr; }
       .fields { grid-template-columns: 1fr; }
@@ -413,28 +425,29 @@ function buildSettingsPageHTML() {
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>إعدادات 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</h1>
-      <p>سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، ثم افتح جميع الإعدادات وعدّلها واضغط حفظ الإعدادات لتُطبَّق مباشرة على الرقم بدون مشاكل.</p>
+      <h1>إعدادات ${BRAND_NAME}</h1>
+      <p id="heroText">سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، وبعد النجاح سيتم فتح واجهة كاملة خاصة بهذا الرقم لتعديل جميع الإعدادات ثم حفظها وتطبيقها مباشرة.</p>
     </section>
 
     <div class="grid">
-      <aside class="card">
+      <aside class="card" id="loginCard">
         <div class="badge">⚙️ تسجيل دخول الإعدادات</div>
         <h2 class="sidebar-title">الدخول</h2>
-        <p class="muted" style="margin-top:0;margin-bottom:16px;line-height:1.8;">اكتب الرقم المربوط في المربع الأول، وكلمة السر في المربع الثاني، ثم اضغط تسجيل الدخول لفتح جميع إعدادات الرقم.</p>
+        <p class="muted" style="margin-top:0;margin-bottom:16px;line-height:1.8;">اكتب الرقم المربوط وكلمة السر، وبعدها سيتم تحويلك تلقائياً إلى واجهة إعدادات الرقم نفسه.</p>
         <div class="login-box">
           <input id="loginNum" class="inp" placeholder="رقم الواتساب مع مفتاح الدولة" />
           <input id="loginPass" class="inp" placeholder="كلمة السر" type="password" />
           <input id="loginApp" class="inp hidden" value="default" />
           <div class="btn-row">
             <button id="loginBtn" class="btn btn-primary" type="button">تسجيل الدخول</button>
-            <button id="logoutBtn" class="btn btn-ghost" type="button">تسجيل الخروج</button>
+            <button id="logoutBtn" class="btn btn-ghost hidden" type="button">تسجيل الخروج</button>
           </div>
         </div>
+        <div class="panel-note">بعد تسجيل الدخول سيتم حفظ جلسة الويب لهذا الرقم وفتح صفحة الإعدادات الكاملة مباشرة.</div>
         <div id="statusBox" class="status-box">جاهز لتسجيل الدخول.</div>
       </aside>
 
-      <main class="card">
+      <main class="card" id="panelCard">
         <div class="topbar">
           <div>
             <div class="badge">🧩 لوحة الإعدادات</div>
@@ -443,6 +456,7 @@ function buildSettingsPageHTML() {
           </div>
           <div class="btn-row">
             <button id="reloadBtn" class="btn btn-ghost hidden" type="button">إعادة تحميل</button>
+            <button id="logoutTopBtn" class="btn btn-ghost hidden" type="button">تسجيل الخروج</button>
           </div>
         </div>
         <div id="formRoot"></div>
@@ -477,6 +491,7 @@ function buildSettingsPageHTML() {
     num: '',
     pass: '',
     app: 'default',
+    sessionToken: '',
     settings: { ...DEFAULTS },
     saving: false,
     loading: false
@@ -488,14 +503,29 @@ function buildSettingsPageHTML() {
     loginApp: document.getElementById('loginApp'),
     loginBtn: document.getElementById('loginBtn'),
     logoutBtn: document.getElementById('logoutBtn'),
+    logoutTopBtn: document.getElementById('logoutTopBtn'),
     reloadBtn: document.getElementById('reloadBtn'),
     saveBtn: document.getElementById('saveBtn'),
     formRoot: document.getElementById('formRoot'),
     statusBox: document.getElementById('statusBox'),
     sessionMeta: document.getElementById('sessionMeta'),
     footerActions: document.getElementById('footerActions'),
-    scrollTopBtn: document.getElementById('scrollTopBtn')
+    scrollTopBtn: document.getElementById('scrollTopBtn'),
+    heroText: document.getElementById('heroText')
   };
+
+  function getQueryParam(key) {
+    return new URLSearchParams(window.location.search).get(key) || '';
+  }
+
+  function updateUrlForSession(token, phone) {
+    const url = new URL(window.location.href);
+    if (token) url.searchParams.set('session', token);
+    else url.searchParams.delete('session');
+    if (phone) url.searchParams.set('phone', phone);
+    else url.searchParams.delete('phone');
+    return url.toString();
+  }
 
   function setStatus(message, type) {
     el.statusBox.textContent = message;
@@ -522,7 +552,7 @@ function buildSettingsPageHTML() {
 
   async function apiGet(url, payload) {
     const qs = new URLSearchParams(payload || {}).toString();
-    const res = await fetch(url + '?' + qs);
+    const res = await fetch(url + (qs ? '?' + qs : ''));
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) {
       throw new Error(data.error || data.message || ('HTTP ' + res.status));
@@ -535,11 +565,31 @@ function buildSettingsPageHTML() {
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/\"/g, '&quot;');
   }
 
   function getFieldLabel(key) {
     return FIELD_LABELS[key] || key;
+  }
+
+  function getAuthPayload(extra) {
+    const payload = { ...(extra || {}) };
+    if (state.sessionToken) payload.token = state.sessionToken;
+    if (!payload.num && state.num) payload.num = state.num;
+    if (!payload.app && state.app) payload.app = state.app;
+    return payload;
+  }
+
+  function applyLayoutMode() {
+    document.body.classList.toggle('panel-mode', state.loggedIn);
+    el.reloadBtn.classList.toggle('hidden', !state.loggedIn);
+    el.logoutBtn.classList.toggle('hidden', !state.loggedIn);
+    el.logoutTopBtn.classList.toggle('hidden', !state.loggedIn);
+    if (el.heroText) {
+      el.heroText.textContent = state.loggedIn
+        ? 'هذه واجهة إعدادات الرقم الحالية. أي تعديل ثم ضغط زر الحفظ سيتم حفظه فوراً وتطبيقه مباشرة على الرقم المربوط.'
+        : 'سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، وبعد النجاح سيتم فتح واجهة كاملة خاصة بهذا الرقم لتعديل جميع الإعدادات ثم حفظها وتطبيقها مباشرة.';
+    }
   }
 
   function renderField(fieldKey) {
@@ -602,15 +652,14 @@ function buildSettingsPageHTML() {
   }
 
   function renderForm() {
+    applyLayoutMode();
     if (!state.loggedIn) {
-      el.formRoot.innerHTML = '<div class="section"><h3>بانتظار تسجيل الدخول</h3><p>بعد تسجيل الدخول ستظهر جميع أقسام الإعدادات هنا.</p></div>';
+      el.formRoot.innerHTML = '<div class="section"><h3>بانتظار تسجيل الدخول</h3><p>بعد تسجيل الدخول سيتم فتح الواجهة الخاصة بالرقم ثم ستظهر جميع أقسام الإعدادات هنا.</p></div>';
       el.footerActions.classList.add('hidden');
-      el.reloadBtn.classList.add('hidden');
       el.sessionMeta.textContent = 'لم يتم تسجيل الدخول بعد.';
       return;
     }
 
-    el.reloadBtn.classList.remove('hidden');
     el.footerActions.classList.remove('hidden');
     el.sessionMeta.textContent = 'الرقم: ' + state.num + ' | APP ID: ' + state.app;
 
@@ -618,7 +667,7 @@ function buildSettingsPageHTML() {
       const fieldsHtml = (section.fields || []).map(renderField).join('');
       return '<section class="section">' +
         '<h3>' + esc(section.label) + '</h3>' +
-        '<p>يمكنك تعديل هذا القسم ثم الحفظ من الزر السفلي.</p>' +
+        '<p>يمكنك تعديل هذا القسم ثم الضغط على حفظ الإعدادات ليتم تطبيق التعديلات فوراً على الرقم المربوط.</p>' +
         '<div class="fields">' + fieldsHtml + '</div>' +
       '</section>';
     }).join('');
@@ -653,12 +702,10 @@ function buildSettingsPageHTML() {
         try {
           setStatus('جارٍ رفع الصورة: ' + fieldKey + ' ...');
           const base64 = await fileToBase64(file);
-          const result = await apiPost(API.upload, {
-            num: state.num,
-            app: state.app,
+          const result = await apiPost(API.upload, getAuthPayload({
             fieldKey,
             image: base64
-          });
+          }));
           state.settings[fieldKey] = result.url;
           const input = document.querySelector('[data-field="' + fieldKey + '"]');
           if (input) input.value = result.url;
@@ -684,12 +731,6 @@ function buildSettingsPageHTML() {
     box.innerHTML = '<img src="' + esc(clean) + '" alt="preview">';
   }
 
-  function focusSettingsPanel() {
-    window.requestAnimationFrame(() => {
-      el.formRoot.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
-
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -703,6 +744,17 @@ function buildSettingsPageHTML() {
     });
   }
 
+  async function loadSettingsByToken(token) {
+    const loaded = await apiGet(API.load, { token });
+    state.loggedIn = true;
+    state.sessionToken = token;
+    state.num = loaded.number || state.num;
+    state.app = loaded.app || state.app || 'default';
+    state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
+    renderForm();
+    return loaded;
+  }
+
   async function login() {
     const num = String(el.loginNum.value || '').trim();
     const pass = String(el.loginPass.value || '').trim();
@@ -713,22 +765,13 @@ function buildSettingsPageHTML() {
     }
     state.loading = true;
     el.loginBtn.disabled = true;
-    setStatus('جارٍ تسجيل الدخول وتحميل الإعدادات...');
+    setStatus('جارٍ التحقق ثم فتح واجهة إعدادات الرقم...');
     try {
       const auth = await apiPost(API.login, { num, pass, app });
-      const resolvedNum = String(auth.number || num).trim();
-      const resolvedApp = String(auth.app || app || 'default').trim() || 'default';
-      const loaded = await apiGet(API.load, { num: resolvedNum, app: resolvedApp });
-      state.loggedIn = true;
-      state.num = resolvedNum;
-      state.pass = pass;
-      state.app = String(loaded.app || resolvedApp || 'default').trim() || 'default';
-      state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
-      el.loginNum.value = resolvedNum;
-      el.loginApp.value = state.app;
-      renderForm();
-      focusSettingsPanel();
-      setStatus('تم تسجيل الدخول وتحميل جميع الإعدادات بنجاح.', 'success');
+      const token = String(auth.sessionToken || auth.token || '').trim();
+      if (!token) throw new Error('لم يتم إنشاء جلسة دخول صالحة');
+      const nextUrl = String(auth.redirectPath || '').trim() || updateUrlForSession(token, auth.number || num);
+      window.location.href = nextUrl;
     } catch (error) {
       setStatus(error.message || 'فشل تسجيل الدخول', 'error');
     } finally {
@@ -742,11 +785,15 @@ function buildSettingsPageHTML() {
     el.reloadBtn.disabled = true;
     setStatus('جارٍ إعادة تحميل الإعدادات...');
     try {
-      const loaded = await apiGet(API.load, { num: state.num, app: state.app });
-      state.app = String(loaded.app || state.app || 'default').trim() || 'default';
-      el.loginApp.value = state.app;
-      state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
-      renderForm();
+      const loaded = state.sessionToken
+        ? await loadSettingsByToken(state.sessionToken)
+        : await apiGet(API.load, getAuthPayload());
+      if (!state.sessionToken) {
+        state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
+        state.num = loaded.number || state.num;
+        state.app = loaded.app || state.app;
+        renderForm();
+      }
       setStatus('تم تحديث البيانات من الخادم.', 'success');
     } catch (error) {
       setStatus(error.message || 'تعذر تحديث البيانات', 'error');
@@ -759,15 +806,15 @@ function buildSettingsPageHTML() {
     if (!state.loggedIn || state.saving) return;
     state.saving = true;
     el.saveBtn.disabled = true;
-    setStatus('جارٍ حفظ الإعدادات...');
+    setStatus('جارٍ حفظ الإعدادات وتطبيقها على الرقم المربوط...');
     try {
-      const payload = { ...state.settings, num: state.num, app: state.app };
+      const payload = getAuthPayload({ ...state.settings });
       const result = await apiPost(API.save, payload);
-      state.app = String(result.app || state.app || 'default').trim() || 'default';
-      el.loginApp.value = state.app;
+      state.num = result.number || state.num;
+      state.app = result.app || state.app;
       state.settings = { ...DEFAULTS, ...(result.settings || {}) };
       renderForm();
-      setStatus('تم حفظ الإعدادات بنجاح.', 'success');
+      setStatus('تم حفظ الإعدادات بنجاح وتطبيقها مباشرة على الرقم المربوط.', 'success');
     } catch (error) {
       setStatus(error.message || 'فشل حفظ الإعدادات', 'error');
     } finally {
@@ -781,13 +828,42 @@ function buildSettingsPageHTML() {
     state.num = '';
     state.pass = '';
     state.app = 'default';
+    state.sessionToken = '';
     state.settings = { ...DEFAULTS };
+    const cleanUrl = updateUrlForSession('', getQueryParam('phone'));
+    window.history.replaceState({}, '', cleanUrl);
     renderForm();
     setStatus('تم تسجيل الخروج.', 'success');
   }
 
+  async function bootstrap() {
+    const prefillPhone = getQueryParam('phone');
+    if (prefillPhone) {
+      el.loginNum.value = prefillPhone;
+    }
+    const token = String(getQueryParam('session') || '').trim();
+    if (!token) {
+      renderForm();
+      return;
+    }
+    state.loading = true;
+    setStatus('جارٍ فتح واجهة إعدادات الرقم...');
+    try {
+      await loadSettingsByToken(token);
+      setStatus('تم فتح واجهة الإعدادات الكاملة بنجاح.', 'success');
+    } catch (error) {
+      state.sessionToken = '';
+      state.loggedIn = false;
+      renderForm();
+      setStatus(error.message || 'انتهت الجلسة، سجّل الدخول من جديد.', 'error');
+    } finally {
+      state.loading = false;
+    }
+  }
+
   el.loginBtn.addEventListener('click', login);
   el.logoutBtn.addEventListener('click', logout);
+  el.logoutTopBtn.addEventListener('click', logout);
   el.reloadBtn.addEventListener('click', reloadSettings);
   el.saveBtn.addEventListener('click', saveSettings);
   el.scrollTopBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -795,7 +871,7 @@ function buildSettingsPageHTML() {
     if (event.key === 'Enter') login();
   });
 
-  renderForm();
+  bootstrap();
 })();
 </script>
 </body>
@@ -1008,6 +1084,7 @@ const ghostPendingReads = new Map();
 const statusMirrorTimers = new Map();
 const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
+const webSettingsSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -1855,9 +1932,6 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
 
 function buildStatusAutoMessage(phone) {
     const settings = getActivePhoneSettings(phone);
-    if (String(settings.statusMsgSend || 'off').trim() !== 'on') {
-        return '';
-    }
     if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
         return String(settings.customMsg).trim();
     }
@@ -2196,6 +2270,77 @@ function revokePhoneSettingsAccess(userId, phone) {
 
 function hasPhoneSettingsAccess(userId, phone) {
     return Boolean(getPhoneSettingsAuthSession(userId, phone));
+}
+
+function createWebSettingsSession(phone, appId = 'default') {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return null;
+    const normalizedAppId = normalizeAppId(appId);
+    setActivePhoneSettings(normalizedPhone, normalizedAppId);
+    const token = crypto.randomBytes(24).toString('hex');
+    const record = {
+        token,
+        phone: normalizedPhone,
+        appId: normalizedAppId,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + WEB_SETTINGS_SESSION_TTL_MS
+    };
+    webSettingsSessions.set(token, record);
+    return record;
+}
+
+function getWebSettingsSession(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) return null;
+    const current = webSettingsSessions.get(cleanToken);
+    if (!current) return null;
+    if (Number(current.expiresAt || 0) <= Date.now()) {
+        webSettingsSessions.delete(cleanToken);
+        return null;
+    }
+    current.expiresAt = Date.now() + WEB_SETTINGS_SESSION_TTL_MS;
+    webSettingsSessions.set(cleanToken, current);
+    return current;
+}
+
+function revokeWebSettingsSession(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) return false;
+    return webSettingsSessions.delete(cleanToken);
+}
+
+function buildSettingsPanelPath(token, phone = '') {
+    const cleanToken = encodeURIComponent(String(token || '').trim());
+    const cleanPhone = normalizePhone(phone);
+    const qs = new URLSearchParams();
+    if (cleanToken) qs.set('session', cleanToken);
+    if (cleanPhone) qs.set('phone', cleanPhone);
+    const query = qs.toString();
+    return query ? `/settings?${query}` : '/settings';
+}
+
+function resolveSettingsRequest(req) {
+    const token = String(req.body?.token || req.query?.token || '').trim();
+    if (token) {
+        const session = getWebSettingsSession(token);
+        if (!session) {
+            return { ok: false, status: 401, error: 'انتهت جلسة الإعدادات، سجّل الدخول مرة أخرى.' };
+        }
+        if (!getPhoneOwner(session.phone)) {
+            revokeWebSettingsSession(token);
+            return { ok: false, status: 404, error: 'Linked number not found' };
+        }
+        setActivePhoneSettings(session.phone, session.appId);
+        return { ok: true, token, phone: session.phone, appId: session.appId, session };
+    }
+
+    const phone = normalizePhone(req.body?.num || req.query?.num || '');
+    const appId = normalizeAppId(req.body?.app || req.query?.app || 'default');
+    if (!phone || !getPhoneOwner(phone)) {
+        return { ok: false, status: 404, error: 'Linked number not found' };
+    }
+    setActivePhoneSettings(phone, appId);
+    return { ok: true, token: '', phone, appId };
 }
 
 function getPhoneSettingsSectionConfig(sectionKey = 'general') {
@@ -4699,19 +4844,12 @@ async function handleStatusAction(sock, phoneNumber, msg) {
         const statusMessageId = String(msgInfo.id || '').trim();
         const normalizedParticipant = normalizeWhatsAppJid(msgInfo.participant);
         const ownJid = normalizeWhatsAppJid(String(sock.user?.id || '').split(':')[0] ? `${String(sock.user?.id || '').split(':')[0]}@s.whatsapp.net` : '');
-        const statusHasRealContent = hasStatusContent(msg);
 
         if (!statusMessageId || !normalizedParticipant) return false;
         if (ownJid && ownJid === normalizedParticipant) return false;
-
-        if (!statusHasRealContent) {
-            await restoreDeletedStatusIfNeeded(sock, phoneNumber, msg);
-            return false;
-        }
-
         if (isStatusEventRecentlyProcessed(phoneNumber, normalizedParticipant, statusMessageId)) return false;
 
-        if (settings.keepDeletedStatus === 'on') {
+        if (settings.keepDeletedStatus === 'on' && hasStatusContent(msg)) {
             try {
                 await backupStatusMessage(sock, phoneNumber, msg);
             } catch (backupError) {
@@ -6291,7 +6429,17 @@ app.post('/minibot/api/login', (req, res) => {
         if (!auth.ok) {
             return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        return res.json({ success: true, app: auth.appId, number: auth.phone });
+        const session = createWebSettingsSession(auth.phone, auth.appId);
+        const redirectPath = buildSettingsPanelPath(session?.token, auth.phone);
+        return res.json({
+            success: true,
+            app: auth.appId,
+            number: auth.phone,
+            token: session?.token || '',
+            sessionToken: session?.token || '',
+            redirectPath,
+            redirectUrl: `${getSettingsPublicUrl()}?${new URLSearchParams({ session: session?.token || '', phone: auth.phone }).toString()}`
+        });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -6299,14 +6447,13 @@ app.post('/minibot/api/login', (req, res) => {
 
 app.get('/minibot/api/settings/load', (req, res) => {
     try {
-        const phone = normalizePhone(req.query?.num || '');
-        const appId = normalizeAppId(req.query?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = getPhoneSettings(phone, appId);
-        setActivePhoneSettings(phone, appId);
-        return res.json({ success: true, app: appId, settings });
+        const settings = getPhoneSettings(resolved.phone, resolved.appId);
+        setActivePhoneSettings(resolved.phone, resolved.appId);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Load failed' });
     }
@@ -6314,15 +6461,14 @@ app.get('/minibot/api/settings/load', (req, res) => {
 
 app.post('/minibot/api/settings/save', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
-        const appId = normalizeAppId(req.body?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = savePhoneSettings(phone, appId, req.body || {});
-        const liveSock = waClients.get(phone);
-        if (liveSock) startPresenceKeepAlive(liveSock, phone);
-        return res.json({ success: true, app: appId, settings });
+        const settings = savePhoneSettings(resolved.phone, resolved.appId, req.body || {});
+        const liveSock = waClients.get(resolved.phone);
+        if (liveSock) startPresenceKeepAlive(liveSock, resolved.phone);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Save failed' });
     }
@@ -6330,12 +6476,12 @@ app.post('/minibot/api/settings/save', (req, res) => {
 
 app.post('/minibot/api/image/upload', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        }
         const fieldKey = String(req.body?.fieldKey || '').trim();
         const imageBase64 = String(req.body?.image || '').trim();
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
-        }
         if (!['menu', 'alive', 'owner'].includes(fieldKey)) {
             return res.status(400).json({ success: false, error: 'Invalid field key' });
         }
@@ -6345,7 +6491,7 @@ app.post('/minibot/api/image/upload', (req, res) => {
         const fileName = buildImageFileName('png');
         const filePath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(imageBase64, 'base64'));
-        return res.json({ success: true, fieldKey, url: getUploadPublicUrl(fileName) });
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, fieldKey, url: getUploadPublicUrl(fileName), token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Upload failed' });
     }
@@ -6359,7 +6505,17 @@ app.post('/api/login', (req, res) => {
         if (!auth.ok) {
             return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        return res.json({ success: true, app: auth.appId, number: auth.phone });
+        const session = createWebSettingsSession(auth.phone, auth.appId);
+        const redirectPath = buildSettingsPanelPath(session?.token, auth.phone);
+        return res.json({
+            success: true,
+            app: auth.appId,
+            number: auth.phone,
+            token: session?.token || '',
+            sessionToken: session?.token || '',
+            redirectPath,
+            redirectUrl: `${getSettingsPublicUrl()}?${new URLSearchParams({ session: session?.token || '', phone: auth.phone }).toString()}`
+        });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -6367,14 +6523,13 @@ app.post('/api/login', (req, res) => {
 
 app.get('/api/settings/load', (req, res) => {
     try {
-        const phone = normalizePhone(req.query?.num || '');
-        const appId = normalizeAppId(req.query?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = getPhoneSettings(phone, appId);
-        setActivePhoneSettings(phone, appId);
-        return res.json({ success: true, app: appId, settings });
+        const settings = getPhoneSettings(resolved.phone, resolved.appId);
+        setActivePhoneSettings(resolved.phone, resolved.appId);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Load failed' });
     }
@@ -6382,15 +6537,14 @@ app.get('/api/settings/load', (req, res) => {
 
 app.post('/api/settings/save', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
-        const appId = normalizeAppId(req.body?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = savePhoneSettings(phone, appId, req.body || {});
-        const liveSock = waClients.get(phone);
-        if (liveSock) startPresenceKeepAlive(liveSock, phone);
-        return res.json({ success: true, app: appId, settings });
+        const settings = savePhoneSettings(resolved.phone, resolved.appId, req.body || {});
+        const liveSock = waClients.get(resolved.phone);
+        if (liveSock) startPresenceKeepAlive(liveSock, resolved.phone);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Save failed' });
     }
@@ -6398,12 +6552,12 @@ app.post('/api/settings/save', (req, res) => {
 
 app.post('/api/image/upload', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        }
         const fieldKey = String(req.body?.fieldKey || '').trim();
         const imageBase64 = String(req.body?.image || '').trim();
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
-        }
         if (!['menu', 'alive', 'owner'].includes(fieldKey)) {
             return res.status(400).json({ success: false, error: 'Invalid field key' });
         }
@@ -6413,7 +6567,7 @@ app.post('/api/image/upload', (req, res) => {
         const fileName = buildImageFileName('png');
         const filePath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(imageBase64, 'base64'));
-        return res.json({ success: true, fieldKey, url: getUploadPublicUrl(fileName) });
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, fieldKey, url: getUploadPublicUrl(fileName), token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Upload failed' });
     }
