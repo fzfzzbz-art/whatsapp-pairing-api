@@ -4942,17 +4942,25 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 // الكود الصحيح والمغلق برمجياً للأحداث (بدون أي أقواس مكسورة)
 // ==========================================================
 
+// الكود المحمي والمصحح نهائياً لحدث استقبال الحالات والرسائل
 sock.ev.on('messages.upsert', async (chatUpdate) => {
     try {
+        // التحقق الذكي: إذا كان الحدث فارغاً أو لا يحتوي على رسائل، يتخطى الكود بأمان دون أن يتحطم
+        if (!chatUpdate || !chatUpdate.messages || !Array.isArray(chatUpdate.messages)) {
+            return;
+        }
+
         const msg = chatUpdate.messages[0];
         if (!msg) return;
 
-        // استدعاء دالة معالجة الحالات الذكية
+        // استدعاء دالة الحالات بعد التأكد من سلامة وجود الرسالة
         await handleStatusAction(sock, phoneNumber, msg);
+
     } catch (err) {
         console.error(`[خطأ في حدث messages.upsert للرقم ${phoneNumber}]:`, err.message);
     }
 });
+
 
 sock.ev.on('messages.update', async (keyUpdate) => {
     try {
