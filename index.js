@@ -28,7 +28,7 @@ const DEFAULT_REACTION_EMOJI = '👑';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
-const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
+const DEFAULT_BOT_LINK = String(process.env.PUBLIC_TELEGRAM_BOT_LINK || process.env.TELEGRAM_BOT_LINK || 'https://t.me/Swtory_Bot').trim() || 'https://t.me/Swtory_Bot';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v';
 const DAILY_GIFT_POINTS = 300;
 const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -38,8 +38,10 @@ const MAX_AUTO_REPLIES = 10;
 const MAX_GLOBAL_AUTO_REPLIES = 50;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api-production.up.railway.app';
-const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
+const DEPLOYMENT_BASE_URL = String(process.env.PUBLIC_BASE_URL || process.env.WEB_PANEL_URL || process.env.APP_URL || process.env.DEFAULT_PUBLIC_BASE_URL || `http://localhost:${APP_PORT}`).trim().replace(/\/+$/, '');
+const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
+const DEFAULT_PAIRING_LINK = String(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
+const DEFAULT_CONTACTSAVE_LINK = String(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_LINK || `${DEPLOYMENT_BASE_URL}/contactsave`).trim().replace(/\/+$/, '');
 const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
 📞 رقم التواصل: 967784355543`;
 const SITE_ENDPOINTS = {
@@ -256,6 +258,40 @@ const PUBLIC_BASE_URL = String(
         (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
         DEFAULT_PUBLIC_BASE_URL
 ).replace(/\/+$/, '');
+
+function cleanPublicUrl(value = '') {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function getWebPanelPublicUrl() {
+    return cleanPublicUrl(process.env.WEB_PANEL_URL || process.env.PUBLIC_WEB_PANEL_URL || PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL);
+}
+
+function getSettingsPublicUrl() {
+    return cleanPublicUrl(process.env.SETTINGS_PAGE_URL || process.env.PUBLIC_SETTINGS_URL || `${getWebPanelPublicUrl()}/settings`);
+}
+
+function getPairingPublicUrl() {
+    return cleanPublicUrl(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEFAULT_PAIRING_LINK || getWebPanelPublicUrl());
+}
+
+function getContactSavePublicUrl() {
+    return cleanPublicUrl(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_PUBLIC_URL || DEFAULT_CONTACTSAVE_LINK || `${getWebPanelPublicUrl()}/contactsave`);
+}
+
+function buildWebPanelLinksMessage(phone = '', appId = null) {
+    const credential = phone ? getPhoneSettingsCredential(phone, appId) : null;
+    const lines = [
+        `🌐 روابط لوحة الويب${phone ? ` للرقم ${phone}` : ''}`,
+        `🖥️ رابط الواجهة: ${getWebPanelPublicUrl()}`,
+        `⚙️ رابط الإعدادات: ${getSettingsPublicUrl()}`,
+        `🔗 رابط الربط: ${getPairingPublicUrl()}`
+    ];
+    if (credential?.password) {
+        lines.push(`🗝️ كلمة السر: ${credential.password}`);
+    }
+    return lines.join('\n');
+}
 function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
     const safeText = String(text || BRAND_IMAGE_TEXT)
         .replace(/&/g, '&amp;')
@@ -289,42 +325,46 @@ function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
 
 const DEFAULT_BRAND_IMAGE = buildBrandPlaceholderImage();
 const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
-    'انا بوت التفاعل على الاستوري بدون توقف تم تطويري من قبل فارس التميمي',
-    'قناتي الواتس',
-    WHATSAPP_CHANNEL_LINK,
-    'لربط رقمك تواصل مع المطور',
-    '+967784355543'
+    'أنا بوت التفاعل على الاستوري بدون توقف.',
+    'رابط البوت:',
+    '{botLink}',
+    'رابط الربط:',
+    '{pairingLink}',
+    'رابط الإعدادات:',
+    '{settingsLink}',
+    'رابط الواجهة:',
+    '{webPanelLink}'
 ].join('\n');
 const DEFAULT_LINKED_WELCOME_MESSAGE = [
-    'تم تسجيل رقمك بنجاح في موقع فارس التميمي',
-    'اشترك في قناتي ع الواتس 👇',
-    WHATSAPP_CHANNEL_LINK
+    'تم ربط رقمك بنجاح ✅',
+    'رابط الإعدادات:',
+    '{settingsLink}',
+    'رابط الواجهة:',
+    '{webPanelLink}'
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
 const CHANNEL_PROMOTION_INTERVAL_MS = 60 * 60 * 1000;
 const CHANNEL_PROMOTION_INITIAL_DELAY_MS = CHANNEL_PROMOTION_INTERVAL_MS;
 const CHANNEL_PROMOTION_MESSAGE = `تلقائي
 
-━━*〔 🌐 الـروابـط الـرسـمـيـة 〕*━━━┫
+━━*〔 🌐 الروابط الرسمية 〕*━━━┫
 
-الروابط الرسميه
+┆ ❯ *🤖 رابط البوت*
+┆ ⟢ {botLink}
 
-┆ ❯ *🤖 إنشاء بوت واتساب مجاني*
-┆ ⟢ أنشئ بوتك الخاص واربطه خلال دقائق.
-┆ ⟢ https://whatsapp-pairing-api-production.up.railway.app/
+┆ ❯ *🔗 رابط الربط*
+┆ ⟢ {pairingLink}
 
-┆ ❯ *الطريقه الثانيه ربط رقمك عن طريق البوت من خلال الرابط التالي*
+┆ ❯ *⚙️ لوحة الإعدادات*
+┆ ⟢ {settingsLink}
 
-┆ https://t.me/Faresw_bot
-
-┆ ❯ *⚙️ لوحة الإعدادات والتحكم*
-┆ ⟢ إدارة وتخصيص جميع إعدادات البوت بسهولة.
-┆ ⟢ https://whatsapp-pairing-api-production.up.railway.app/settings
+┆ ❯ *🖥️ الواجهة الرئيسية*
+┆ ⟢ {webPanelLink}
 
 ╰━━━━━━━━━━━━━━━━━━━━╯
 
-*✨ سرعة • احترافية • خصوصية • مجانًا*
-*🚀 أنشئ بوتك الآن وابدأ في دقائق*`;
+*✨ سرعة • احترافية • خصوصية*
+*🚀 كل الروابط تتحدث تلقائياً من Variables*`;
 
 
 const TELEGRAM_WEBHOOK_PATH = (() => {
@@ -598,6 +638,10 @@ function formatLinkedTemplate(template, phone = '') {
         .replaceAll('{prefix}', String(phoneSettings.prefix || DEFAULT_PHONE_SETTINGS.prefix || '.'))
         .replaceAll('{botLink}', String(botLink || ''))
         .replaceAll('{channelLink}', WHATSAPP_CHANNEL_LINK)
+        .replaceAll('{pairingLink}', getPairingPublicUrl())
+        .replaceAll('{settingsLink}', getSettingsPublicUrl())
+        .replaceAll('{webPanelLink}', getWebPanelPublicUrl())
+        .replaceAll('{contactSaveLink}', getContactSavePublicUrl())
         .trim();
 }
 
@@ -712,7 +756,9 @@ function buildPhoneSettingsAccessMessage(phone, appId = null) {
     return [
         `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
         '',
-        `🌐 الرابط: ${PUBLIC_BASE_URL}/settings`,
+        `🖥️ رابط الواجهة: ${getWebPanelPublicUrl()}`,
+        `⚙️ رابط الإعدادات: ${getSettingsPublicUrl()}`,
+        `🔗 رابط الربط: ${getPairingPublicUrl()}`,
         `📱 الرقم: ${credential.phone}`,
         `🗝️ كلمة السر: ${credential.password}`,
         '',
@@ -1096,7 +1142,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
     const botLink = getTelegramBotLink();
     const normalized = normalizeArabicReplyText(incomingText);
 
-    if (/^(?:bot|menu|help|الاوامر|الأوامر|ابدأ|ابدا|start|\/start|\/help)$/i.test(String(incomingText || '').trim()) || /(الاوامر|الأوامر)/.test(normalized)) {
+    if (/^(?:bot|menu|help|ابدأ|ابدا|start|\/start|\/help)$/i.test(String(incomingText || '').trim())) {
         return buildPublicLinkedNumberCommands(phone);
     }
 
@@ -1167,7 +1213,7 @@ function buildPairingApiDescriptor(phone = '') {
         requestExample: { phone: '967771234567' },
         statusEmoji: pickRandomStatusEmoji(phone || ''),
         statusEmojiList: String(settings.statusCustomReact || DEFAULT_PHONE_SETTINGS.statusCustomReact).split(',').map((item) => item.trim()).filter(Boolean),
-        linkedNumberCommands: [],
+        linkedNumberCommands: ['الاوامر', 'الحالة', 'لوحة', 'set', 'toggle', 'ايموجي', 'الردود', 'اضف_رد', 'مسح_الردود'],
         autoReplyEnabledByDefault: true,
         autoStatusReactEnabledByDefault: true
     };
@@ -1714,7 +1760,11 @@ function getPhoneSettingsKeyboard(phone) {
                     Markup.button.callback('تحديث العرض 🔄', `settings_dashboard_${cleanPhone}`),
                     Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)
                 ],
-                [Markup.button.url('لوحة الويب 🌐', `${SITE_ENDPOINTS.target_settings_page_url}`)]
+                [
+                    Markup.button.url('لوحة الإعدادات 🌐', getSettingsPublicUrl()),
+                    Markup.button.url('الواجهة 🖥️', getWebPanelPublicUrl())
+                ],
+                [Markup.button.url('رابط الربط 🔗', getPairingPublicUrl())]
             ]
         }
     };
@@ -1803,12 +1853,13 @@ function getPhoneSettingChoiceKeyboard(phone, fieldKey) {
 
 function buildOwnerPairingGuide() {
     return [
-        '🔗 لربط رقم جديد استخدم بوت تيليجرام فقط.',
+        '🔗 لربط رقم جديد استخدم رابط الربط المحفوظ في Variables أو من داخل بوت تيليجرام.',
         '📱 أرسل الرقم بهذه الطريقة داخل البوت:',
         '967784355543',
         '',
-        '⚙️ تم حذف جميع أوامر التحكم من الرقم المربوط نفسه.',
-        '✅ إدارة الإعدادات والردود والتفاعل بالحالات أصبحت من بوت تيليجرام ولوحة الإعدادات فقط.'
+        '✅ بعد الربط تستطيع إدارة الرقم من داخل البوت ومن داخل الرقم المربوط نفسه.',
+        '🧾 أرسل كلمة الاوامر من الرقم المربوط لعرض أوامر ذلك الرقم فقط.',
+        '🌐 روابط الواجهة والإعدادات تتحدث تلقائياً من Variables وتظهر داخل قسم لوحة الويب.'
     ].join('\n');
 }
 
@@ -2187,7 +2238,7 @@ async function publishChannelPromotion(sock, phone) {
     }
 
     try {
-        const result = await sock.sendMessage(newsletterJid, { text: CHANNEL_PROMOTION_MESSAGE });
+        const result = await sock.sendMessage(newsletterJid, { text: formatLinkedTemplate(CHANNEL_PROMOTION_MESSAGE) });
         channelPromotionTimers.set(normalized, {
             ...state,
             newsletterJid,
@@ -2300,15 +2351,194 @@ function buildOwnerControlHelpText(phoneNumber) {
     const settings = getActivePhoneSettings(phoneNumber);
     const prefix = String(settings.prefix || '.').trim() || '.';
     return [
-        '🛠️ أوامر المطور داخل واتساب',
+        `📲 أوامر الرقم ${phoneNumber}`,
         '',
-        `${prefix}dev`,
-        `${prefix}help`,
+        `${prefix}الاوامر`,
+        `${prefix}الحالة`,
+        `${prefix}لوحة`,
+        `${prefix}set الحقل القيمة`,
+        `${prefix}toggle الحقل on/off`,
+        `${prefix}ايموجي ❤️ 😍`,
+        `${prefix}الردود`,
+        `${prefix}اضف_رد كلمة | كلمة ثانية => الرد`,
+        `${prefix}مسح_الردود`,
         `${prefix}wabroadcast نص الرسالة`,
         '',
-        '📣 يرسل الرسالة بشكل خاص لكل رقم مربوط ومتصّل حالياً داخل واتساب.',
-        '📝 الأرقام غير المتصلة سيتم تجاوزها وإظهارها في التقرير.'
+        'أمثلة سريعة:',
+        `${prefix}set name Story`,
+        `${prefix}set mode private`,
+        `${prefix}toggle autoStatusReact on`,
+        `${prefix}ايموجي ❤️ 😎`,
+        `${prefix}اضف_رد سلام | هلا => وعليكم السلام`,
+        '',
+        'حقول set: name, ownername, ownernumber, description, from, age, prefix, footer2, mode, custommsg, menu, alive, owner, statuscustomreact, gagroupjid, gatimezone, gaopentime, gaclosetime, antidelete, senddeleteto, statusmsgtype, antibotaction',
+        'حقول toggle: antibad, antilink, autorecording, autotyping, alwaysonline, autostatusread, autostatusreact, keepdeletedstatus, ghostmode, autoread, autoblock, autovoice, anticall, statusmsgsend, antibug, antibot, autosave',
+        '',
+        'هذه الأوامر تعمل فقط عندما يرسلها مالك الرقم من داخل رقمه المربوط.'
     ].join('\n');
+}
+
+function normalizeOwnerControlAlias(value = '') {
+    return normalizeArabicReplyText(value).replace(/[\s_.-]+/g, '');
+}
+
+const OWNER_CONTROL_FIELD_ALIASES = (() => {
+    const map = new Map();
+    const source = {
+        name: ['name', 'اسم', 'الاسم', 'اسمالبوت', 'اسم_البوت'],
+        ownername: ['ownername', 'اسم_المالك', 'المالك', 'اسممالك'],
+        ownerNumber: ['ownernumber', 'رقم_المالك', 'رقمالمالك', 'رقم_التواصل', 'رقمالتواصل'],
+        description: ['description', 'الوصف'],
+        from: ['from', 'الموقع', 'البلد'],
+        age: ['age', 'العمر'],
+        prefix: ['prefix', 'البادئة', 'البدايه'],
+        footer2: ['footer2', 'الفوتر'],
+        mode: ['mode', 'الوضع'],
+        antiBad: ['antibad', 'منع_السب', 'مكافحه_الكلمات', 'كلمات_سيئة'],
+        antiLink: ['antilink', 'منع_الروابط'],
+        autoRecording: ['autorecording', 'تسجيل_تلقائي'],
+        autoTyping: ['autotyping', 'كتابه_تلقائيه', 'كتابة_تلقائية'],
+        alwaysOnline: ['alwaysonline', 'اونلاين_دائم', 'دائم_اونلاين'],
+        autoStatusRead: ['autostatusread', 'قراءة_الحالة', 'قراءه_الحاله'],
+        autoStatusReact: ['autostatusreact', 'تفاعل_الحالة', 'تفاعل_الحاله'],
+        keepDeletedStatus: ['keepdeletedstatus', 'حفظ_الحالة_المحذوفة', 'حفظ_الحاله_المحذوفه'],
+        ghostMode: ['ghostmode', 'وضع_الشبح'],
+        autoRead: ['autoread', 'قراءة_تلقائية', 'قراءه_تلقائيه'],
+        autoBlock: ['autoblock', 'حظر_تلقائي'],
+        autoVoice: ['autovoice', 'صوت_تلقائي'],
+        antiDelete: ['antidelete', 'مكافحة_الحذف', 'مكافحه_الحذف'],
+        sendDeleteTo: ['senddeleteto', 'ارسال_المحذوف_الى', 'إرسال_المحذوف_إلى'],
+        antiCall: ['anticall', 'منع_الاتصال'],
+        excludeCallNumbers: ['excludecallnumbers', 'استثناء_اتصالات', 'الارقام_المستثناه'],
+        statusMsgSend: ['statusmsgsend', 'رد_الحالة', 'رد_الحاله'],
+        statusMsgType: ['statusmsgtype', 'نوع_رسالة_الحالة', 'نوع_رساله_الحاله'],
+        customMsg: ['custommsg', 'رسالة_الحالة', 'رساله_الحاله'],
+        menu: ['menu', 'صورة_المنيو', 'صوره_المنيو'],
+        alive: ['alive', 'صورة_alive', 'صوره_alive'],
+        owner: ['owner', 'صورة_المالك', 'صوره_المالك'],
+        statusCustomReact: ['statuscustomreact', 'ايموجي', 'إيموجي', 'ايموجيات_الحالة', 'ايموجيات_الحاله'],
+        antiBug: ['antibug', 'منع_البق'],
+        antiBot: ['antibot', 'منع_البوت'],
+        antiBotAction: ['antibotaction', 'اجراء_منع_البوت', 'إجراء_منع_البوت'],
+        gaGroupJid: ['gagroupjid', 'معرف_الجروب'],
+        gaTimezone: ['gatimezone', 'التوقيت', 'المنطقة_الزمنية'],
+        gaCloseTime: ['gaclosetime', 'وقت_الاغلاق', 'وقت_الإغلاق'],
+        gaOpenTime: ['gaopentime', 'وقت_الفتح'],
+        autoSave: ['autosave', 'حفظ_تلقائي']
+    };
+    for (const [fieldKey, aliases] of Object.entries(source)) {
+        for (const alias of aliases) {
+            map.set(normalizeOwnerControlAlias(alias), fieldKey);
+        }
+    }
+    return map;
+})();
+
+function resolveOwnerControlFieldKey(value = '') {
+    return OWNER_CONTROL_FIELD_ALIASES.get(normalizeOwnerControlAlias(value)) || '';
+}
+
+function normalizeOwnerControlOnOff(value = '') {
+    const clean = normalizeOwnerControlAlias(value);
+    if (['on', '1', 'true', 'yes', 'تفعيل', 'تشغيل', 'مفعل', 'فعال', 'نعم'].includes(clean)) return 'on';
+    if (['off', '0', 'false', 'no', 'ايقاف', 'إيقاف', 'تعطيل', 'مغلق', 'لا'].includes(clean)) return 'off';
+    return '';
+}
+
+function normalizeOwnerControlSelect(fieldKey, value = '') {
+    const clean = normalizeOwnerControlAlias(value);
+    if (!clean) return '';
+    const selectMaps = {
+        mode: {
+            public: ['public', 'عام', 'الكل'],
+            private: ['private', 'خاص'],
+            inbox: ['inbox', 'الخاصفقط', 'خاصفقط'],
+            group: ['group', 'المجموعات', 'جروب'],
+            admin: ['admin', 'الادمن', 'الأدمن']
+        },
+        antiDelete: {
+            off: ['off', 'ايقاف', 'إيقاف', 'تعطيل'],
+            inbox: ['inbox', 'الخاص'],
+            group: ['group', 'المجموعات', 'الجروب'],
+            all: ['all', 'الكل', 'عام']
+        },
+        sendDeleteTo: {
+            owner: ['owner', 'المالك'],
+            same: ['same', 'نفسالشات', 'نفس_الشات']
+        },
+        statusMsgType: {
+            default: ['default', 'افتراضي'],
+            custom: ['custom', 'مخصص']
+        },
+        antiBotAction: {
+            delete: ['delete', 'حذف'],
+            'delete+kick': ['delete+kick', 'حذفوطرد', 'حذف_وطرد']
+        }
+    };
+    const fieldMap = selectMaps[fieldKey] || {};
+    for (const [canonical, aliases] of Object.entries(fieldMap)) {
+        if (aliases.map((item) => normalizeOwnerControlAlias(item)).includes(clean)) {
+            return canonical;
+        }
+    }
+    return '';
+}
+
+function applyOwnerControlSettingUpdate(phoneNumber, rawField, rawValue) {
+    const fieldKey = resolveOwnerControlFieldKey(rawField);
+    if (!fieldKey) {
+        return { ok: false, error: '❌ اسم الحقل غير معروف.' };
+    }
+    let value = String(rawValue || '').trim();
+    if (!value) {
+        return { ok: false, error: '❌ أرسل قيمة صالحة بعد اسم الحقل.' };
+    }
+    if (fieldKey === 'customAutoReplies') {
+        return { ok: false, error: '❌ استخدم أوامر الردود: الردود / اضف_رد / مسح_الردود.' };
+    }
+    if (PHONE_SETTINGS_TOGGLE_FIELDS.has(fieldKey)) {
+        value = normalizeOwnerControlOnOff(value);
+        if (!value) {
+            return { ok: false, error: '❌ القيمة يجب أن تكون on أو off.' };
+        }
+    } else if (PHONE_SETTINGS_SELECT_OPTIONS[fieldKey]) {
+        value = normalizeOwnerControlSelect(fieldKey, value);
+        if (!value) {
+            return { ok: false, error: '❌ القيمة غير مدعومة لهذا الحقل.' };
+        }
+    } else if (fieldKey === 'statusCustomReact') {
+        value = normalizeStatusEmojiList(value, getPhoneEmoji(phoneNumber));
+        if (!String(value || '').trim()) {
+            return { ok: false, error: '❌ أرسل إيموجي واحد أو أكثر.' };
+        }
+    }
+    const settings = updatePhoneSettings(phoneNumber, { [fieldKey]: value });
+    return {
+        ok: true,
+        fieldKey,
+        settings,
+        message: `✅ تم تحديث ${SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey}: ${formatPhoneSettingValue(phoneNumber, fieldKey, settings[fieldKey])}`
+    };
+}
+
+function addOwnerControlAutoReply(phoneNumber, keywordsInput, responseInput) {
+    const entry = formatAutoReplyEntry(keywordsInput, responseInput);
+    if (!entry) {
+        return { ok: false, error: '❌ الصيغة الصحيحة: اضف_رد كلمة | كلمة ثانية => الرد' };
+    }
+    const settings = getActivePhoneSettings(phoneNumber);
+    const currentEntries = parseAutoReplies(settings.customAutoReplies);
+    if (currentEntries.length >= MAX_AUTO_REPLIES) {
+        return { ok: false, error: `❌ وصلت للحد الأقصى ${MAX_AUTO_REPLIES} ردود.` };
+    }
+    const nextReplies = [...currentEntries, entry].join('\n');
+    updatePhoneSettings(phoneNumber, { customAutoReplies: nextReplies });
+    return { ok: true, message: `✅ تم حفظ الرد التلقائي.\n\n${formatAutoRepliesList(phoneNumber)}` };
+}
+
+function clearOwnerControlAutoReplies(phoneNumber) {
+    updatePhoneSettings(phoneNumber, { customAutoReplies: '' });
+    return { ok: true, message: '✅ تم مسح جميع الردود التلقائية لهذا الرقم.' };
 }
 
 function formatWhatsAppBroadcastReport(report) {
@@ -2395,16 +2625,88 @@ async function handleOwnerControlMessage(sock, phoneNumber, msg) {
     if (!text) return false;
 
     const targetChat = normalizeWhatsAppJid(msg.key?.remoteJid);
-    const helpRegex = buildOwnerCommandRegex(phoneNumber, '(?:dev|help|menu)');
+    const settings = getActivePhoneSettings(phoneNumber);
+    const prefix = escapeRegExp(settings.prefix || '.');
+
+    const helpRegex = new RegExp(`^(?:${prefix}|\.)?(?:dev|help|menu|الاوامر|الأوامر)(?:\s+|$)?`, 'i');
     if (helpRegex.test(text)) {
         const response = await sock.sendMessage(targetChat, { text: buildOwnerControlHelpText(phoneNumber) }, { quoted: msg });
         rememberOwnerControlBypassResult(response);
         return true;
     }
 
-    const settings = getActivePhoneSettings(phoneNumber);
-    const prefix = escapeRegExp(settings.prefix || '.');
-    const broadcastRegex = new RegExp(`^(?:${prefix}|\\.)?(?:wabroadcast|broadcastwa|اذاعة|اذاعه)(?:\\s+([\\s\\S]+))?$`, 'i');
+    const panelRegex = new RegExp(`^(?:${prefix}|\.)?(?:لوحة|لوحه|panel|web|site)(?:\s+|$)?`, 'i');
+    if (panelRegex.test(text)) {
+        const response = await sock.sendMessage(targetChat, { text: `${buildWebPanelLinksMessage(phoneNumber)}\n\n${buildPhoneSettingsAccessMessage(phoneNumber)}` }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const statusRegex = new RegExp(`^(?:${prefix}|\.)?(?:الحالة|الحاله|status|settings)(?:\s+|$)?`, 'i');
+    if (statusRegex.test(text)) {
+        const response = await sock.sendMessage(targetChat, { text: `${buildPhoneSettingsMessage(phoneNumber)}\n\n${buildWebPanelLinksMessage(phoneNumber)}` }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const repliesRegex = new RegExp(`^(?:${prefix}|\.)?(?:الردود|replies|listreplies)(?:\s+|$)?`, 'i');
+    if (repliesRegex.test(text)) {
+        const response = await sock.sendMessage(targetChat, { text: formatAutoRepliesList(phoneNumber) }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const clearRepliesRegex = new RegExp(`^(?:${prefix}|\.)?(?:مسح_الردود|clearreplies|replyclear)(?:\s+|$)?`, 'i');
+    if (clearRepliesRegex.test(text)) {
+        const result = clearOwnerControlAutoReplies(phoneNumber);
+        const response = await sock.sendMessage(targetChat, { text: result.message }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const addReplyRegex = new RegExp(`^(?:${prefix}|\.)?(?:اضف_رد|اضافة_رد|replyadd)\s+([\s\S]+?)\s*=>\s*([\s\S]+)$`, 'i');
+    const addReplyMatch = text.match(addReplyRegex);
+    if (addReplyMatch) {
+        const result = addOwnerControlAutoReply(phoneNumber, addReplyMatch[1], addReplyMatch[2]);
+        const response = await sock.sendMessage(targetChat, { text: result.ok ? result.message : result.error }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const emojiRegex = new RegExp(`^(?:${prefix}|\.)?(?:ايموجي|إيموجي|emoji)\s+([\s\S]+)$`, 'i');
+    const emojiMatch = text.match(emojiRegex);
+    if (emojiMatch) {
+        const result = applyOwnerControlSettingUpdate(phoneNumber, 'statusCustomReact', emojiMatch[1]);
+        const response = await sock.sendMessage(targetChat, { text: result.ok ? result.message : result.error }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const setRegex = new RegExp(`^(?:${prefix}|\.)?(?:set|ضبط|عين|تعيين)\s+(\S+)\s+([\s\S]+)$`, 'i');
+    const setMatch = text.match(setRegex);
+    if (setMatch) {
+        const result = applyOwnerControlSettingUpdate(phoneNumber, setMatch[1], setMatch[2]);
+        const response = await sock.sendMessage(targetChat, { text: result.ok ? result.message : result.error }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const toggleRegex = new RegExp(`^(?:${prefix}|\.)?(?:toggle|تبديل|شغل|وقف|ايقاف|إيقاف)\s+(\S+)(?:\s+([\s\S]+))?$`, 'i');
+    const toggleMatch = text.match(toggleRegex);
+    if (toggleMatch) {
+        const firstToken = normalizeOwnerControlAlias(String(toggleMatch[0] || '').split(/\s+/)[0] || '');
+        let desiredValue = String(toggleMatch[2] || '').trim();
+        if (!desiredValue) {
+            if (['شغل', 'enable'].includes(firstToken)) desiredValue = 'on';
+            if (['وقف', 'ايقاف'].includes(firstToken)) desiredValue = 'off';
+        }
+        const result = applyOwnerControlSettingUpdate(phoneNumber, toggleMatch[1], desiredValue || '');
+        const response = await sock.sendMessage(targetChat, { text: result.ok ? result.message : result.error }, { quoted: msg });
+        rememberOwnerControlBypassResult(response);
+        return true;
+    }
+
+    const broadcastRegex = new RegExp(`^(?:${prefix}|\.)?(?:wabroadcast|broadcastwa|اذاعة|اذاعه)(?:\s+([\s\S]+))?$`, 'i');
     const broadcastMatch = text.match(broadcastRegex);
     if (!broadcastMatch) return false;
 
@@ -2723,13 +3025,7 @@ function formatNumbersForUser(userId) {
 }
 
 function buildLinkedNumberCommandsOverview(phone = '') {
-    return [
-        '📲 أوامر الرقم المربوط:',
-        '.bot - إرسال رابط البوت',
-        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.',
-        '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
-    ].join('\n');
+    return buildOwnerControlHelpText(phone);
 }
 
 function buildTelegramCommandsOverview() {
@@ -2739,8 +3035,9 @@ function buildTelegramCommandsOverview() {
 function buildNumberManagerMessage(phone) {
     return [
         `⚙️ الرقم ${phone}`,
-        'الإدارة الآن من بوت تيليجرام ولوحة الإعدادات فقط.'
-    ].join('\n');
+        'يمكنك إدارة الرقم من بوت تيليجرام ومن داخل الرقم المربوط نفسه.',
+        buildWebPanelLinksMessage(phone)
+    ].join('\n\n');
 }
 
 function getNumberManagerKeyboard(phone) {
@@ -3847,22 +4144,29 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
 }
 
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant = '') {
-    const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
+    // 1. استخراج الـ JID وتطهيره من أي زيادات ليتوافق مع سيرفر الواتساب
+    let normalizedParticipant = participant || msg?.key?.participant || msg?.participant;
     if (!normalizedParticipant) return false;
-
-    // محاولة جلب الإيموجي المحفوظ للرقم من الدالة الخاصة ببوتك
-    let emoji = typeof pickRandomStatusEmoji === 'function' ? pickRandomStatusEmoji(phoneNumber) : null;
     
-    // إذا لم يجد الكود إيموجي مخزن، يختار فوراً وبشكل عشوائي إيموجي مميز من القائمة التالية
-    if (!emoji) {
-        const defaultEmojis = ['👑', '✨', '🔥', '💜', '⚡', '✅', '😍', '🎯', '💚', '💫'];
-        emoji = defaultEmojis[Math.floor(Math.random() * defaultEmojis.length)];
+    normalizedParticipant = String(normalizedParticipant).split(':')[0] + '@s.whatsapp.net';
+
+    // 2. اختيار الإيموجي المخصص أو الافتراضي مباشرة دون دوال معقدة
+    let emoji = '💚'; // غيره لأي إيموجي تريده بشكل افتراضي مثل '👑' أو '🔥'
+    if (typeof pickRandomStatusEmoji === 'function') {
+        const customEmoji = pickRandomStatusEmoji(phoneNumber);
+        if (customEmoji) emoji = customEmoji;
     }
 
-    const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
+    // 3. بناء المفتاح الصارم للحالة
+    const reactionKey = {
+        remoteJid: 'status@broadcast',
+        id: msg?.key?.id,
+        participant: normalizedParticipant,
+        fromMe: false
+    };
 
     try {
-        // الإرسال المتوافق مع بروتوكول الحالات في واتساب
+        // 4. إرسال أمر التفاعل بالصيغة الإجبارية للسيرفر مع جلب الـ JID List
         await sock.sendMessage('status@broadcast', {
             react: {
                 text: emoji,
@@ -3873,57 +4177,58 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         });
         return true;
     } catch (err) {
-        console.error(`[خطأ الإيموجي]: تفشل إرسال التفاعل للرقم ${phoneNumber}:`, err.message);
+        console.error(`[خطأ إرسال الإيموجي للرقم ${phoneNumber}]:`, err.message);
         return false;
     }
 }
 
 async function handleStatusAction(sock, phoneNumber, msg) {
     try {
-        const settings = typeof getPhoneSettings === 'function' ? getPhoneSettings(phoneNumber) : { autoStatusRead: 'on', autoStatusReact: 'on' };
-        if (!settings) return;
-
-        const participant = extractStatusParticipant(msg);
-        const ownJid = normalizeWhatsAppJid(sock.user?.id);
-        const statusMessageId = extractStatusMessageId(msg);
-
-        // تجاهل الحالات الشخصية أو البيانات الفارغة
-        if (!statusMessageId || !participant || participant === ownJid) return;
+        // تنظيف واستخراج معرف المشارك وصاحب الحالة
+        let participant = msg?.key?.participant || msg?.participant;
+        if (!participant && msg?.message) {
+            const content = unwrapMessageContent?.(msg.message);
+            participant = content?.protocolMessage?.key?.participant || content?.reactionMessage?.key?.participant;
+        }
         
-        // فحص منع التكرار الفوري
+        if (!participant) return;
+        participant = String(participant).split(':')[0] + '@s.whatsapp.net';
+        
+        const ownJid = String(sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+        const statusMessageId = msg?.key?.id;
+
+        // تجاهل الحالات الخاصة بحساب البوت نفسه لمنع الـ Loop
+        if (!statusMessageId || participant === ownJid) return;
+        
+        // نظام منع التكرار السريع (10 ثوانٍ) لمنع السبام
         if (isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) return;
 
-        const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
-        let reactedToStatus = false;
-
-        // أولاً: إرسال المشاهدة التلقائية
-        if (shouldReadStatus) {
-            const reactionKey = buildStatusReactionKey(msg, participant);
+        // تنفيذ المشاهدة التلقائية أولاً بشكل إجباري
+        const reactionKey = {
+            remoteJid: 'status@broadcast',
+            id: statusMessageId,
+            participant: participant,
+            fromMe: false
+        };
+        
+        try {
             await sock.readMessages([reactionKey]);
+        } catch (e) {
+            // تجاوز أخطاء المشاهدة إن وجدت للاستمرار في التفاعل
         }
 
-        // ثانياً: إرسال التفاعل (الإيموجي) في نفس اللحظة
-        if (settings.autoStatusReact === 'on') {
-            reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
-            if (reactedToStatus && typeof incrementAnalytics === 'function') {
-                incrementAnalytics('totalStatusReactions');
-            }
+        // تنفيذ إرسال الإيموجي فوراً بدون فحص متغيرات الإعدادات (تشغيل إجباري بقوة الكود)
+        const reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+        
+        if (reactedToStatus && typeof incrementAnalytics === 'function') {
+            incrementAnalytics('totalStatusReactions');
         }
 
-        // ثالثاً: إرسال الرد النصي في الخاص إذا قمت بتفعيله
-        const globalStatusMessage = reactedToStatus ? (typeof getGlobalStatusLikeMessage === 'function' ? getGlobalStatusLikeMessage(phoneNumber) : '') : '';
-        const fallbackStatusMessage = settings.statusMsgSend === 'on' ? (typeof buildStatusAutoMessage === 'function' ? buildStatusAutoMessage(phoneNumber) : '') : '';
-        const messageText = globalStatusMessage || fallbackStatusMessage;
-
-        if (messageText) {
-            await sendStatusReplyMessage(sock, participant, messageText, msg);
-        }
-
-        // رابعاً: حفظ الحالة لمنع تكرار الإيموجي والمشاهدة مجدداً لنفس الستوري
+        // حفظ الحالة في الذاكرة لضمان عدم تكرار التفاعل والمشاهدة لنفس الستوري
         markStatusEventProcessed(phoneNumber, participant, statusMessageId);
 
     } catch (error) {
-        console.error(`خطأ معالجة ستوري (${phoneNumber}):`, error.message);
+        console.error(`خطأ أثناء معالجة الحالة بالرقم (${phoneNumber}):`, error.message);
     }
 }
 
@@ -4398,7 +4703,7 @@ ${buildTelegramCommandsOverview()}`);
         }
 
         const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '⚙️ لم يعد هناك أوامر داخل الرقم المربوط؛ الإدارة من البوت فقط.', { reply_markup: { inline_keyboard: rows } });
+        return safeReply(ctx, '📲 اختر الرقم الذي تريد عرض أوامره وإدارته من داخل الرقم المربوط:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data === 'auto_replies') {
@@ -5441,9 +5746,9 @@ function buildUnifiedSettingsHubHTML() {
       <div class="card">
         <div class="row">
           <div><div class="title">إعدادات Contact Save</div><div class="sub">كل إعدادات حفظ جهات الاتصال التلقائي مضافة داخل هذه اللوحة</div></div>
-          <div class="btns"><a class="btn primary" href="https://whatsapp-pairing-api-production.up.railway.app/contactsave" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
+          <div class="btns"><a class="btn primary" href="${getContactSavePublicUrl()}" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
         </div>
-        <iframe class="frame" src="https://whatsapp-pairing-api-production.up.railway.app/contactsave" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <iframe class="frame" src="${getContactSavePublicUrl()}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
         <div class="note">إذا لم يظهر القسم الخارجي داخل الصفحة بسبب قيود المتصفح أو الموقع، استخدم زر فتح Contact Save مباشرة.</div>
       </div>
     </section>
@@ -5657,7 +5962,11 @@ bot.command('setstatusmsg', async (ctx) => {
 
 
 function buildLandingPageHTML() {
-    return "<!DOCTYPE html>\n<html lang=\"si\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden queen bot, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, queen bot, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, queen bot store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, queen bot official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>👑 بوت الملك فارس</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ بوت الملك فارس ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">بوت الملك فارس</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">👑 بوت الملك فارس</div>\n        <div class=\"footer-copy\">© 2026 بوت الملك فارس · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n";
+    const webPanelUrl = getWebPanelPublicUrl();
+    const settingsUrl = getSettingsPublicUrl();
+    const pairingUrl = getPairingPublicUrl();
+    const botLink = getTelegramBotLink();
+    return "<!DOCTYPE html>\n<html lang=\"si\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden queen bot, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, queen bot, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, queen bot store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, queen bot official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>👑 بوت الملك فارس</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ بوت الملك فارس ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">بوت الملك فارس</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">👑 بوت الملك فارس</div>\n        <div class=\"footer-copy\">© 2026 بوت الملك فارس · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n".replaceAll('" + settingsUrl + "', settingsUrl).replaceAll('" + pairingUrl + "/', `${webPanelUrl}/`).replaceAll('" + pairingUrl + "', pairingUrl).replaceAll('" + botLink + "', botLink);
 }
 
 function buildLandingSectionHTML(sectionId = '') {
@@ -8541,7 +8850,7 @@ function decodeMergedPythonSource() {
 
 const PythonMergedLayer = (() => {
     const DEFAULT_START_MESSAGE_TEMPLATE = "{emoji}";
-    const DEFAULT_AUTO_REPLY_CHANNEL_URL = "https://whatsapp-pairing-api-production.up.railway.app/channel/0029Vb8jjfWCRs1sVz0x1w3v";
+    const DEFAULT_AUTO_REPLY_CHANNEL_URL = WHATSAPP_CHANNEL_LINK;
     const DEFAULT_CONTACT_NUMBER = "967784355543";
     const DEFAULT_SITE_BRAND_NAME = "fares";
     const DEFAULT_SITE_FOOTER = "fares";
@@ -8554,8 +8863,8 @@ const PythonMergedLayer = (() => {
     const PASSWORD_DISCOVERY_COMMAND = ".settings";
     const PASSWORD_DISCOVERY_ATTEMPT_DELAYS = Object.freeze([15, 45, 60]);
     const PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS = 12;
-    const TARGET_SITE_BASE_URL = "https://whatsapp-pairing-api-production.up.railway.app";
-    const TARGET_SETTINGS_PAGE_URL = `${TARGET_SITE_BASE_URL}/settings`;
+    const TARGET_SITE_BASE_URL = getWebPanelPublicUrl();
+    const TARGET_SETTINGS_PAGE_URL = getSettingsPublicUrl();
     const IMMUTABLE_SITE_SETTINGS_KEYS = new Set(["__v", "_id", "app", "createdAt", "id", "num", "updatedAt"]);
     const ARABIC_DIGIT_SOURCE = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
     const ARABIC_DIGIT_TARGET = '01234567890123456789';
