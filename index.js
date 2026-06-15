@@ -1,11 +1,10 @@
- const {
+const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
     Browsers,
     DisconnectReason,
-    delay,
-    downloadContentFromMessage
+    delay
 } = require('@whiskeysockets/baileys');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
@@ -13,7 +12,6 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { EventEmitter } = require('events');
 
 // =========================
 // الإعدادات الأساسية
@@ -21,30 +19,21 @@ const { EventEmitter } = require('events');
 const APP_PORT = Number(process.env.PORT || 8080);
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
-if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
-// تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
-const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '👑';
+const DEFAULT_REACTION_EMOJI = '❤️';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
-const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
-const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
-const DEFAULT_BOT_LINK = String(process.env.PUBLIC_TELEGRAM_BOT_LINK || process.env.TELEGRAM_BOT_LINK || 'https://t.me/Swtory_Bot').trim() || 'https://t.me/Swtory_Bot';
-const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v';
-const DAILY_GIFT_POINTS = 300;
+const BRAND_NAME = 'بوت الملك فارس';
+const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
+const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
+const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb73l855K3zVq2QgsH1M';
+const DAILY_GIFT_POINTS = 100;
 const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const POINTS_PER_LIKE_PACKAGE = 30;
 const LIKES_PER_POINTS_PACKAGE = 500;
 const MAX_AUTO_REPLIES = 10;
-const MAX_GLOBAL_AUTO_REPLIES = 50;
-const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
-const WEB_SETTINGS_SESSION_TTL_MS = Number(process.env.WEB_SETTINGS_SESSION_TTL_MS || 12 * 60 * 60 * 1000);
-const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = String(process.env.PUBLIC_BASE_URL || process.env.WEB_PANEL_URL || process.env.APP_URL || process.env.DEFAULT_PUBLIC_BASE_URL || `http://localhost:${APP_PORT}`).trim().replace(/\/+$/, '');
-const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
-const DEFAULT_PAIRING_LINK = String(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
-const DEFAULT_CONTACTSAVE_LINK = String(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_LINK || `${DEPLOYMENT_BASE_URL}/contactsave`).trim().replace(/\/+$/, '');
+const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api.onrender.com';
+const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
 const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
-📞 رقم التواصل: 967784355543`;
+📞 رقم التواصل: 967773987296`;
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
     target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
@@ -71,8 +60,6 @@ const SITE_SETTINGS_FIELD_LABELS = {
     alwaysOnline: 'دائمًا أونلاين',
     autoStatusRead: 'مشاهدة الحالة تلقائيًا',
     autoStatusReact: 'التفاعل مع الحالة تلقائيًا',
-    keepDeletedStatus: 'حفظ الحالة عند حذفها',
-    ghostMode: 'تفعيل الشبح',
     autoRead: 'قراءة تلقائية',
     autoBlock: 'حظر تلقائي',
     autoReact: 'تفاعل تلقائي',
@@ -112,8 +99,6 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     alwaysOnline: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
-    keepDeletedStatus: 'on',
-    ghostMode: 'off',
     autoRead: 'off',
     autoBlock: 'off',
     autoReact: 'off',
@@ -125,7 +110,7 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     statusMsgSend: 'off',
     statusMsgType: 'default',
     customMsg: DEFAULT_SITE_INFO_TEXT,
-    ownerNumber: '967784355543',
+    ownerNumber: '967773987296',
     ownername: 'fares',
     description: DEFAULT_SITE_INFO_TEXT,
     gaGroupJid: '',
@@ -145,759 +130,15 @@ const DEFAULT_PHONE_SETTINGS = {
     customAutoReplies: '',
     autoSave: 'on'
 };
-const PHONE_SETTINGS_SECTIONS = [
-    {
-        key: 'general',
-        label: 'الإعدادات العامة',
-        fields: ['name', 'ownername', 'ownerNumber', 'description', 'from', 'age', 'prefix', 'footer2', 'mode']
-    },
-    {
-        key: 'automation',
-        label: 'الحالة والخيارات التلقائية',
-        fields: ['autoStatusRead', 'autoStatusReact', 'keepDeletedStatus', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
-    },
-    {
-        key: 'protection',
-        label: 'الحماية والسلوك',
-        fields: ['antiBad', 'antiLink', 'antiDelete', 'sendDeleteTo', 'antiCall', 'excludeCallNumbers', 'antiBug', 'antiBot', 'antiBotAction', 'autoBlock', 'autoVoice']
-    },
-    {
-        key: 'media',
-        label: 'الوسائط والصور',
-        fields: ['menu', 'alive', 'owner']
-    },
-    {
-        key: 'group',
-        label: 'الجروب والمتقدم',
-        fields: ['gaGroupJid', 'gaTimezone', 'gaOpenTime', 'gaCloseTime']
-    }
-];
-const PHONE_SETTINGS_TOGGLE_FIELDS = new Set([
-    'antiBad', 'antiLink', 'autoRecording', 'autoTyping', 'alwaysOnline', 'autoStatusRead', 'autoStatusReact',
-    'keepDeletedStatus', 'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave'
-]);
-const PHONE_SETTINGS_SELECT_OPTIONS = {
-    mode: [
-        { value: 'public', label: 'عام' },
-        { value: 'private', label: 'خاص' },
-        { value: 'inbox', label: 'خاص/خاص فقط' },
-        { value: 'group', label: 'المجموعات' },
-        { value: 'admin', label: 'الأدمن فقط' }
-    ],
-    antiDelete: [
-        { value: 'off', label: 'إيقاف' },
-        { value: 'inbox', label: 'الخاص' },
-        { value: 'group', label: 'المجموعات' },
-        { value: 'all', label: 'الكل' }
-    ],
-    sendDeleteTo: [
-        { value: 'owner', label: 'إلى المالك' },
-        { value: 'same', label: 'إلى نفس الشات' }
-    ],
-    statusMsgType: [
-        { value: 'default', label: 'افتراضي' },
-        { value: 'custom', label: 'مخصص' }
-    ],
-    antiBotAction: [
-        { value: 'delete', label: 'حذف الرسائل' },
-        { value: 'delete+kick', label: 'حذف + طرد' }
-    ]
-};
-const PHONE_SETTINGS_EDIT_HINTS = {
-    name: 'أرسل اسم البوت الجديد الآن. الحد الأقصى 15 حرف.',
-    ownername: 'أرسل اسم المالك الجديد الآن. الحد الأقصى 40 حرف.',
-    ownerNumber: 'أرسل رقم التواصل مع مفتاح الدولة، أرقام فقط.',
-    description: 'أرسل الوصف أو المعلومات التعريفية الجديدة.',
-    from: 'أرسل اسم البلد أو الموقع.',
-    age: 'أرسل العمر كرقم فقط.',
-    prefix: 'أرسل البادئة الجديدة مثل . أو #',
-    footer2: 'أرسل الفوتر الجديد.',
-    customMsg: 'أرسل رسالة الحالة المخصصة الجديدة.',
-    statusCustomReact: 'أرسل الإيموجيات مفصولة بمسافة أو فاصلة، بحد أقصى 10 إيموجيات.',
-    excludeCallNumbers: 'أرسل الأرقام المستثناة مفصولة بمسافة أو فاصلة.',
-    menu: 'أرسل رابط صورة المنيو المباشر.',
-    alive: 'أرسل رابط صورة alive المباشر.',
-    owner: 'أرسل رابط صورة المالك المباشر.',
-    gaGroupJid: 'أرسل معرف الجروب.',
-    gaTimezone: 'أرسل المنطقة الزمنية مثل Asia/Aden أو Asia/Riyadh.',
-    gaOpenTime: 'أرسل وقت الفتح بصيغة HH:MM',
-    gaCloseTime: 'أرسل وقت الإغلاق بصيغة HH:MM'
-};
-
-const SETTINGS_PAGE_HTML = buildSettingsPageHTML();
-
-function buildSettingsPageHTML() {
-    const labels = JSON.stringify(SITE_SETTINGS_FIELD_LABELS, null, 0);
-    const defaults = JSON.stringify(DEFAULT_PHONE_SETTINGS, null, 0);
-    const sections = JSON.stringify(PHONE_SETTINGS_SECTIONS, null, 0);
-    const toggleFields = JSON.stringify(Array.from(PHONE_SETTINGS_TOGGLE_FIELDS), null, 0);
-    const selectOptions = JSON.stringify(PHONE_SETTINGS_SELECT_OPTIONS, null, 0);
-    return `<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>إعدادات ${BRAND_NAME}</title>
-  <style>
-    :root {
-      --bg:#0b0d12;
-      --panel:#131722;
-      --panel-2:#171c29;
-      --line:rgba(255,255,255,.08);
-      --gold:#d4a055;
-      --text:#f5f2eb;
-      --muted:#b8b2c7;
-      --ok:#25d366;
-      --danger:#ef4444;
-      --input:#0f1320;
-      --shadow:0 18px 45px rgba(0,0,0,.28);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: Tahoma, Arial, sans-serif;
-      background: linear-gradient(180deg, #090b11 0%, #111522 100%);
-      color: var(--text);
-      min-height: 100vh;
-    }
-    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
-    .hero, .card, .section, .field { border: 1px solid var(--line); }
-    .hero, .card, .section {
-      background: rgba(19,23,34,.96);
-      border-radius: 22px;
-      box-shadow: var(--shadow);
-    }
-    .hero { padding: 26px; margin-bottom: 20px; }
-    .hero h1 { margin: 0 0 10px; font-size: 30px; }
-    .hero p { margin: 0; color: var(--muted); line-height: 1.9; }
-    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
-    .card { padding: 20px; }
-    .sidebar-title, .content-title { margin: 0 0 12px; font-size: 20px; }
-    .muted { color: var(--muted); }
-    .login-box { display: grid; gap: 12px; }
-    .inp, .txt, .sel {
-      width: 100%;
-      background: var(--input);
-      color: var(--text);
-      border: 1px solid rgba(255,255,255,.09);
-      border-radius: 14px;
-      padding: 12px 14px;
-      outline: none;
-      font-size: 14px;
-    }
-    .txt { min-height: 110px; resize: vertical; }
-    .inp:focus, .txt:focus, .sel:focus {
-      border-color: var(--gold);
-      box-shadow: 0 0 0 3px rgba(212,160,85,.12);
-    }
-    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-    .btn {
-      border: none;
-      border-radius: 14px;
-      padding: 12px 18px;
-      font-size: 14px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: transform .15s ease, opacity .15s ease;
-    }
-    .btn:hover { transform: translateY(-1px); }
-    .btn:disabled { opacity: .65; cursor: wait; transform: none; }
-    .btn-primary { background: linear-gradient(135deg, #f0c880, var(--gold)); color: #111; }
-    .btn-ghost { background: rgba(255,255,255,.04); color: var(--text); border: 1px solid var(--line); }
-    .status-box {
-      margin-top: 12px;
-      min-height: 44px;
-      border-radius: 14px;
-      padding: 12px 14px;
-      line-height: 1.8;
-      background: rgba(255,255,255,.03);
-      border: 1px dashed rgba(255,255,255,.08);
-      color: var(--muted);
-      white-space: pre-wrap;
-    }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border-radius: 999px;
-      padding: 8px 12px;
-      font-size: 12px;
-      background: rgba(212,160,85,.14);
-      color: #f5d199;
-      border: 1px solid rgba(212,160,85,.26);
-      margin-bottom: 14px;
-    }
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 18px;
-      flex-wrap: wrap;
-    }
-    .section { padding: 18px; margin-bottom: 18px; }
-    .section h3 { margin: 0 0 6px; font-size: 18px; }
-    .section p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
-    .fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
-    .field {
-      background: rgba(255,255,255,.025);
-      border-radius: 16px;
-      padding: 14px;
-    }
-    .field.full { grid-column: 1 / -1; }
-    .label { font-size: 13px; font-weight: bold; margin-bottom: 8px; display: block; }
-    .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
-    .toggle-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      background: rgba(255,255,255,.03);
-      border-radius: 14px;
-      padding: 10px 12px;
-      border: 1px solid rgba(255,255,255,.05);
-    }
-    .toggle-chip {
-      min-width: 72px;
-      text-align: center;
-      padding: 8px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: bold;
-      border: 1px solid transparent;
-    }
-    .toggle-chip.on { background: rgba(37,211,102,.14); color: #87f3b0; border-color: rgba(37,211,102,.32); }
-    .toggle-chip.off { background: rgba(239,68,68,.10); color: #ff9e9e; border-color: rgba(239,68,68,.22); }
-    .preview {
-      margin-top: 10px;
-      width: 100%;
-      aspect-ratio: 16/9;
-      border-radius: 14px;
-      border: 1px dashed rgba(255,255,255,.08);
-      background: #0c101a;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .upload-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-    .hidden { display: none !important; }
-    .footer-actions {
-      position: sticky;
-      bottom: 14px;
-      z-index: 5;
-      display: flex;
-      justify-content: center;
-      margin-top: 24px;
-    }
-    .save-bar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      background: rgba(19,23,34,.95);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 12px;
-      box-shadow: var(--shadow);
-    }
-    .panel-note {
-      margin-top: 8px;
-      color: #d9d4e5;
-      line-height: 1.8;
-      font-size: 13px;
-    }
-    body.panel-mode .wrap { max-width: 1380px; }
-    body.panel-mode .grid { grid-template-columns: 1fr; }
-    body.panel-mode #loginCard { display: none !important; }
-    body.panel-mode .hero { margin-bottom: 24px; }
-    body.panel-mode .content-title { font-size: 24px; }
-    @media (max-width: 980px) {
-      .grid { grid-template-columns: 1fr; }
-      .fields { grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <section class="hero">
-      <h1>إعدادات ${BRAND_NAME}</h1>
-      <p id="heroText">سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، وبعد النجاح سيتم فتح واجهة كاملة خاصة بهذا الرقم لتعديل جميع الإعدادات ثم حفظها وتطبيقها مباشرة.</p>
-    </section>
-
-    <div class="grid">
-      <aside class="card" id="loginCard">
-        <div class="badge">⚙️ تسجيل دخول الإعدادات</div>
-        <h2 class="sidebar-title">الدخول</h2>
-        <p class="muted" style="margin-top:0;margin-bottom:16px;line-height:1.8;">اكتب الرقم المربوط وكلمة السر، وبعدها سيتم تحويلك تلقائياً إلى واجهة إعدادات الرقم نفسه.</p>
-        <div class="login-box">
-          <input id="loginNum" class="inp" placeholder="رقم الواتساب مع مفتاح الدولة" />
-          <input id="loginPass" class="inp" placeholder="كلمة السر" type="password" />
-          <input id="loginApp" class="inp hidden" value="default" />
-          <div class="btn-row">
-            <button id="loginBtn" class="btn btn-primary" type="button">تسجيل الدخول</button>
-            <button id="logoutBtn" class="btn btn-ghost hidden" type="button">تسجيل الخروج</button>
-          </div>
-        </div>
-        <div class="panel-note">بعد تسجيل الدخول سيتم حفظ جلسة الويب لهذا الرقم وفتح صفحة الإعدادات الكاملة مباشرة.</div>
-        <div id="statusBox" class="status-box">جاهز لتسجيل الدخول.</div>
-      </aside>
-
-      <main class="card" id="panelCard">
-        <div class="topbar">
-          <div>
-            <div class="badge">🧩 لوحة الإعدادات</div>
-            <h2 class="content-title">الإعدادات</h2>
-            <div id="sessionMeta" class="muted">لم يتم تسجيل الدخول بعد.</div>
-          </div>
-          <div class="btn-row">
-            <button id="reloadBtn" class="btn btn-ghost hidden" type="button">إعادة تحميل</button>
-            <button id="logoutTopBtn" class="btn btn-ghost hidden" type="button">تسجيل الخروج</button>
-          </div>
-        </div>
-        <div id="formRoot"></div>
-        <div class="footer-actions hidden" id="footerActions">
-          <div class="save-bar">
-            <button id="saveBtn" class="btn btn-primary" type="button">حفظ الإعدادات</button>
-            <button id="scrollTopBtn" class="btn btn-ghost" type="button">الرجوع للأعلى</button>
-          </div>
-        </div>
-      </main>
-    </div>
-  </div>
-
-<script>
-(() => {
-  const API = {
-    login: '/api/login',
-    load: '/api/settings/load',
-    save: '/api/settings/save',
-    upload: '/api/image/upload'
-  };
-  const FIELD_LABELS = ${labels};
-  const DEFAULTS = ${defaults};
-  const SECTIONS = ${sections};
-  const TOGGLES = new Set(${toggleFields});
-  const SELECTS = ${selectOptions};
-  const LONG_FIELDS = new Set(['description', 'customMsg', 'excludeCallNumbers', 'customAutoReplies']);
-  const IMAGE_FIELDS = new Set(['menu', 'alive', 'owner']);
-
-  const state = {
-    loggedIn: false,
-    num: '',
-    pass: '',
-    app: 'default',
-    sessionToken: '',
-    settings: { ...DEFAULTS },
-    saving: false,
-    loading: false
-  };
-
-  const el = {
-    loginNum: document.getElementById('loginNum'),
-    loginPass: document.getElementById('loginPass'),
-    loginApp: document.getElementById('loginApp'),
-    loginBtn: document.getElementById('loginBtn'),
-    logoutBtn: document.getElementById('logoutBtn'),
-    logoutTopBtn: document.getElementById('logoutTopBtn'),
-    reloadBtn: document.getElementById('reloadBtn'),
-    saveBtn: document.getElementById('saveBtn'),
-    formRoot: document.getElementById('formRoot'),
-    statusBox: document.getElementById('statusBox'),
-    sessionMeta: document.getElementById('sessionMeta'),
-    footerActions: document.getElementById('footerActions'),
-    scrollTopBtn: document.getElementById('scrollTopBtn'),
-    heroText: document.getElementById('heroText')
-  };
-
-  function getQueryParam(key) {
-    return new URLSearchParams(window.location.search).get(key) || '';
-  }
-
-  function updateUrlForSession(token, phone) {
-    const url = new URL(window.location.href);
-    if (token) url.searchParams.set('session', token);
-    else url.searchParams.delete('session');
-    if (phone) url.searchParams.set('phone', phone);
-    else url.searchParams.delete('phone');
-    return url.toString();
-  }
-
-  function setStatus(message, type) {
-    el.statusBox.textContent = message;
-    el.statusBox.style.color = type === 'error' ? '#ffb4b4' : type === 'success' ? '#b8ffd0' : 'var(--muted)';
-    el.statusBox.style.borderColor = type === 'error'
-      ? 'rgba(239,68,68,.25)'
-      : type === 'success'
-        ? 'rgba(37,211,102,.25)'
-        : 'rgba(255,255,255,.08)';
-  }
-
-  async function apiPost(url, payload) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload || {})
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || data.message || ('HTTP ' + res.status));
-    }
-    return data;
-  }
-
-  async function apiGet(url, payload) {
-    const qs = new URLSearchParams(payload || {}).toString();
-    const res = await fetch(url + (qs ? '?' + qs : ''));
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || data.message || ('HTTP ' + res.status));
-    }
-    return data;
-  }
-
-  function esc(value) {
-    return String(value ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\"/g, '&quot;');
-  }
-
-  function getFieldLabel(key) {
-    return FIELD_LABELS[key] || key;
-  }
-
-  function getAuthPayload(extra) {
-    const payload = { ...(extra || {}) };
-    if (state.sessionToken) payload.token = state.sessionToken;
-    if (!payload.num && state.num) payload.num = state.num;
-    if (!payload.app && state.app) payload.app = state.app;
-    return payload;
-  }
-
-  function applyLayoutMode() {
-    document.body.classList.toggle('panel-mode', state.loggedIn);
-    el.reloadBtn.classList.toggle('hidden', !state.loggedIn);
-    el.logoutBtn.classList.toggle('hidden', !state.loggedIn);
-    el.logoutTopBtn.classList.toggle('hidden', !state.loggedIn);
-    if (el.heroText) {
-      el.heroText.textContent = state.loggedIn
-        ? 'هذه واجهة إعدادات الرقم الحالية. أي تعديل ثم ضغط زر الحفظ سيتم حفظه فوراً وتطبيقه مباشرة على الرقم المربوط.'
-        : 'سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، وبعد النجاح سيتم فتح واجهة كاملة خاصة بهذا الرقم لتعديل جميع الإعدادات ثم حفظها وتطبيقها مباشرة.';
-    }
-  }
-
-  function renderField(fieldKey) {
-    const label = getFieldLabel(fieldKey);
-    const value = state.settings[fieldKey] ?? DEFAULTS[fieldKey] ?? '';
-    const fullClass = LONG_FIELDS.has(fieldKey) || IMAGE_FIELDS.has(fieldKey) ? 'field full' : 'field';
-
-    if (TOGGLES.has(fieldKey)) {
-      const current = String(value || 'off') === 'on' ? 'on' : 'off';
-      return '<div class="' + fullClass + '">' +
-        '<label class="label">' + esc(label) + '</label>' +
-        '<div class="toggle-row">' +
-          '<span class="muted">تفعيل أو إيقاف</span>' +
-          '<select class="sel" data-field="' + esc(fieldKey) + '" style="max-width:140px">' +
-            '<option value="on" ' + (current === 'on' ? 'selected' : '') + '>on</option>' +
-            '<option value="off" ' + (current === 'off' ? 'selected' : '') + '>off</option>' +
-          '</select>' +
-          '<span class="toggle-chip ' + current + '">' + current.toUpperCase() + '</span>' +
-        '</div>' +
-      '</div>';
-    }
-
-    if (SELECTS[fieldKey]) {
-      const options = (SELECTS[fieldKey] || []).map((opt) => {
-        const selected = String(value) === String(opt.value) ? 'selected' : '';
-        return '<option value="' + esc(opt.value) + '" ' + selected + '>' + esc(opt.label) + '</option>';
-      }).join('');
-      return '<div class="' + fullClass + '">' +
-        '<label class="label">' + esc(label) + '</label>' +
-        '<select class="sel" data-field="' + esc(fieldKey) + '">' + options + '</select>' +
-      '</div>';
-    }
-
-    if (LONG_FIELDS.has(fieldKey)) {
-      return '<div class="' + fullClass + '">' +
-        '<label class="label">' + esc(label) + '</label>' +
-        '<textarea class="txt" data-field="' + esc(fieldKey) + '">' + esc(value) + '</textarea>' +
-      '</div>';
-    }
-
-    if (IMAGE_FIELDS.has(fieldKey)) {
-      const preview = String(value || '').trim()
-        ? '<img src="' + esc(value) + '" alt="preview" onerror="this.closest(\'.preview\').innerHTML=\'<span>تعذر تحميل الصورة</span>\'">'
-        : '<span>لا توجد صورة حالياً</span>';
-      return '<div class="' + fullClass + '">' +
-        '<label class="label">' + esc(label) + '</label>' +
-        '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" placeholder="رابط الصورة" />' +
-        '<div class="preview" id="preview_' + esc(fieldKey) + '">' + preview + '</div>' +
-        '<div class="upload-row">' +
-          '<input type="file" accept="image/*" data-upload-field="' + esc(fieldKey) + '" class="inp" />' +
-        '</div>' +
-        '<div class="hint">يمكنك إما لصق رابط صورة مباشر أو رفع صورة من جهازك.</div>' +
-      '</div>';
-    }
-
-    return '<div class="' + fullClass + '">' +
-      '<label class="label">' + esc(label) + '</label>' +
-      '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" />' +
-    '</div>';
-  }
-
-  function renderForm() {
-    applyLayoutMode();
-    if (!state.loggedIn) {
-      el.formRoot.innerHTML = '<div class="section"><h3>بانتظار تسجيل الدخول</h3><p>بعد تسجيل الدخول سيتم فتح الواجهة الخاصة بالرقم ثم ستظهر جميع أقسام الإعدادات هنا.</p></div>';
-      el.footerActions.classList.add('hidden');
-      el.sessionMeta.textContent = 'لم يتم تسجيل الدخول بعد.';
-      return;
-    }
-
-    el.footerActions.classList.remove('hidden');
-    el.sessionMeta.textContent = 'الرقم: ' + state.num + ' | APP ID: ' + state.app;
-
-    el.formRoot.innerHTML = SECTIONS.map((section) => {
-      const fieldsHtml = (section.fields || []).map(renderField).join('');
-      return '<section class="section">' +
-        '<h3>' + esc(section.label) + '</h3>' +
-        '<p>يمكنك تعديل هذا القسم ثم الضغط على حفظ الإعدادات ليتم تطبيق التعديلات فوراً على الرقم المربوط.</p>' +
-        '<div class="fields">' + fieldsHtml + '</div>' +
-      '</section>';
-    }).join('');
-
-    bindFieldEvents();
-  }
-
-  function bindFieldEvents() {
-    document.querySelectorAll('[data-field]').forEach((node) => {
-      const field = node.getAttribute('data-field');
-      const handler = (event) => {
-        state.settings[field] = event.target.value;
-        if (IMAGE_FIELDS.has(field)) updatePreview(field, event.target.value);
-        if (TOGGLES.has(field)) {
-          const chip = event.target.closest('.toggle-row')?.querySelector('.toggle-chip');
-          if (chip) {
-            const mode = String(event.target.value) === 'on' ? 'on' : 'off';
-            chip.className = 'toggle-chip ' + mode;
-            chip.textContent = mode.toUpperCase();
-          }
-        }
-      };
-      node.addEventListener('input', handler);
-      node.addEventListener('change', handler);
-    });
-
-    document.querySelectorAll('[data-upload-field]').forEach((node) => {
-      node.addEventListener('change', async (event) => {
-        const fieldKey = event.target.getAttribute('data-upload-field');
-        const file = event.target.files && event.target.files[0];
-        if (!file) return;
-        try {
-          setStatus('جارٍ رفع الصورة: ' + fieldKey + ' ...');
-          const base64 = await fileToBase64(file);
-          const result = await apiPost(API.upload, getAuthPayload({
-            fieldKey,
-            image: base64
-          }));
-          state.settings[fieldKey] = result.url;
-          const input = document.querySelector('[data-field="' + fieldKey + '"]');
-          if (input) input.value = result.url;
-          updatePreview(fieldKey, result.url);
-          setStatus('تم رفع الصورة وتحديث الحقل: ' + fieldKey, 'success');
-        } catch (error) {
-          setStatus(error.message || 'فشل رفع الصورة', 'error');
-        } finally {
-          event.target.value = '';
-        }
-      });
-    });
-  }
-
-  function updatePreview(fieldKey, value) {
-    const box = document.getElementById('preview_' + fieldKey);
-    if (!box) return;
-    const clean = String(value || '').trim();
-    if (!clean) {
-      box.innerHTML = '<span>لا توجد صورة حالياً</span>';
-      return;
-    }
-    box.innerHTML = '<img src="' + esc(clean) + '" alt="preview">';
-  }
-
-  function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = String(reader.result || '');
-        const base64 = result.includes(',') ? result.split(',').pop() : result;
-        resolve(base64);
-      };
-      reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function loadSettingsByToken(token) {
-    const loaded = await apiGet(API.load, { token });
-    state.loggedIn = true;
-    state.sessionToken = token;
-    state.num = loaded.number || state.num;
-    state.app = loaded.app || state.app || 'default';
-    state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
-    renderForm();
-    return loaded;
-  }
-
-  async function login() {
-    const num = String(el.loginNum.value || '').trim();
-    const pass = String(el.loginPass.value || '').trim();
-    const app = String(el.loginApp.value || 'default').trim() || 'default';
-    if (!num || !pass) {
-      setStatus('أدخل الرقم وكلمة السر أولاً.', 'error');
-      return;
-    }
-    state.loading = true;
-    el.loginBtn.disabled = true;
-    setStatus('جارٍ التحقق ثم فتح واجهة إعدادات الرقم...');
-    try {
-      const auth = await apiPost(API.login, { num, pass, app });
-      const token = String(auth.sessionToken || auth.token || '').trim();
-      if (!token) throw new Error('لم يتم إنشاء جلسة دخول صالحة');
-      const nextUrl = String(auth.redirectPath || '').trim() || updateUrlForSession(token, auth.number || num);
-      window.location.href = nextUrl;
-    } catch (error) {
-      setStatus(error.message || 'فشل تسجيل الدخول', 'error');
-    } finally {
-      state.loading = false;
-      el.loginBtn.disabled = false;
-    }
-  }
-
-  async function reloadSettings() {
-    if (!state.loggedIn) return;
-    el.reloadBtn.disabled = true;
-    setStatus('جارٍ إعادة تحميل الإعدادات...');
-    try {
-      const loaded = state.sessionToken
-        ? await loadSettingsByToken(state.sessionToken)
-        : await apiGet(API.load, getAuthPayload());
-      if (!state.sessionToken) {
-        state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
-        state.num = loaded.number || state.num;
-        state.app = loaded.app || state.app;
-        renderForm();
-      }
-      setStatus('تم تحديث البيانات من الخادم.', 'success');
-    } catch (error) {
-      setStatus(error.message || 'تعذر تحديث البيانات', 'error');
-    } finally {
-      el.reloadBtn.disabled = false;
-    }
-  }
-
-  async function saveSettings() {
-    if (!state.loggedIn || state.saving) return;
-    state.saving = true;
-    el.saveBtn.disabled = true;
-    setStatus('جارٍ حفظ الإعدادات وتطبيقها على الرقم المربوط...');
-    try {
-      const payload = getAuthPayload({ ...state.settings });
-      const result = await apiPost(API.save, payload);
-      state.num = result.number || state.num;
-      state.app = result.app || state.app;
-      state.settings = { ...DEFAULTS, ...(result.settings || {}) };
-      renderForm();
-      setStatus('تم حفظ الإعدادات بنجاح وتطبيقها مباشرة على الرقم المربوط.', 'success');
-    } catch (error) {
-      setStatus(error.message || 'فشل حفظ الإعدادات', 'error');
-    } finally {
-      state.saving = false;
-      el.saveBtn.disabled = false;
-    }
-  }
-
-  function logout() {
-    state.loggedIn = false;
-    state.num = '';
-    state.pass = '';
-    state.app = 'default';
-    state.sessionToken = '';
-    state.settings = { ...DEFAULTS };
-    const cleanUrl = updateUrlForSession('', getQueryParam('phone'));
-    window.history.replaceState({}, '', cleanUrl);
-    renderForm();
-    setStatus('تم تسجيل الخروج.', 'success');
-  }
-
-  async function bootstrap() {
-    const prefillPhone = getQueryParam('phone');
-    if (prefillPhone) {
-      el.loginNum.value = prefillPhone;
-    }
-    const token = String(getQueryParam('session') || '').trim();
-    if (!token) {
-      renderForm();
-      return;
-    }
-    state.loading = true;
-    setStatus('جارٍ فتح واجهة إعدادات الرقم...');
-    try {
-      await loadSettingsByToken(token);
-      setStatus('تم فتح واجهة الإعدادات الكاملة بنجاح.', 'success');
-    } catch (error) {
-      state.sessionToken = '';
-      state.loggedIn = false;
-      renderForm();
-      setStatus(error.message || 'انتهت الجلسة، سجّل الدخول من جديد.', 'error');
-    } finally {
-      state.loading = false;
-    }
-  }
-
-  el.loginBtn.addEventListener('click', login);
-  el.logoutBtn.addEventListener('click', logout);
-  el.logoutTopBtn.addEventListener('click', logout);
-  el.reloadBtn.addEventListener('click', reloadSettings);
-  el.saveBtn.addEventListener('click', saveSettings);
-  el.scrollTopBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-  el.loginPass.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') login();
-  });
-
-  bootstrap();
-})();
-</script>
-</body>
-</html>`;
-}
+const SETTINGS_PAGE_HTML = Buffer.from('PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImVuIj4KPGhlYWQ+CiAgPG1ldGEgY2hhcnNldD0iVVRGLTgiIC8+CiAgPG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xLjAiIC8+CiAgPHRpdGxlPtio2YjYqiDYp9mE2YXZhNmDINmB2KfYsdizIOKAlCDZhNmI2K3YqSDYp9mE2KXYudiv2KfYr9in2Ko8L3RpdGxlPgogIDxsaW5rIHJlbD0icHJlY29ubmVjdCIgaHJlZj0iaHR0cHM6Ly9mb250cy5nb29nbGVhcGlzLmNvbSIgLz4KICA8bGluayByZWw9InByZWNvbm5lY3QiIGhyZWY9Imh0dHBzOi8vZm9udHMuZ3N0YXRpYy5jb20iIGNyb3Nzb3JpZ2luIC8+CiAgPGxpbmsgaHJlZj0iaHR0cHM6Ly9mb250cy5nb29nbGVhcGlzLmNvbS9jc3MyP2ZhbWlseT1TeW5lOndnaHRANDAwOzYwMDs3MDA7ODAwJmZhbWlseT1ETStTYW5zOndnaHRAMzAwOzQwMDs1MDAmZmFtaWx5PUpldEJyYWlucytNb25vOndnaHRANDAwOzYwMCZkaXNwbGF5PXN3YXAiIHJlbD0ic3R5bGVzaGVldCIgLz4KICA8c2NyaXB0IHNyYz0iaHR0cHM6Ly91bnBrZy5jb20vcmVhY3RAMTgvdW1kL3JlYWN0LnByb2R1Y3Rpb24ubWluLmpzIj48L3NjcmlwdD4KICA8c2NyaXB0IHNyYz0iaHR0cHM6Ly91bnBrZy5jb20vcmVhY3QtZG9tQDE4L3VtZC9yZWFjdC1kb20ucHJvZHVjdGlvbi5taW4uanMiPjwvc2NyaXB0PgogIDxzY3JpcHQgc3JjPSJodHRwczovL3VucGtnLmNvbS9AYmFiZWwvc3RhbmRhbG9uZS9iYWJlbC5taW4uanMiPjwvc2NyaXB0PgogIDxzY3JpcHQgc3JjPSJodHRwczovL2Nkbi50YWlsd2luZGNzcy5jb20iPjwvc2NyaXB0PgogIDxzdHlsZT4KICAgIDpyb290IHsKICAgICAgLS1iZzojMGQwZDEyOyAtLWJnMjojMTMxMzFjOyAtLWNhcmQ6cmdiYSgyNiwyNiwzOSwwLjk1KTsKICAgICAgLS1ib3JkZXI6cmdiYSgyNTUsMjU1LDI1NSwwLjA3KTsgLS1ib3JkZXItYWNjZW50OnJnYmEoMjEyLDE2MCw4NSwwLjM1KTsKICAgICAgLS1nb2xkOiNkNGEwNTU7IC0tZ29sZC1saWdodDojZjBjODgwOyAtLXJvc2U6I2U4Njk3YTsgLS1yb3NlLWxpZ2h0OiNmNWEwYWM7CiAgICAgIC0tdGV4dDojZjBlYWY1OyAtLW11dGVkOiM4YTg0OWE7IC0tZmFpbnQ6IzRhNDQ2MDsKICAgICAgLS1jOiMwMGQyZmY7IC0tYzI6IzNhN2JkNTsKICAgIH0KICAgICosICo6OmJlZm9yZSwgKjo6YWZ0ZXIgeyBib3gtc2l6aW5nOmJvcmRlci1ib3g7IG1hcmdpbjowOyBwYWRkaW5nOjA7IH0KICAgIGh0bWwgeyBzY3JvbGwtYmVoYXZpb3I6c21vb3RoOyB9CiAgICBib2R5IHsKICAgICAgYmFja2dyb3VuZDp2YXIoLS1iZyk7IGNvbG9yOnZhcigtLXRleHQpOwogICAgICBmb250LWZhbWlseTonRE0gU2Fucycsc2Fucy1zZXJpZjsKICAgICAgb3ZlcmZsb3cteDpoaWRkZW47IG1pbi1oZWlnaHQ6MTAwdmg7CiAgICB9CiAgICBib2R5OjpiZWZvcmUgewogICAgICBjb250ZW50OicnOyBwb3NpdGlvbjpmaXhlZDsgaW5zZXQ6MDsKICAgICAgYmFja2dyb3VuZDoKICAgICAgICByYWRpYWwtZ3JhZGllbnQoZWxsaXBzZSA2MCUgNDAlIGF0IDE1JSA1JSwgIHJnYmEoMCwyMTAsMjU1LDAuMDUpICAwJSwgdHJhbnNwYXJlbnQgNjAlKSwKICAgICAgICByYWRpYWwtZ3JhZGllbnQoZWxsaXBzZSA1MCUgMzUlIGF0IDg1JSA4NSUsIHJnYmEoMjEyLDE2MCw4NSwwLjA2KSAwJSwgdHJhbnNwYXJlbnQgNjAlKSwKICAgICAgICBsaW5lYXItZ3JhZGllbnQocmdiYSgwLDIxMCwyNTUsMC4wMTUpIDFweCwgdHJhbnNwYXJlbnQgMXB4KSwKICAgICAgICBsaW5lYXItZ3JhZGllbnQoOTBkZWcscmdiYSgwLDIxMCwyNTUsMC4wMTUpIDFweCwgdHJhbnNwYXJlbnQgMXB4KTsKICAgICAgYmFja2dyb3VuZC1zaXplOjEwMCUgMTAwJSwgMTAwJSAxMDAlLCA2MHB4IDYwcHgsIDYwcHggNjBweDsKICAgICAgcG9pbnRlci1ldmVudHM6bm9uZTsgei1pbmRleDowOwogICAgfQogICAgYm9keTo6YWZ0ZXIgewogICAgICBjb250ZW50OicnOyBwb3NpdGlvbjpmaXhlZDsgbGVmdDowOyB0b3A6MDsgd2lkdGg6MTAwJTsgaGVpZ2h0OjJweDsKICAgICAgYmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoOTBkZWcsIHRyYW5zcGFyZW50IDAlLCB2YXIoLS1nb2xkKSAzMCUsIHZhcigtLWMpIDUwJSwgdmFyKC0tZ29sZCkgNzAlLCB0cmFuc3BhcmVudCAxMDAlKTsKICAgICAgYm94LXNoYWRvdzowIDAgMTZweCAzcHggcmdiYSgyMTIsMTYwLDg1LDAuNSk7CiAgICAgIGFuaW1hdGlvbjpsYXNlciA4cyBlYXNlLWluLW91dCBpbmZpbml0ZTsKICAgICAgei1pbmRleDo5OTk4OyBwb2ludGVyLWV2ZW50czpub25lOwogICAgfQogICAgQGtleWZyYW1lcyBsYXNlciB7IDAlLDEwMCV7dG9wOi01JTtvcGFjaXR5OjB9IDUle29wYWNpdHk6MX0gOTUle29wYWNpdHk6MX0gNTAle3RvcDoxMDUlfSB9CgogICAgaDEsaDIsaDMgeyBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsgfQogICAgY29kZSwubW9ubyB7IGZvbnQtZmFtaWx5OidKZXRCcmFpbnMgTW9ubycsbW9ub3NwYWNlOyB9CgogICAgLmdsYXNzIHsKICAgICAgYmFja2dyb3VuZDp2YXIoLS1jYXJkKTsgYmFja2Ryb3AtZmlsdGVyOmJsdXIoMjBweCk7CiAgICAgIGJvcmRlcjoxcHggc29saWQgdmFyKC0tYm9yZGVyKTsgYm9yZGVyLXJhZGl1czoyNHB4OwogICAgICBwb3NpdGlvbjpyZWxhdGl2ZTsgb3ZlcmZsb3c6aGlkZGVuOwogICAgfQogICAgLmdsYXNzOjpiZWZvcmUgewogICAgICBjb250ZW50OicnOyBwb3NpdGlvbjphYnNvbHV0ZTsgaW5zZXQ6MDsKICAgICAgYmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHJnYmEoMjU1LDI1NSwyNTUsMC4wMykgMCUsdHJhbnNwYXJlbnQgNjAlKTsKICAgICAgcG9pbnRlci1ldmVudHM6bm9uZTsgYm9yZGVyLXJhZGl1czppbmhlcml0OwogICAgfQogICAgLmdsYXNzOmhvdmVyIHsgYm9yZGVyLWNvbG9yOnZhcigtLWJvcmRlci1hY2NlbnQpOyB9CgogICAgLmlucCB7CiAgICAgIGJhY2tncm91bmQ6cmdiYSgxMywxMywxOCwwLjgpOwogICAgICBib3JkZXI6MXB4IHNvbGlkIHJnYmEoMjU1LDI1NSwyNTUsMC4wOSk7CiAgICAgIGJvcmRlci1yYWRpdXM6MTJweDsgcGFkZGluZzoxMXB4IDE0cHg7CiAgICAgIHdpZHRoOjEwMCU7IG91dGxpbmU6bm9uZTsgY29sb3I6dmFyKC0tdGV4dCk7CiAgICAgIGZvbnQtc2l6ZToxM3B4OyBmb250LWZhbWlseTonRE0gU2Fucycsc2Fucy1zZXJpZjsKICAgICAgdHJhbnNpdGlvbjpib3JkZXItY29sb3IgMC4yNXMsIGJveC1zaGFkb3cgMC4yNXM7CiAgICB9CiAgICAuaW5wOmZvY3VzIHsgYm9yZGVyLWNvbG9yOnZhcigtLWdvbGQpOyBib3gtc2hhZG93OjAgMCAwIDNweCByZ2JhKDIxMiwxNjAsODUsMC4xMik7IH0KICAgIC5pbnA6OnBsYWNlaG9sZGVyIHsgY29sb3I6dmFyKC0tZmFpbnQpOyB9CiAgICAuaW5wOmRpc2FibGVkIHsgb3BhY2l0eTowLjU7IGN1cnNvcjpub3QtYWxsb3dlZDsgfQogICAgc2VsZWN0LmlucCBvcHRpb24geyBiYWNrZ3JvdW5kOiMxMzEzMWM7IH0KICAgIC5pbnAtZXJyb3IgeyBib3JkZXItY29sb3I6I2VmNDQ0NCAhaW1wb3J0YW50OyB9CiAgICAuaW5wLWVycm9yOmZvY3VzIHsgYm94LXNoYWRvdzowIDAgMCAzcHggcmdiYSgyMzksNjgsNjgsMC4xMikgIWltcG9ydGFudDsgfQoKICAgIC50b2dnbGUtd3JhcCB7CiAgICAgIHdpZHRoOjUwcHg7IGhlaWdodDoyNnB4OyBib3JkZXItcmFkaXVzOjk5cHg7CiAgICAgIHBvc2l0aW9uOnJlbGF0aXZlOyBjdXJzb3I6cG9pbnRlcjsgdHJhbnNpdGlvbjpiYWNrZ3JvdW5kIDAuMzVzOyBmbGV4LXNocmluazowOwogICAgfQogICAgLnRvZ2dsZS13cmFwLm9uICB7IGJhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDkwZGVnLHZhcigtLWdvbGQpLCNiODg1M2EpOyBib3gtc2hhZG93OjAgMCAxMHB4IHJnYmEoMjEyLDE2MCw4NSwwLjQpOyB9CiAgICAudG9nZ2xlLXdyYXAub2ZmIHsgYmFja2dyb3VuZDpyZ2JhKDI1NSwyNTUsMjU1LDAuMDkpOyB9CiAgICAudG9nZ2xlLXRodW1iIHsKICAgICAgd2lkdGg6MjBweDsgaGVpZ2h0OjIwcHg7IGJhY2tncm91bmQ6d2hpdGU7IGJvcmRlci1yYWRpdXM6NTAlOwogICAgICBwb3NpdGlvbjphYnNvbHV0ZTsgdG9wOjNweDsgdHJhbnNpdGlvbjpsZWZ0IDAuMzVzIGN1YmljLWJlemllciguNCwwLC4yLDEpOwogICAgICBib3gtc2hhZG93OjAgMXB4IDRweCByZ2JhKDAsMCwwLDAuNCk7CiAgICB9CiAgICAudG9nZ2xlLXdyYXAub24gIC50b2dnbGUtdGh1bWIgeyBsZWZ0OjI3cHg7IH0KICAgIC50b2dnbGUtd3JhcC5vZmYgLnRvZ2dsZS10aHVtYiB7IGxlZnQ6M3B4OyB9CgogICAgLnN0cmlwZSB7IHBvc2l0aW9uOmFic29sdXRlOyB0b3A6MDsgbGVmdDowOyB3aWR0aDo0cHg7IGhlaWdodDoxMDAlOyBib3JkZXItcmFkaXVzOjI0cHggMCAwIDI0cHg7IH0KICAgIEBrZXlmcmFtZXMgZmFkZVVwIHsgZnJvbXtvcGFjaXR5OjA7dHJhbnNmb3JtOnRyYW5zbGF0ZVkoMjBweCl9IHRve29wYWNpdHk6MTt0cmFuc2Zvcm06dHJhbnNsYXRlWSgwKX0gfQogICAgLmZhZGUtdXAgeyBhbmltYXRpb246ZmFkZVVwIDAuNTVzIGVhc2Utb3V0IGZvcndhcmRzOyB9CiAgICAuZGVsYXktMSB7IGFuaW1hdGlvbi1kZWxheTowLjFzOyBvcGFjaXR5OjA7IH0KICAgIC5kZWxheS0yIHsgYW5pbWF0aW9uLWRlbGF5OjAuMnM7IG9wYWNpdHk6MDsgfQogICAgLmRlbGF5LTMgeyBhbmltYXRpb24tZGVsYXk6MC4zczsgb3BhY2l0eTowOyB9CiAgICAuZGVsYXktNCB7IGFuaW1hdGlvbi1kZWxheTowLjRzOyBvcGFjaXR5OjA7IH0KICAgIC5kZWxheS01IHsgYW5pbWF0aW9uLWRlbGF5OjAuNXM7IG9wYWNpdHk6MDsgfQoKICAgIC5sYW5nLW92ZXJsYXkgewogICAgICBwb3NpdGlvbjpmaXhlZDsgaW5zZXQ6MDsKICAgICAgYmFja2dyb3VuZDpyYWRpYWwtZ3JhZGllbnQoZWxsaXBzZSBhdCBjZW50ZXIsICMwYTEwMjAgMCUsIHZhcigtLWJnKSAxMDAlKTsKICAgICAgei1pbmRleDoxMDAwMDsgZGlzcGxheTpmbGV4OyBhbGlnbi1pdGVtczpjZW50ZXI7IGp1c3RpZnktY29udGVudDpjZW50ZXI7CiAgICB9CiAgICAubGFuZy1idG4gewogICAgICBwYWRkaW5nOjE0cHggMjBweDsgYm9yZGVyLXJhZGl1czoxNnB4OwogICAgICBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsgZm9udC13ZWlnaHQ6NzAwOyBmb250LXNpemU6MTVweDsKICAgICAgYm9yZGVyOjFweCBzb2xpZCB2YXIoLS1ib3JkZXIpOyBjdXJzb3I6cG9pbnRlcjsKICAgICAgdHJhbnNpdGlvbjp0cmFuc2Zvcm0gMC4ycywgYm94LXNoYWRvdyAwLjJzLCBib3JkZXItY29sb3IgMC4yczsKICAgICAgZGlzcGxheTpmbGV4OyBhbGlnbi1pdGVtczpjZW50ZXI7IGdhcDoxMnB4OwogICAgfQogICAgLmxhbmctYnRuOmhvdmVyIHsgdHJhbnNmb3JtOnRyYW5zbGF0ZVkoLTJweCk7IGJvcmRlci1jb2xvcjp2YXIoLS1ib3JkZXItYWNjZW50KTsgfQogICAgLmxhbmctYnRuOmFjdGl2ZSB7IHRyYW5zZm9ybTpzY2FsZSgwLjk2KTsgfQoKICAgIC5zcGluIHsKICAgICAgd2lkdGg6MTZweDsgaGVpZ2h0OjE2cHg7CiAgICAgIGJvcmRlcjoycHggc29saWQgdmFyKC0tZ29sZCk7IGJvcmRlci1ib3R0b20tY29sb3I6dHJhbnNwYXJlbnQ7CiAgICAgIGJvcmRlci1yYWRpdXM6NTAlOyBhbmltYXRpb246c3BpbkFuaW0gMC44cyBsaW5lYXIgaW5maW5pdGU7IGRpc3BsYXk6aW5saW5lLWJsb2NrOwogICAgfQogICAgQGtleWZyYW1lcyBzcGluQW5pbSB7IHRve3RyYW5zZm9ybTpyb3RhdGUoMzYwZGVnKX0gfQoKICAgIEBrZXlmcmFtZXMgdG9hc3RJbiB7CiAgICAgIGZyb217b3BhY2l0eTowO3RyYW5zZm9ybTp0cmFuc2xhdGVYKC01MCUpIHRyYW5zbGF0ZVkoLTIwcHgpIHNjYWxlKDAuOSl9CiAgICAgIHRvICB7b3BhY2l0eToxO3RyYW5zZm9ybTp0cmFuc2xhdGVYKC01MCUpIHRyYW5zbGF0ZVkoMCkgICAgIHNjYWxlKDEpfQogICAgfQogICAgLnRvYXN0LWFuaW0geyBhbmltYXRpb246dG9hc3RJbiAwLjM1cyBjdWJpYy1iZXppZXIoLjQsMCwuMiwxKSBmb3J3YXJkczsgfQoKICAgIC5zZWMtbGFiZWwgewogICAgICBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsgZm9udC13ZWlnaHQ6NzAwOyBmb250LXNpemU6MTFweDsKICAgICAgbGV0dGVyLXNwYWNpbmc6MC4xNWVtOyB0ZXh0LXRyYW5zZm9ybTp1cHBlcmNhc2U7CiAgICAgIGRpc3BsYXk6ZmxleDsgYWxpZ24taXRlbXM6Y2VudGVyOyBnYXA6OHB4OwogICAgfQogICAgLnRvZ2dsZS1yb3cgewogICAgICBkaXNwbGF5OmZsZXg7IGp1c3RpZnktY29udGVudDpzcGFjZS1iZXR3ZWVuOyBhbGlnbi1pdGVtczpjZW50ZXI7CiAgICAgIGJhY2tncm91bmQ6cmdiYSgyNTUsMjU1LDI1NSwwLjAzKTsgYm9yZGVyOjFweCBzb2xpZCByZ2JhKDI1NSwyNTUsMjU1LDAuMDUpOwogICAgICBwYWRkaW5nOjEycHggMTZweDsgYm9yZGVyLXJhZGl1czoxNHB4OyB0cmFuc2l0aW9uOmJhY2tncm91bmQgMC4ycywgYm9yZGVyLWNvbG9yIDAuMnM7CiAgICB9CiAgICAudG9nZ2xlLXJvdzpob3ZlciB7IGJhY2tncm91bmQ6cmdiYSgyNTUsMjU1LDI1NSwwLjA1KTsgYm9yZGVyLWNvbG9yOnZhcigtLWJvcmRlci1hY2NlbnQpOyB9CgogICAgLnJ0bCB7IGRpcmVjdGlvbjpydGw7IH0KCiAgICAuc2F2ZS1idG4gewogICAgICBiYWNrZ3JvdW5kOmxpbmVhci1ncmFkaWVudCgxMzVkZWcsdmFyKC0tZ29sZCkgMCUsI2I4ODUzYSAxMDAlKTsKICAgICAgYm9yZGVyLXJhZGl1czoyMHB4OyBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsKICAgICAgZm9udC13ZWlnaHQ6ODAwOyBmb250LXNpemU6MTVweDsgbGV0dGVyLXNwYWNpbmc6MC4wNWVtOwogICAgICBwYWRkaW5nOjE2cHggMzZweDsgYm9yZGVyOm5vbmU7IGN1cnNvcjpwb2ludGVyOyBjb2xvcjojMGQwZDBkOwogICAgICBkaXNwbGF5OmZsZXg7IGFsaWduLWl0ZW1zOmNlbnRlcjsgZ2FwOjEwcHg7CiAgICAgIGJveC1zaGFkb3c6MCA4cHggMzJweCByZ2JhKDIxMiwxNjAsODUsMC40KSwgMCAwIDAgMXB4IHJnYmEoMjU1LDI1NSwyNTUsMC4wOCk7CiAgICAgIHRyYW5zaXRpb246dHJhbnNmb3JtIDAuMnMsIGJveC1zaGFkb3cgMC4yczsKICAgIH0KICAgIC5zYXZlLWJ0bjpob3ZlciAgeyB0cmFuc2Zvcm06dHJhbnNsYXRlWSgtMnB4KTsgYm94LXNoYWRvdzowIDEycHggNDBweCByZ2JhKDIxMiwxNjAsODUsMC41NSk7IH0KICAgIC5zYXZlLWJ0bjphY3RpdmUgeyB0cmFuc2Zvcm06c2NhbGUoMC45Nyk7IH0KCiAgICAuaW1nLXNsb3QgewogICAgICB3aWR0aDoxMDAlOyBhc3BlY3QtcmF0aW86MTYvOTsgYm9yZGVyLXJhZGl1czoxNHB4OyBvdmVyZmxvdzpoaWRkZW47CiAgICAgIGJhY2tncm91bmQ6cmdiYSgwLDAsMCwwLjMpOyBib3JkZXI6MXB4IGRhc2hlZCByZ2JhKDI1NSwyNTUsMjU1LDAuMSk7CiAgICAgIGRpc3BsYXk6ZmxleDsgYWxpZ24taXRlbXM6Y2VudGVyOyBqdXN0aWZ5LWNvbnRlbnQ6Y2VudGVyOwogICAgfQogICAgLmltZy1zbG90IGltZyB7IHdpZHRoOjEwMCU7IGhlaWdodDoxMDAlOyBvYmplY3QtZml0OmNvdmVyOyB9CgogICAgLnVwbG9hZC1sYmwgewogICAgICBkaXNwbGF5OmZsZXg7IGFsaWduLWl0ZW1zOmNlbnRlcjsganVzdGlmeS1jb250ZW50OmNlbnRlcjsgZ2FwOjhweDsKICAgICAgcGFkZGluZzoxMHB4OyBiYWNrZ3JvdW5kOnJnYmEoMjU1LDI1NSwyNTUsMC4wNCk7CiAgICAgIGJvcmRlcjoxcHggc29saWQgcmdiYSgyNTUsMjU1LDI1NSwwLjA4KTsgYm9yZGVyLXJhZGl1czoxMnB4OyBjdXJzb3I6cG9pbnRlcjsKICAgICAgZm9udC1zaXplOjExcHg7IGZvbnQtd2VpZ2h0OjcwMDsgbGV0dGVyLXNwYWNpbmc6MC4xZW07IHRleHQtdHJhbnNmb3JtOnVwcGVyY2FzZTsKICAgICAgY29sb3I6Izk0YTNiODsgdHJhbnNpdGlvbjpiYWNrZ3JvdW5kIDAuMnMsIGJvcmRlci1jb2xvciAwLjJzLCBjb2xvciAwLjJzOwogICAgfQogICAgLnVwbG9hZC1sYmw6aG92ZXIgeyBiYWNrZ3JvdW5kOnJnYmEoMjEyLDE2MCw4NSwwLjEpOyBib3JkZXItY29sb3I6dmFyKC0tYm9yZGVyLWFjY2VudCk7IGNvbG9yOnZhcigtLWdvbGQpOyB9CgogICAgLmFwcC1iYWRnZSB7CiAgICAgIGJhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDEzNWRlZyx2YXIoLS1nb2xkKSwjYjg4NTNhKTsKICAgICAgcGFkZGluZzo0cHggMTJweDsgYm9yZGVyLXJhZGl1czozMHB4OyBmb250LXNpemU6MTFweDsKICAgICAgZm9udC13ZWlnaHQ6NzAwOyBsZXR0ZXItc3BhY2luZzowLjA1ZW07IGNvbG9yOiMwZDBkMGQ7CiAgICAgIGRpc3BsYXk6aW5saW5lLWZsZXg7IGFsaWduLWl0ZW1zOmNlbnRlcjsgZ2FwOjZweDsKICAgICAgYm94LXNoYWRvdzowIDJweCA4cHggcmdiYSgyMTIsMTYwLDg1LDAuMzUpOwogICAgfQoKICAgIC52YWxpZGF0aW9uLWhpbnQgewogICAgICBmb250LXNpemU6MTBweDsgbWFyZ2luLXRvcDo0cHg7CiAgICAgIGRpc3BsYXk6ZmxleDsganVzdGlmeS1jb250ZW50OnNwYWNlLWJldHdlZW47CiAgICB9CiAgICAuZXJyb3ItdGV4dCAgeyBjb2xvcjojZWY0NDQ0OyB9CiAgICAuaGludC10ZXh0ICAgeyBjb2xvcjp2YXIoLS1mYWludCk7IH0KICAgIC5jb3VudGVyICAgICB7IGNvbG9yOnZhcigtLWZhaW50KTsgfQoKICAgIC8qIGVtb2ppIHBpY2tlciBzdHlsZXMgLSBPTkUgRU1PSkkgQVQgQSBUSU1FICovCiAgICAuZW1vamktZ3JpZCB7CiAgICAgIGRpc3BsYXk6IGZsZXg7CiAgICAgIGZsZXgtd3JhcDogd3JhcDsKICAgICAgZ2FwOiAxMHB4OwogICAgICBtYXJnaW4tdG9wOiAxMnB4OwogICAgICBwYWRkaW5nOiAxMHB4IDA7CiAgICB9CiAgICAuZW1vamktb3B0aW9uIHsKICAgICAgZm9udC1zaXplOiAyNnB4OwogICAgICBjdXJzb3I6IHBvaW50ZXI7CiAgICAgIHRyYW5zaXRpb246IHRyYW5zZm9ybSAwLjE1cyBlYXNlLCBmaWx0ZXIgMC4xczsKICAgICAgYmFja2dyb3VuZDogcmdiYSgyNTUsMjU1LDI1NSwwLjAzKTsKICAgICAgd2lkdGg6IDUwcHg7CiAgICAgIGhlaWdodDogNTBweDsKICAgICAgZGlzcGxheTogZmxleDsKICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjsKICAgICAganVzdGlmeS1jb250ZW50OiBjZW50ZXI7CiAgICAgIGJvcmRlci1yYWRpdXM6IDE4cHg7CiAgICAgIGJvcmRlcjogMXB4IHNvbGlkIHJnYmEoMjU1LDI1NSwyNTUsMC4wNik7CiAgICB9CiAgICAuZW1vamktb3B0aW9uOmhvdmVyIHsgdHJhbnNmb3JtOiBzY2FsZSgxLjEyKTsgYmFja2dyb3VuZDogcmdiYSgyMTIsMTYwLDg1LDAuMik7IGJvcmRlci1jb2xvcjogdmFyKC0tYm9yZGVyLWFjY2VudCk7IH0KICAgIC5lbW9qaS1yZW1vdmUgewogICAgICBiYWNrZ3JvdW5kOiByZ2JhKDIzOSw2OCw2OCwwLjEpOwogICAgICBmb250LXNpemU6IDE0cHg7CiAgICAgIGNvbG9yOiAjZjg3MTcxOwogICAgICB3aWR0aDogYXV0bzsKICAgICAgcGFkZGluZzogMCAxMnB4OwogICAgICBnYXA6IDZweDsKICAgICAgZm9udC1mYW1pbHk6IG1vbm9zcGFjZTsKICAgIH0KICAgIC5lbW9qaS1yZW1vdmU6aG92ZXIgeyBiYWNrZ3JvdW5kOiByZ2JhKDIzOSw2OCw2OCwwLjI1KTsgdHJhbnNmb3JtOiBzY2FsZSgxLjAyKTsgfQogICAgLmVtb2ppLWFkZC1idG4gewogICAgICBiYWNrZ3JvdW5kOiByZ2JhKDIxMiwxNjAsODUsMC4xNSk7CiAgICAgIGJvcmRlcjogMXB4IGRhc2hlZCB2YXIoLS1nb2xkKTsKICAgICAgZm9udC1zaXplOiAyMHB4OwogICAgICB3aWR0aDogNTBweDsKICAgICAgaGVpZ2h0OiA1MHB4OwogICAgICBkaXNwbGF5OiBmbGV4OwogICAgICBhbGlnbi1pdGVtczogY2VudGVyOwogICAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsKICAgICAgYm9yZGVyLXJhZGl1czogMThweDsKICAgICAgY3Vyc29yOiBwb2ludGVyOwogICAgICBmb250LXdlaWdodDogYm9sZDsKICAgICAgY29sb3I6IHZhcigtLWdvbGQpOwogICAgICB0cmFuc2l0aW9uOiAwLjJzOwogICAgfQogICAgLmVtb2ppLWFkZC1idG46aG92ZXIgeyBiYWNrZ3JvdW5kOiByZ2JhKDIxMiwxNjAsODUsMC4zKTsgdHJhbnNmb3JtOiBzY2FsZSgxLjAzKTsgfQogICAgLmlubGluZS1lbW9qaS1pbnB1dCB7CiAgICAgIGRpc3BsYXk6IGZsZXg7CiAgICAgIGdhcDogOHB4OwogICAgICBhbGlnbi1pdGVtczogY2VudGVyOwogICAgICBtYXJnaW4tdG9wOiAxMHB4OwogICAgfQogIDwvc3R5bGU+CjwvaGVhZD4KPGJvZHk+CjxkaXYgaWQ9InJvb3QiPjwvZGl2Pgo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgc3R5bGU9ImRpc3BsYXk6bm9uZSI+CiAgPHN5bWJvbCBpZD0iaWMtdXNlciIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cGF0aCBkPSJNMjAgMjF2LTJhNCA0IDAgMCAwLTQtNEg4YTQgNCAwIDAgMC00IDR2MiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iNyIgcj0iNCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLWxvY2siIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHJlY3QgeD0iMyIgeT0iMTEiIHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgcng9IjIiLz48cGF0aCBkPSJNNyAxMVY3YTUgNSAwIDAgMSAxMCAwdjQiLz48L3N5bWJvbD4KICA8c3ltYm9sIGlkPSJpYy1jcHUiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMiIvPjxyZWN0IHg9IjkiIHk9IjkiIHdpZHRoPSI2IiBoZWlnaHQ9IjYiLz48bGluZSB4MT0iOSIgeTE9IjEiIHgyPSI5IiB5Mj0iNCIvPjxsaW5lIHgxPSIxNSIgeTE9IjEiIHgyPSIxNSIgeTI9IjQiLz48bGluZSB4MT0iOSIgeTE9IjIwIiB4Mj0iOSIgeTI9IjIzIi8+PGxpbmUgeDE9IjE1IiB5MT0iMjAiIHgyPSIxNSIgeTI9IjIzIi8+PGxpbmUgeDE9IjIwIiB5MT0iOSIgeDI9IjIzIiB5Mj0iOSIvPjxsaW5lIHgxPSIyMCIgeTE9IjE0IiB4Mj0iMjMiIHkyPSIxNCIvPjxsaW5lIHgxPSIxIiB5MT0iOSIgeDI9IjQiIHkyPSI5Ii8+PGxpbmUgeDE9IjEiIHkxPSIxNCIgeDI9IjQiIHkyPSIxNCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXphcCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cG9seWdvbiBwb2ludHM9IjEzIDIgMyAxNCAxMiAxNCAxMSAyMiAyMSAxMCAxMiAxMCAxMyAyIi8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtaW1hZ2UiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByeD0iMiIvPjxjaXJjbGUgY3g9IjguNSIgY3k9IjguNSIgcj0iMS41Ii8+PHBvbHlsaW5lIHBvaW50cz0iMjEgMTUgMTYgMTAgNSAyMSIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXBob25lLW9mZiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cGF0aCBkPSJNMTAuNjggMTMuMzFhMTYgMTYgMCAwIDAgMy40MSAyLjZsMS4yNy0xLjI3YTIgMiAwIDAgMSAyLjExLS40NWMxLjEyLjQ1IDIuMy43OCAzLjUzLjk4YTIgMiAwIDAgMSAxLjY3IDEuOTh2My4wNWEyIDIgMCAwIDEtMi4xOCAyQTE5Ljc5IDE5Ljc5IDAgMCAxIDIuMTUgNS41IDIgMiAwIDAgMSA0LjEyIDMuMzJoMy4wNWEyIDIgMCAwIDEgMiAxLjY3Yy4yIDEuMjMuNTMgMi40MS45OCAzLjUzYTIgMiAwIDAgMS0uNDUgMi4xMUw4LjQzIDExLjlhMTYgMTYgMCAwIDAgMi42MSAzLjQxIi8+PGxpbmUgeDE9IjIzIiB5MT0iMSIgeDI9IjEiIHkyPSIyMyIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXRyYXNoLTIiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBvbHlsaW5lIHBvaW50cz0iMyA2IDUgNiAyMSA2Ii8+PHBhdGggZD0iTTE5IDZsLTEgMTRhMiAyIDAgMCAxLTIgMkg4YTIgMiAwIDAgMS0yLTJMNSA2Ii8+PHBhdGggZD0iTTEwIDExdjYiLz48cGF0aCBkPSJNMTQgMTF2NiIvPjxwYXRoIGQ9Ik05IDZWNGExIDEgMCAwIDEgMS0xaDRhMSAxIDAgMCAxIDEgMXYyIi8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtY2xvY2siIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiLz48cG9seWxpbmUgcG9pbnRzPSIxMiA2IDEyIDEyIDE2IDE0Ii8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtc2F2ZSIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cGF0aCBkPSJNMTkgMjFINWEyIDIgMCAwIDEtMi0yVjVhMiAyIDAgMCAxIDItMmgxMWw1IDV2MTFhMiAyIDAgMCAxLTIgMnoiLz48cG9seWxpbmUgcG9pbnRzPSIxNyAyMSAxNyAxMyA3IDEzIDcgMjEiLz48cG9seWxpbmUgcG9pbnRzPSI3IDMgNyA4IDE1IDgiLz48L3N5bWJvbD4KICA8c3ltYm9sIGlkPSJpYy1pbmZvIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PGxpbmUgeDE9IjEyIiB5MT0iMTYiIHgyPSIxMiIgeTI9IjEyIi8+PGxpbmUgeDE9IjEyIiB5MT0iOCIgeDI9IjEyLjAxIiB5Mj0iOCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLWxvZy1vdXQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTkgMjFINWEyIDIgMCAwIDEtMi0yVjVhMiAyIDAgMCAxIDItMmg0Ii8+PHBvbHlsaW5lIHBvaW50cz0iMTYgMTcgMjEgMTIgMTYgNyIvPjxsaW5lIHgxPSIyMSIgeTE9IjEyIiB4Mj0iOSIgeTI9IjEyIi8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtdXBsb2FkIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxwb2x5bGluZSBwb2ludHM9IjE2IDE2IDEyIDEyIDggMTYiLz48bGluZSB4MT0iMTIiIHkxPSIxMiIgeDI9IjEyIiB5Mj0iMjEiLz48cGF0aCBkPSJNMjAuMzkgMTguMzlBNSA1IDAgMCAwIDE4IDloLTEuMjZBOCA4IDAgMSAwIDMgMTYuMyIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLW1lc3NhZ2UiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTIxIDE1YTIgMiAwIDAgMS0yIDJIN2wtNCA0VjVhMiAyIDAgMCAxIDItMmgxNGEyIDIgMCAwIDEgMiAyeiIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLWdsb2JlIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PGxpbmUgeDE9IjIiIHkxPSIxMiIgeDI9IjIyIiB5Mj0iMTIiLz48cGF0aCBkPSJNMTIgMmExNS4zIDE1LjMgMCAwIDEgNCAxMCAxNS4zIDE1LjMgMCAwIDEtNCAxMCAxNS4zIDE1LjMgMCAwIDEtNC0xMCAxNS4zIDE1LjMgMCAwIDEgNC0xMHoiLz48L3N5bWJvbD4KICA8c3ltYm9sIGlkPSJpYy1zbWFydHBob25lIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxyZWN0IHg9IjUiIHk9IjIiIHdpZHRoPSIxNCIgaGVpZ2h0PSIyMCIgcng9IjIiIHJ5PSIyIi8+PGxpbmUgeDE9IjEyIiB5MT0iMTgiIHgyPSIxMi4wMSIgeTI9IjE4Ii8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtYnVnIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Im04IDIgMS44OCAxLjg4Ii8+PHBhdGggZD0iTTE0LjEyIDMuODggMTYgMiIvPjxwYXRoIGQ9Ik05IDcuMTN2LTFhMy4wMDMgMy4wMDMgMCAxIDEgNiAwdjEiLz48cGF0aCBkPSJNMTIgMjBjLTMuMyAwLTYtMi43LTYtNnYtM2E0IDQgMCAwIDEgNC00aDRhNCA0IDAgMCAxIDQgNHYzYzAgMy4zLTIuNyA2LTYgNnoiLz48cGF0aCBkPSJNMTIgMjB2LTkiLz48cGF0aCBkPSJNNi41MyA5QzQuNiA4LjggMyA3LjEgMyA1Ii8+PHBhdGggZD0iTTYgMTNIMiIvPjxwYXRoIGQ9Ik0zIDIxYzAtMi4xIDEuNy0zLjkgMy44LTQiLz48cGF0aCBkPSJNMjAuOTcgNWMwIDIuMS0xLjYgMy44LTMuNSA0Ii8+PHBhdGggZD0iTTIyIDEzaC00Ii8+PHBhdGggZD0iTTE3LjIgMTdjMi4xLjEgMy44IDEuOSAzLjggNCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXJvYm90IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxyZWN0IHg9IjMiIHk9IjExIiB3aWR0aD0iMTgiIGhlaWdodD0iMTEiIHJ4PSIyIi8+PHBhdGggZD0iTTcgMTFWN2E1IDUgMCAwIDEgMTAgMHY0Ii8+PGNpcmNsZSBjeD0iMTIiIGN5PSI4IiByPSIxIi8+PGNpcmNsZSBjeD0iOCIgY3k9IjE1IiByPSIxIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNSIgcj0iMSIvPjwvc3ltYm9sPgo8L3N2Zz4KPHNjcmlwdCB0eXBlPSJ0ZXh0L2JhYmVsIj4KY29uc3QgeyB1c2VTdGF0ZSwgdXNlRWZmZWN0LCB1c2VDYWxsYmFjaywgdXNlUmVmIH0gPSBSZWFjdDsKY29uc3QgQVBJID0geyBsb2dpbjogJy9hcGkvbG9naW4nLCBzYXZlU2V0dDogJy9hcGkvc2V0dGluZ3Mvc2F2ZScsIGxvYWRTZXR0OiAnL2FwaS9zZXR0aW5ncy9sb2FkJywgdXBsb2FkOiAnL2FwaS9pbWFnZS91cGxvYWQnIH07CmNvbnN0IEJSQU5EX1BBTkVMX05BTUUgPSAn2KjZiNiqINin2YTZhdmE2YMg2YHYp9ix2LMnOwpjb25zdCBERUZBVUxUX0JSQU5EX0lNQUdFID0gKCgpID0+IHsKICBjb25zdCBzdmcgPSBgCjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIHZpZXdCb3g9IjAgMCAxMjgwIDcyMCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwZDBkMTIiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSI1NSUiIHN0b3AtY29sb3I9IiMxYTEyMjQiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMmYxYzEwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJhY2NlbnQiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iI2YwYzg4MCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNkNGEwNTUiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgZmlsbD0idXJsKCNiZykiIHJ4PSI0MCIvPgogIDxjaXJjbGUgY3g9IjE4MCIgY3k9IjExMCIgcj0iMTcwIiBmaWxsPSJyZ2JhKDIxMiwxNjAsODUsMC4xNCkiLz4KICA8Y2lyY2xlIGN4PSIxMTIwIiBjeT0iNjIwIiByPSIyMTAiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz4KICA8cmVjdCB4PSI3MCIgeT0iNzAiIHdpZHRoPSIxMTQwIiBoZWlnaHQ9IjU4MCIgcng9IjM0IiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDQpIiBzdHJva2U9InJnYmEoMjQwLDIwMCwxMjgsMC4zMikiIHN0cm9rZS13aWR0aD0iMyIvPgogIDx0ZXh0IHg9IjY0MCIgeT0iMzAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9Ijg2IiBmb250LWZhbWlseT0iQXJpYWwsIFRhaG9tYSwgc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0idXJsKCNhY2NlbnQpIj7YqNmI2Kog2KfZhNmF2YTZgyDZgdin2LHYszwvdGV4dD4KICA8dGV4dCB4PSI2NDAiIHk9IjM5MiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIzNiIgZm9udC1mYW1pbHk9IkFyaWFsLCBUYWhvbWEsIHNhbnMtc2VyaWYiIGZpbGw9IiNmNGU3Y2YiPldoYXRzQXBwIFNldHRpbmdzIFBhbmVsPC90ZXh0PgogIDx0ZXh0IHg9IjY0MCIgeT0iNDU0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjI4IiBmb250LWZhbWlseT0iQXJpYWwsIFRhaG9tYSwgc2Fucy1zZXJpZiIgZmlsbD0iI2Q5YzJhMiI+2KjZiNiqINin2YTZhdmE2YMg2YHYp9ix2LMgdmlzdWFsIGJhbm5lcjwvdGV4dD4KPC9zdmc+YC50cmltKCk7CiAgcmV0dXJuIGBkYXRhOmltYWdlL3N2Zyt4bWw7Y2hhcnNldD1VVEYtOCwke2VuY29kZVVSSUNvbXBvbmVudChzdmcpfWA7Cn0pKCk7CmFzeW5jIGZ1bmN0aW9uIGFwaVBvc3QoZW5kcG9pbnQsIHBheWxvYWRPYmopIHsKICBjb25zdCByZXMgPSBhd2FpdCBmZXRjaChlbmRwb2ludCwgeyBtZXRob2Q6ICdQT1NUJywgaGVhZGVyczogeyAnQ29udGVudC1UeXBlJzogJ2FwcGxpY2F0aW9uL2pzb24nIH0sIGJvZHk6IEpTT04uc3RyaW5naWZ5KHBheWxvYWRPYmopIH0pOwogIGlmICghcmVzLm9rKSB7IGNvbnN0IGVyciA9IGF3YWl0IHJlcy5qc29uKCkuY2F0Y2goKCkgPT4gKHt9KSk7IHRocm93IG5ldyBFcnJvcihlcnIuZXJyb3IgfHwgZXJyLm1lc3NhZ2UgfHwgYEhUVFAgJHtyZXMuc3RhdHVzfWApOyB9CiAgcmV0dXJuIHJlcy5qc29uKCk7Cn0KYXN5bmMgZnVuY3Rpb24gYXBpR2V0KGVuZHBvaW50LCBwYXlsb2FkT2JqKSB7IGNvbnN0IHFzID0gbmV3IFVSTFNlYXJjaFBhcmFtcyhwYXlsb2FkT2JqKS50b1N0cmluZygpOyBjb25zdCByZXMgPSBhd2FpdCBmZXRjaChgJHtlbmRwb2ludH0/JHtxc31gKTsgaWYgKCFyZXMub2spIHsgY29uc3QgZXJyID0gYXdhaXQgcmVzLmpzb24oKS5jYXRjaCgoKSA9PiAoe30pKTsgdGhyb3cgbmV3IEVycm9yKGVyci5lcnJvciB8fCBlcnIubWVzc2FnZSB8fCBgSFRUUCAke3Jlcy5zdGF0dXN9YCk7IH0gcmV0dXJuIHJlcy5qc29uKCk7IH0KY29uc3QgVCA9IHsKICBlbjogeyBzZWw6J1NlbGVjdCBMYW5ndWFnZScsIGxvZ2luOidBZG1pbiBMb2dpbicsIG51bTonT3duZXIgTnVtYmVyJywgcGFzczonUGFzc3dvcmQnLCBhdXRoOidTaWduIEluJywgcHdIOiJGb3Jnb3QgcGFzc3dvcmQ/IFR5cGUgJy5zZXR0aW5ncyciLCBzYXZlOidTYXZlIFNldHRpbmdzJywgbm90aWNlOifimqEgU2V0dGluZ3MgdGFrZSB+MyBtaW51dGVzIHRvIGFjdGl2YXRlLicsIGJhc2ljOidCYXNpYyBJbmZvJywgc3lzOidTeXN0ZW0gQXV0b21hdGlvbicsIGdyb3VwOidHcm91cCBBdXRvbWF0aW9uJywgbG9nb3M6J0xvZ29zJywgc3RhdHVzOidTdGF0dXMgTWVzc2FnZScsIGNhbGxzOidDYWxsIENvbnRyb2wnLCBkZWxldGU6J0FudGktRGVsZXRlJywgb2s6J1NldHRpbmdzIFNhdmVkISDinIUnLCBsb2dvdXQ6J0xvZ291dCcsIHVwbG9hZGluZzonVXBsb2FkaW5n4oCmJywgZ2FsbGVyeTonVXBsb2FkIEltYWdlJywgYXBwSWQ6J0FQUCBJRCcsIGRldGVjdGVkOidEZXRlY3RlZCcsIG51bWJlcnNPbmx5OidOdW1iZXJzIG9ubHknLCBtYXhDaGFyczonTWF4aW11bSAxNSBjaGFyYWN0ZXJzJywgYWdlSGludDonTWF4IDIgZGlnaXRzJywgYWdlRXJyb3I6JzEtOTknLCBwcmVmaXhIaW50OidTeW1ib2xzIG9ubHknLCBwcmVmaXhFcnJvcjonT25seSBzeW1ib2xzIGFsbG93ZWQnLCBjaGFyczonY2hhcmFjdGVycycsIGVtb2ppVGl0bGU6J1N0YXR1cyBSZWFjdGlvbiBFbW9qaXMgKG1heCAxMCknLCBlbW9qaVBsYWNlaG9sZGVyOidUeXBlIE9ORSBlbW9qaScsIGFudGlCdWc6J0FudGkgQnVnJywgYW50aUJvdDonQW50aSBCb3QnLCBhY3Rpb25EZWxldGU6J0RlbGV0ZScsIGFjdGlvbktpY2s6J0RlbGV0ZStLaWNrJyB9LAogIHNpOiB7IHNlbDon4La34LeP4LeC4LeP4LeAJywgbG9naW46J+C2h+C2qeC3iuC2uOC3kuC2seC3iiDgtrTgt5Lgt4Dgt5Lgt4Pgt5TgtrgnLCBudW06J093bmVyIOC2heC2guC2muC2uicsIHBhc3M6J+C2uOC3lOC2u+C2tOC2r+C2uicsIGF1dGg6J+C2tOC3kuC3gOC3kuC3g+C3meC2seC3iuC2sScsIHB3SDoi4La44LeU4La74La04Lav4La6IOC2heC2uOC2reC2muC2rz8iLCBzYXZlOifgt4Pgt5Tgtrvgtprgt5LgtrHgt4rgtrEnLCBub3RpY2U6J+KaoSDgt4Dgt5LgtrHgt4/gtqngt5IgM+C2muC3iiDgtpzgtq3gt4Dgt5ouJywgYmFzaWM6J+C2uOC3luC2veC3kuC2micsIHN5czon4LeD4LeK4LeA4La64LaC4Laa4LeK4oCN4La74LeT4La6JywgZ3JvdXA6J+C3g+C2uOC3luC3hCcsIGxvZ29zOifgtr3gt53gtpzgt50nLCBzdGF0dXM6J+C3g+C3iuC2p+C3muC2p+C3g+C3iicsIGNhbGxzOifgtofgtrjgtq3gt5Tgtrjgt4onLCBkZWxldGU6J+C2qeC3kuC2veC3k+C2p+C3iicsIG9rOifgt4Pgt5Tgtrvgt5Dgtprgt5Tgtqvgt48hIOKchScsIGxvZ291dDon4La04LeS4Lan4LeA4LeZ4Lax4LeK4LaxJywgdXBsb2FkaW5nOifgtovgtqngt5Tgtpzgtq0g4Laa4La74La44LeS4Lax4LeK4oCmJywgZ2FsbGVyeTon4Lah4LeP4La64LeP4La74LeW4La0JywgYXBwSWQ6J+C2uuC3meC2r+C3lOC2uOC3iiDgtoXgtoLgtprgtronLCBkZXRlY3RlZDon4LeE4La44LeU4LeA4LeS4La6JywgbnVtYmVyc09ubHk6J+C2ieC2veC2muC3iuC2muC2uOC3iiDgtrTgtrjgtqvgtrrgt5InLCBtYXhDaGFyczon4LaF4Laa4LeU4La74LeUIDE1JywgYWdlSGludDon4LaF4LaC4LaaIDInLCBhZ2VFcnJvcjonMS05OScsIHByZWZpeEhpbnQ6J+C3g+C2guC2muC3muC2rSDgtrTgtrjgtqvgtrrgt5InLCBwcmVmaXhFcnJvcjon4LeD4LaC4Laa4Lea4LatIOC2tOC2uOC2q+C2muC3iicsIGNoYXJzOifgtoXgtprgt5Tgtrvgt5QnLCBlbW9qaVRpdGxlOifgt4Pgt4rgtqfgt5rgtqfgt4Pgt4og4LaJ4La44Led4Lai4LeSICjgtovgtrTgtrvgt5LgtrggMTApJywgZW1vamlQbGFjZWhvbGRlcjon4LaR4LaaIOC2ieC2uOC3neC2ouC3kuC2uuC2muC3iicsIGFudGlCdWc6J+C2h+C2seC3iuC2p+C3kiDgtrbgtpzgt4onLCBhbnRpQm90OifgtofgtrHgt4rgtqfgt5Ig4La24Lec4Lan4LeKJywgYWN0aW9uRGVsZXRlOifgtrjgtprgtrHgt4rgtrEnLCBhY3Rpb25LaWNrOifgtrjgtprgt48g4Laa4La04Lax4LeK4LaxJyB9LAogIHRhOiB7IHNlbDon4K6u4K+K4K604K6/JywgbG9naW46J+CuqOCuv+CusOCvjeCuteCuvuCulSDgrongrrPgr43grqjgr4HgrrTgr4jgrrXgr4EnLCBudW06J+CuieCusOCuv+CuruCviOCur+CuvuCus+CusOCvjSDgro7grqPgr40nLCBwYXNzOifgrpXgrp/grrXgr4Hgrprgr43grprgr4rgrrLgr40nLCBhdXRoOifgrongrrPgr43grqjgr4HgrrTgr4jgrpUnLCBwd0g6IuCuleCun+CuteCvgeCumuCvjeCumuCviuCusuCvjSDgrq7grrHgrqjgr43grqTgrr7grrLgr40gLnNldHRpbmdzIiwgc2F2ZTon4K6a4K+H4K6u4K6/4K6V4K+N4K6V4K614K+B4K6u4K+NJywgbm90aWNlOifimqEgMyDgrqjgrr/grq7grr/grp/grpngr43grpXgrrPgrr/grrLgr40g4K6a4K+G4K6v4K6y4K+N4K6q4K6f4K+B4K6u4K+NLicsIGJhc2ljOifgroXgrp/grr/grqrgr43grqrgrp/gr4gnLCBzeXM6J+CupOCuvuCuqeCuv+Cur+CumeCvjeCuleCuvycsIGdyb3VwOifgrpXgr4HgrrTgr4EnLCBsb2dvczon4K6y4K+L4K6V4K+L4K6V4K+N4K6V4K6z4K+NJywgc3RhdHVzOifgrqjgrr/grrLgr4gg4K6a4K+G4K6v4K+N4K6k4K6/JywgY2FsbHM6J+CuheCutOCviOCuquCvjeCuquCvgScsIGRlbGV0ZTon4K6o4K+A4K6V4K+N4K6V4K6y4K+NJywgb2s6J+CumuCvh+CuruCuv+CuleCvjeCuleCuquCvjeCuquCun+CvjeCun+CupOCvgSEg4pyFJywgbG9nb3V0OifgrrXgr4bgrrPgrr/grq/gr4fgrrHgr4EnLCB1cGxvYWRpbmc6J+CuquCupOCuv+CuteCvh+CuseCvjeCuseCvgeCuleCuv+CuseCupOCvgeKApicsIGdhbGxlcnk6J+CuquCun+CuruCvjScsIGFwcElkOifgrqrgrq/grqngr43grqrgrr7grp/gr43grp/gr4Eg4K6Q4K6f4K6/JywgZGV0ZWN0ZWQ6J+CuleCuo+CvjeCun+CvgeCuquCuv+Cun+Cuv+CuleCvjeCuleCuquCvjeCuquCun+CvjeCun+CupOCvgScsIG51bWJlcnNPbmx5Oifgro7grqPgr43grpXgrrPgr40g4K6u4K6f4K+N4K6f4K+B4K6u4K+NJywgbWF4Q2hhcnM6JzE1IOCujuCutOCvgeCupOCvjeCupOCvgeCuleCvjeCuleCus+CvjScsIGFnZUhpbnQ6JzIg4K6H4K6y4K6V4K+N4K6V4K6Z4K+N4K6V4K6z4K+NJywgYWdlRXJyb3I6JzEtOTknLCBwcmVmaXhIaW50OifgrpXgr4HgrrHgrr/grq/gr4Dgrp/gr4HgrpXgrrPgr40g4K6u4K6f4K+N4K6f4K+B4K6u4K+NJywgcHJlZml4RXJyb3I6J+CuleCvgeCuseCuv+Cur+CvgOCun+CvgeCuleCus+CvjSDgrq7grp/gr43grp/gr4Hgrq7gr40nLCBjaGFyczon4K6O4K604K+B4K6k4K+N4K6k4K+B4K6V4K+N4K6V4K6z4K+NJywgZW1vamlUaXRsZTon4K644K+N4K6f4K+H4K6f4K+N4K6f4K644K+NIOCujuCuruCvi+CunOCuv+CuleCus+CvjSAo4K6F4K6k4K6/4K6V4K6q4K6f4K+N4K6a4K6u4K+NIDEwKScsIGVtb2ppUGxhY2Vob2xkZXI6J+CukuCusOCvgSDgro7grq7gr4vgrpzgrr8nLCBhbnRpQnVnOifgrobgrqngr43grp/grr8g4K6q4K6V4K+NJywgYW50aUJvdDon4K6G4K6p4K+N4K6f4K6/IOCuquCvi+Cun+CvjScsIGFjdGlvbkRlbGV0ZTon4K6o4K+A4K6V4K+N4K6V4K+BJywgYWN0aW9uS2ljazon4K6o4K+A4K6V4K+N4K6V4K+BK+CuieCupOCviCcgfSwKICBhcjogeyBzZWw6J9in2K7YqtixINin2YTZhNi62KknLCBsb2dpbjon2K/YrtmI2YQg2KfZhNmF2LTYsdmBJywgbnVtOifYsdmC2YUg2KfZhNmF2KfZhNmDJywgcGFzczon2YPZhNmF2Kkg2KfZhNmF2LHZiNixJywgYXV0aDon2KrYs9is2YrZhCDYp9mE2K/YrtmI2YQnLCBwd0g6ItmG2LPZitiqINmD2YTZhdipINin2YTZhdix2YjYsdifIiwgc2F2ZTon2K3Zgdi4INin2YTYpdi52K/Yp9iv2KfYqicsIG5vdGljZTon4pqhIDMg2K/Zgtin2KbZgiDZhNmE2KrZgdi52YrZhC4nLCBiYXNpYzon2KfZhNmF2LnZhNmI2YXYp9iqJywgc3lzOifYp9mE2KPYqtmF2KrYqScsIGdyb3VwOifZhdis2YXZiNi52KknLCBsb2dvczon2KfZhNi02LnYp9ix2KfYqicsIHN0YXR1czon2LHYs9in2YTYqSDYp9mE2K3Yp9mE2KknLCBjYWxsczon2KfZhNmF2YPYp9mE2YXYp9iqJywgZGVsZXRlOifYrdmF2KfZitipINin2YTYrdiw2YEnLCBvazon2KrZhSDYp9mE2K3Zgdi4ISDinIUnLCBsb2dvdXQ6J9iu2LHZiNisJywgdXBsb2FkaW5nOifYrNin2LHZiiDYp9mE2LHZgdi54oCmJywgZ2FsbGVyeTon2LHZgdi5INi12YjYsdipJywgYXBwSWQ6J9mF2LnYsdmBINin2YTYqti32KjZitmCJywgZGV0ZWN0ZWQ6J9iq2YUg2KfZg9iq2LTYp9mB2YcnLCBudW1iZXJzT25seTon2KPYsdmC2KfZhSDZgdmC2LcnLCBtYXhDaGFyczonMTUg2K3YsdmB2YvYpycsIGFnZUhpbnQ6J9ix2YLZhdin2YYnLCBhZ2VFcnJvcjonMS05OScsIHByZWZpeEhpbnQ6J9ix2YXZiNiyINmB2YLYtycsIHByZWZpeEVycm9yOifYsdmF2YjYsiDZgdmC2LcnLCBjaGFyczon2K3YsdmI2YEnLCBlbW9qaVRpdGxlOifYsdmF2YjYsiDYqti52KjZitix2YrYqSDZhNmE2K3Yp9mE2KkgKDEwINmD2K3YryDYo9mC2LXZiSknLCBlbW9qaVBsYWNlaG9sZGVyOifYo9iv2K7ZhCDYpdmK2YXZiNis2Yog2YjYp9it2K8nLCBhbnRpQnVnOifZhdmD2KfZgdit2Kkg2KfZhNio2YInLCBhbnRpQm90OifZhdmD2KfZgdit2Kkg2KfZhNio2YjYqicsIGFjdGlvbkRlbGV0ZTon2K3YsNmBJywgYWN0aW9uS2ljazon2K3YsNmBK9i32LHYrycgfQp9Owpjb25zdCBJY29uID0gKHsgaWQsIHNpemU9MTYsIGNsYXNzTmFtZT0nJyB9KSA9PiAoPHN2ZyB3aWR0aD17c2l6ZX0gaGVpZ2h0PXtzaXplfSBjbGFzc05hbWU9e2NsYXNzTmFtZX0+PHVzZSBocmVmPXtgI2ljLSR7aWR9YH0gLz48L3N2Zz4pOwpjb25zdCBUb2dnbGUgPSAoeyB2YWx1ZSwgb25DaGFuZ2UgfSkgPT4geyBjb25zdCBvbiA9IHZhbHVlID09PSAnb24nOyByZXR1cm4gKDxkaXYgb25DbGljaz17KCkgPT4gb25DaGFuZ2Uob24gPyAnb2ZmJyA6ICdvbicpfSBjbGFzc05hbWU9e2B0b2dnbGUtd3JhcCAke29uID8gJ29uJyA6ICdvZmYnfWB9IHJvbGU9InN3aXRjaCI+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS10aHVtYiIgLz48L2Rpdj4pOyB9Owpjb25zdCBDYXJkID0gKHsgY2hpbGRyZW4sIHN0cmlwZSwgc2hhZG93LCBkZWxheT0nJyB9KSA9PiAoPGRpdiBjbGFzc05hbWU9e2BnbGFzcyBmYWRlLXVwICR7ZGVsYXl9YH0gc3R5bGU9e3sgcGFkZGluZzonMjhweCAyOHB4IDI0cHgnIH19PjxkaXYgY2xhc3NOYW1lPSJzdHJpcGUiIHN0eWxlPXt7IGJhY2tncm91bmQ6c3RyaXBlLCBib3hTaGFkb3c6YDAgMCAxNnB4ICR7c2hhZG93fWAgfX0gLz57Y2hpbGRyZW59PC9kaXY+KTsKY29uc3QgU2VjdGlvblRpdGxlID0gKHsgaWNvbiwgY29sb3IsIGxhYmVsIH0pID0+ICg8ZGl2IGNsYXNzTmFtZT0ic2VjLWxhYmVsIiBzdHlsZT17eyBjb2xvciB9fT48SWNvbiBpZD17aWNvbn0gc2l6ZT17MTV9IC8+e2xhYmVsfTwvZGl2Pik7CmNvbnN0IEZpZWxkID0gKHsgbGFiZWwsIGNoaWxkcmVuIH0pID0+ICg8ZGl2PjxwIHN0eWxlPXt7IGZvbnRTaXplOjExLCBjb2xvcjondmFyKC0tZmFpbnQpJywgbWFyZ2luQm90dG9tOjYsIHRleHRUcmFuc2Zvcm06J3VwcGVyY2FzZScgfX0+e2xhYmVsfTwvcD57Y2hpbGRyZW59PC9kaXY+KTsKCmZ1bmN0aW9uIEFwcCgpIHsKICBjb25zdCBbbGFuZywgc2V0TGFuZ10gPSB1c2VTdGF0ZShudWxsKTsgY29uc3QgW2lzQXV0aCwgc2V0SXNBdXRoXSA9IHVzZVN0YXRlKGZhbHNlKTsgY29uc3QgW293bmVyTnVtLCBzZXRPd25lck51bV0gPSB1c2VTdGF0ZSgnJyk7IGNvbnN0IFtwYXNzd29yZCwgc2V0UGFzc3dvcmRdID0gdXNlU3RhdGUoJycpOwogIGNvbnN0IFtsb2FkaW5nLCBzZXRMb2FkaW5nXSA9IHVzZVN0YXRlKGZhbHNlKTsgY29uc3QgW3RvYXN0LCBzZXRUb2FzdF0gPSB1c2VTdGF0ZSgnJyk7IGNvbnN0IFt1cGxvYWRpbmcsIHNldFVwbG9hZGluZ10gPSB1c2VTdGF0ZShudWxsKTsKICBjb25zdCBbYXBwSWQsIHNldEFwcElkXSA9IHVzZVN0YXRlKCcnKTsgY29uc3QgW2Vycm9ycywgc2V0RXJyb3JzXSA9IHVzZVN0YXRlKHsgbmFtZTonJywgZnJvbTonJywgYWdlOicnLCBwcmVmaXg6JycsIGZvb3RlcjI6JycgfSk7CiAgY29uc3Qgb3duZXJOdW1SZWYgPSB1c2VSZWYoJycpOyBjb25zdCBhcHBJZFJlZiA9IHVzZVJlZignJyk7CiAgCiAgLy8gRml4OiBFeHRyYWN0IGFwcElkIGZyb20gcGFzc3dvcmQgRVhBQ1RMWSBsaWtlIGJhY2tlbmQgZG9lcwogIC8vIEJhY2tlbmQ6IHBhc3Muc2xpY2UoLTEpIGZvciA2IGNoYXJzLCBwYXNzLnNsaWNlKC0yKSBmb3IgNyBjaGFycwogIGNvbnN0IGV4dHJhY3RBcHBJZEZyb21QYXNzID0gdXNlQ2FsbGJhY2soKHBhc3NTdHIpID0+IHsKICAgIGlmICghcGFzc1N0cikgcmV0dXJuICcnOwogICAgaWYgKHBhc3NTdHIubGVuZ3RoID09PSA2KSByZXR1cm4gcGFzc1N0ci5zbGljZSgtMSk7ICAvLyBsYXN0IDEgY2hhcgogICAgaWYgKHBhc3NTdHIubGVuZ3RoID09PSA3KSByZXR1cm4gcGFzc1N0ci5zbGljZSgtMik7IC8vIGxhc3QgMiBjaGFycwogICAgcmV0dXJuICcnOwogIH0sIFtdKTsKICAKICBjb25zdCBbcywgc2V0U10gPSB1c2VTdGF0ZSh7CiAgICBuYW1lOkJSQU5EX1BBTkVMX05BTUUsIGZyb206J1NyaSBMYW5rYScsIGFnZTonMjQnLCBwcmVmaXg6Jy4nLCBmb290ZXIyOkJSQU5EX1BBTkVMX05BTUUsCiAgICBvd25lck51bWJlcjonJywgb3duZXJuYW1lOicnLCBkZXNjcmlwdGlvbjonJywgY3VzdG9tQXV0b1JlcGxpZXM6JycsIGF1dG9TYXZlOidvbicsCiAgICBtb2RlOidwdWJsaWMnLCBhbnRpQmFkOidvZmYnLCBhbnRpTGluazonb2ZmJywgYXV0b1JlY29yZGluZzonb2ZmJywgYXV0b1R5cGluZzonb2ZmJywKICAgIGFsd2F5c09ubGluZTonb2ZmJywgYXV0b1N0YXR1c1JlYWQ6J29uJywgYXV0b1N0YXR1c1JlYWN0OidvbicsIGF1dG9SZWFkOidvZmYnLAogICAgYXV0b0Jsb2NrOidvZmYnLCBhdXRvUmVhY3Q6J29mZicsIGF1dG9Wb2ljZTonb2ZmJywgYW50aURlbGV0ZTonb2ZmJywgc2VuZERlbGV0ZVRvOidvd25lcicsCiAgICBhbnRpQ2FsbDonb2ZmJywgZXhjbHVkZUNhbGxOdW1iZXJzOicnLCBzdGF0dXNNc2dTZW5kOidvZmYnLCBzdGF0dXNNc2dUeXBlOidkZWZhdWx0JywgY3VzdG9tTXNnOicnLAogICAgZ2FHcm91cEppZDonJywgZ2FUaW1lem9uZTonQXNpYS9Db2xvbWJvJywgZ2FDbG9zZVRpbWU6JzE1OjAwJywgZ2FPcGVuVGltZTonMDU6MDAnLAogICAgbWVudTpERUZBVUxUX0JSQU5EX0lNQUdFLCBhbGl2ZTpERUZBVUxUX0JSQU5EX0lNQUdFLCBvd25lcjpERUZBVUxUX0JSQU5EX0lNQUdFLAogICAgc3RhdHVzQ3VzdG9tUmVhY3Q6ICcnLAogICAgYW50aUJ1ZzogJ29mZicsCiAgICBhbnRpQm90OiAnb2ZmJywKICAgIGFudGlCb3RBY3Rpb246ICdkZWxldGUnCiAgfSk7CiAgCiAgY29uc3QgdHggPSBUW2xhbmcgfHwgJ2VuJ107IGNvbnN0IHVwZCA9IHVzZUNhbGxiYWNrKChrLCB2KSA9PiBzZXRTKHAgPT4gKHsgLi4ucCwgW2tdOiB2IH0pKSwgW10pOwogIGNvbnN0IHNob3dUb2FzdCA9IHVzZUNhbGxiYWNrKChtc2cpID0+IHsgc2V0VG9hc3QobXNnKTsgc2V0VGltZW91dCgoKSA9PiBzZXRUb2FzdCgnJyksIDMwMDApOyB9LCBbXSk7CiAgCiAgLy8gVXBkYXRlIGFwcElkIHdoZW4gcGFzc3dvcmQgY2hhbmdlcyAtIHVzaW5nIGNvcnJlY3QgZXh0cmFjdGlvbiBsb2dpYwogIHVzZUVmZmVjdCgoKSA9PiB7CiAgICBpZiAoIWlzQXV0aCkgewogICAgICBjb25zdCBleHRyYWN0ZWRJZCA9IGV4dHJhY3RBcHBJZEZyb21QYXNzKHBhc3N3b3JkKTsKICAgICAgc2V0QXBwSWQoZXh0cmFjdGVkSWQpOwogICAgfQogIH0sIFtwYXNzd29yZCwgZXh0cmFjdEFwcElkRnJvbVBhc3MsIGlzQXV0aF0pOwogIAogIHVzZUVmZmVjdCgoKSA9PiB7IG93bmVyTnVtUmVmLmN1cnJlbnQgPSBvd25lck51bTsgfSwgW293bmVyTnVtXSk7IAogIHVzZUVmZmVjdCgoKSA9PiB7IGFwcElkUmVmLmN1cnJlbnQgPSBhcHBJZDsgfSwgW2FwcElkXSk7CiAgCiAgY29uc3QgdmFsaWRhdG9ycyA9IHsgbmFtZTogdiA9PiB7IGNvbnN0IHQgPSB2LnNsaWNlKDAsMTUpOyBzZXRFcnJvcnMocD0+KHsuLi5wLG5hbWU6IHQubGVuZ3RoPT09MTU/dHgubWF4Q2hhcnM6Jyd9KSk7IHJldHVybiB0OyB9LCBmcm9tOiB2ID0+IHsgY29uc3QgdCA9IHYuc2xpY2UoMCwxNSk7IHNldEVycm9ycyhwPT4oey4uLnAsZnJvbTogdC5sZW5ndGg9PT0xNT90eC5tYXhDaGFyczonJ30pKTsgcmV0dXJuIHQ7IH0sIGZvb3RlcjI6diA9PiB7IGNvbnN0IHQgPSB2LnNsaWNlKDAsMTUpOyBzZXRFcnJvcnMocD0+KHsuLi5wLGZvb3RlcjI6dC5sZW5ndGg9PT0xNT90eC5tYXhDaGFyczonJ30pKTsgcmV0dXJuIHQ7IH0sIGFnZTogdiA9PiB7IGNvbnN0IG4gPSB2LnJlcGxhY2UoL1teMC05XS9nLCcnKS5zbGljZSgwLDIpOyBjb25zdCBlcnIgPSBuICYmIChwYXJzZUludChuKTwxfHxwYXJzZUludChuKT45OSkgPyB0eC5hZ2VFcnJvciA6ICcnOyBzZXRFcnJvcnMocD0+KHsuLi5wLGFnZTplcnJ9KSk7IHJldHVybiBuOyB9LCBwcmVmaXg6IHYgPT4geyBjb25zdCBvayA9IC9eWy4hQCMkJV4mKigpXC1fK1tcXXt9Oyc6IlxcfCwuPD4vP35dKiQvLnRlc3Qodik7IHNldEVycm9ycyhwPT4oey4uLnAscHJlZml4Om9rPycnOnR4LnByZWZpeEVycm9yfSkpOyByZXR1cm4gb2sgPyB2IDogdi5zbGljZSgwLC0xKTsgfSB9OwogIGNvbnN0IGhhbmRsZUlucHV0ID0gKGZpZWxkLCB2YWx1ZSkgPT4gdXBkKGZpZWxkLCB2YWxpZGF0b3JzW2ZpZWxkXSA/IHZhbGlkYXRvcnNbZmllbGRdKHZhbHVlKSA6IHZhbHVlKTsKICAKICBjb25zdCBoYW5kbGVMb2dpbiA9IHVzZUNhbGxiYWNrKGFzeW5jIChlKSA9PiB7IAogICAgZS5wcmV2ZW50RGVmYXVsdCgpOyBzZXRMb2FkaW5nKHRydWUpOyAKICAgIHRyeSB7IAogICAgICBjb25zdCByID0gYXdhaXQgYXBpUG9zdChBUEkubG9naW4sIHsgbnVtOiBvd25lck51bSwgcGFzczogcGFzc3dvcmQgfSk7IAogICAgICBpZiAoIXIuc3VjY2VzcykgdGhyb3cgbmV3IEVycm9yKHIubWVzc2FnZSB8fCAn4puUIFdyb25nIFVzZXIgTnVtYmVyIE9yIFBhc3N3b3JkJyk7IAogICAgICBjb25zdCByZXNvbHZlZEFwcElkID0gci5hcHAgfHwgZXh0cmFjdEFwcElkRnJvbVBhc3MocGFzc3dvcmQpIHx8ICdkZWZhdWx0JzsKICAgICAgc2V0QXBwSWQocmVzb2x2ZWRBcHBJZCk7CiAgICAgIHNldElzQXV0aCh0cnVlKTsgCiAgICAgIHNob3dUb2FzdCgnTG9naW4gc3VjY2Vzc2Z1bCEnKTsgCiAgICAgIHRyeSB7IAogICAgICAgIGNvbnN0IGxyID0gYXdhaXQgYXBpR2V0KEFQSS5sb2FkU2V0dCwgeyBudW06IG93bmVyTnVtLCBhcHA6IHJlc29sdmVkQXBwSWQgfSk7IAogICAgICAgIGlmIChsci5zdWNjZXNzICYmIGxyLnNldHRpbmdzKSB7IAogICAgICAgICAgc2V0QXBwSWQobHIuYXBwIHx8IHJlc29sdmVkQXBwSWQpOwogICAgICAgICAgc2V0UyhwcmV2ID0+IHsgY29uc3QgbmV4dCA9IHsgLi4ucHJldiB9OyBPYmplY3Qua2V5cyhwcmV2KS5mb3JFYWNoKGsgPT4geyBpZiAobHIuc2V0dGluZ3Nba10gIT09IHVuZGVmaW5lZCkgbmV4dFtrXSA9IGxyLnNldHRpbmdzW2tdOyB9KTsgcmV0dXJuIG5leHQ7IH0pOyAKICAgICAgICB9IAogICAgICB9IGNhdGNoIChsb2FkRXJyKSB7IGNvbnNvbGUud2Fybihsb2FkRXJyKTsgfSAKICAgIH0gY2F0Y2ggKGVycikgeyBhbGVydChlcnIubWVzc2FnZSB8fCAnTG9naW4gZmFpbGVkJyk7IH0gCiAgICBmaW5hbGx5IHsgc2V0TG9hZGluZyhmYWxzZSk7IH0gCiAgfSwgW293bmVyTnVtLCBwYXNzd29yZCwgc2hvd1RvYXN0LCBleHRyYWN0QXBwSWRGcm9tUGFzc10pOwogIAogIGNvbnN0IGhhbmRsZVNhdmUgPSB1c2VDYWxsYmFjayhhc3luYyAoZSkgPT4geyAKICAgIGUucHJldmVudERlZmF1bHQoKTsgc2V0TG9hZGluZyh0cnVlKTsgCiAgICB0cnkgeyAKICAgICAgY29uc3QgcmVzb2x2ZWRBcHBJZCA9IGFwcElkUmVmLmN1cnJlbnQgfHwgYXBwSWQgfHwgZXh0cmFjdEFwcElkRnJvbVBhc3MocGFzc3dvcmQpIHx8ICdkZWZhdWx0JzsKICAgICAgY29uc3QgciA9IGF3YWl0IGFwaVBvc3QoQVBJLnNhdmVTZXR0LCB7IC4uLnMsIGF1dG9SZWFjdDonb2ZmJywgbnVtOiBvd25lck51bVJlZi5jdXJyZW50LCBhcHA6IHJlc29sdmVkQXBwSWQgfSk7IAogICAgICBpZiAoIXIuc3VjY2VzcykgdGhyb3cgbmV3IEVycm9yKHIuZXJyb3IgfHwgJ1NhdmUgZmFpbGVkJyk7IAogICAgICBzZXRBcHBJZChyLmFwcCB8fCByZXNvbHZlZEFwcElkKTsKICAgICAgaWYgKHIuc2V0dGluZ3MpIHsKICAgICAgICBzZXRTKHByZXYgPT4gKHsgLi4ucHJldiwgLi4uci5zZXR0aW5ncyB9KSk7CiAgICAgIH0KICAgICAgc2hvd1RvYXN0KHR4Lm9rKTsgCiAgICB9IGNhdGNoIChlcnIpIHsgYWxlcnQoZXJyLm1lc3NhZ2UgfHwgJ1NhdmUgZmFpbGVkJyk7IH0gCiAgICBmaW5hbGx5IHsgc2V0TG9hZGluZyhmYWxzZSk7IH0gCiAgfSwgW3MsIHR4Lm9rLCBzaG93VG9hc3RdKTsKICAKICBjb25zdCBoYW5kbGVVcGxvYWQgPSB1c2VDYWxsYmFjaygoZSwgZmllbGRLZXkpID0+IHsgY29uc3QgZmlsZSA9IGUudGFyZ2V0LmZpbGVzWzBdOyBpZiAoIWZpbGUpIHJldHVybjsgc2V0VXBsb2FkaW5nKGZpZWxkS2V5KTsgY29uc3QgcmVhZGVyID0gbmV3IEZpbGVSZWFkZXIoKTsgcmVhZGVyLm9ubG9hZCA9IGFzeW5jICgpID0+IHsgdHJ5IHsgY29uc3QgciA9IGF3YWl0IGFwaVBvc3QoQVBJLnVwbG9hZCwgeyBpbWFnZTogcmVhZGVyLnJlc3VsdC5zcGxpdCgnLCcpWzFdLCBmaWVsZEtleSwgbnVtOiBvd25lck51bVJlZi5jdXJyZW50LCBhcHA6IGFwcElkUmVmLmN1cnJlbnQgfHwgYXBwSWQgfHwgJ2RlZmF1bHQnIH0pOyBpZiAoIXIuc3VjY2VzcykgdGhyb3cgbmV3IEVycm9yKHIuZXJyb3IgfHwgJ1VwbG9hZCBmYWlsZWQnKTsgdXBkKHIuZmllbGRLZXksIHIudXJsKTsgc2hvd1RvYXN0KCdJbWFnZSB1cGxvYWRlZCEnKTsgfSBjYXRjaCAoZXJyKSB7IGFsZXJ0KCdVcGxvYWQgZXJyb3I6ICcgKyBlcnIubWVzc2FnZSk7IH0gZmluYWxseSB7IHNldFVwbG9hZGluZyhudWxsKTsgfSB9OyByZWFkZXIucmVhZEFzRGF0YVVSTChmaWxlKTsgfSwgW3VwZCwgc2hvd1RvYXN0LCBhcHBJZF0pOwoKICAvLyBFTU9KSSBMT0dJQyAtIE9ORSBFTU9KSSBBVCBBIFRJTUUgKOC3g+C3kuC2guC3hOC2veC3meC2seC3ijog4LaR4LaaIOC2keC2miDgtongtrjgt53gtqLgt5Lgtrrgtprgt4og4La04La44Lar4La64LeSKQogIGNvbnN0IGVtb2ppTGlzdCA9IEFycmF5LmZyb20obmV3IFNldCgocy5zdGF0dXNDdXN0b21SZWFjdCB8fCAnJykuc3BsaXQoJywnKS5tYXAoZSA9PiBlLnRyaW0oKSkuZmlsdGVyKGUgPT4gZS5sZW5ndGggPiAwICYmICFlLmluY2x1ZGVzKCcgJykpKSkuc2xpY2UoMCwxMCk7CiAgCiAgY29uc3QgYWRkRW1vamkgPSAobmV3RW1vamkpID0+IHsgCiAgICBpZiAoIW5ld0Vtb2ppKSByZXR1cm47IAogICAgY29uc3QgdHJpbW1lZCA9IG5ld0Vtb2ppLnRyaW0oKTsKICAgIGlmICh0cmltbWVkLmxlbmd0aCA9PT0gMCkgcmV0dXJuOwogICAgaWYgKHRyaW1tZWQuaW5jbHVkZXMoJyAnKSkgewogICAgICBzaG93VG9hc3Q/LignRW50ZXIgb25lIGVtb2ppIG9ubHknKSB8fCBhbGVydCgnUGxlYXNlIGVudGVyIE9ORSBlbW9qaSBvbmx5IScpOwogICAgICByZXR1cm47CiAgICB9CiAgICBsZXQgY3VycmVudCA9IFsuLi5lbW9qaUxpc3RdOwogICAgaWYgKGN1cnJlbnQuaW5jbHVkZXModHJpbW1lZCkpIHJldHVybjsKICAgIGNvbnN0IG5leHQgPSBbLi4uY3VycmVudCwgdHJpbW1lZF0uc2xpY2UoMCwxMCk7CiAgICB1cGQoJ3N0YXR1c0N1c3RvbVJlYWN0JywgbmV4dC5qb2luKCcsJykpOwogIH07CiAgCiAgY29uc3QgcmVtb3ZlRW1vamkgPSAoaWR4KSA9PiB7IAogICAgY29uc3QgbmV4dCA9IFsuLi5lbW9qaUxpc3RdOyAKICAgIG5leHQuc3BsaWNlKGlkeCwxKTsgCiAgICB1cGQoJ3N0YXR1c0N1c3RvbVJlYWN0JywgbmV4dC5qb2luKCcsJykpOyAKICB9OwogIAogIGNvbnN0IGhhbmRsZUVtb2ppS2V5RG93biA9IChlKSA9PiB7IAogICAgaWYgKGUua2V5ID09PSAnRW50ZXInKSB7IAogICAgICBlLnByZXZlbnREZWZhdWx0KCk7IAogICAgICBjb25zdCBpbnAgPSBlLnRhcmdldDsgCiAgICAgIGxldCByYXcgPSBpbnAudmFsdWUudHJpbSgpOyAKICAgICAgaWYgKHJhdykgeyAKICAgICAgICBhZGRFbW9qaShyYXcpOyAKICAgICAgICBpbnAudmFsdWUgPSAnJzsgCiAgICAgIH0gCiAgICB9IAogIH07CgogIGNvbnN0IGF1dG9SZXBseUNvdW50ID0gU3RyaW5nKHMuY3VzdG9tQXV0b1JlcGxpZXMgfHwgJycpLnNwbGl0KC9ccj9cbi8pLm1hcChsaW5lID0+IGxpbmUudHJpbSgpKS5maWx0ZXIoQm9vbGVhbikubGVuZ3RoOwoKICBpZiAoIWxhbmcpIHJldHVybiAoPGRpdiBjbGFzc05hbWU9Imxhbmctb3ZlcmxheSI+PGRpdiBzdHlsZT17e3RleHRBbGlnbjonY2VudGVyJywgbWF4V2lkdGg6MzYwfX0+PGRpdiBzdHlsZT17e3dpZHRoOjcyLGhlaWdodDo3Mixib3JkZXJSYWRpdXM6MjAsYmFja2dyb3VuZDonbGluZWFyLWdyYWRpZW50KDEzNWRlZyxyZ2JhKDIxMiwxNjAsODUsMC4xNSkscmdiYSg1OCwxMjMsMjEzLDAuMTUpKScsYm9yZGVyOicxcHggc29saWQgdmFyKC0tYm9yZGVyLWFjY2VudCknLG1hcmdpbjonMCBhdXRvIDIwcHgnLGRpc3BsYXk6J2ZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsanVzdGlmeUNvbnRlbnQ6J2NlbnRlcid9fT48SWNvbiBpZD0iY3B1IiBzaXplPXszMn0gc3R5bGU9e3tjb2xvcjondmFyKC0tZ29sZCknfX0gLz48L2Rpdj48aDEgc3R5bGU9e3tmb250V2VpZ2h0OjgwMCxmb250U2l6ZToyMn19PntCUkFORF9QQU5FTF9OQU1FfTwvaDE+PHAgY2xhc3NOYW1lPSJtb25vIiBzdHlsZT17e2ZvbnRTaXplOjExLGNvbG9yOid2YXIoLS1mYWludCknfX0+QURNSU4gUEFORUw8L3A+PGRpdiBzdHlsZT17e2Rpc3BsYXk6J2dyaWQnLGdhcDoxMixtYXJnaW5Ub3A6MjR9fT57WydlbicsJ3NpJywndGEnLCdhciddLm1hcChjID0+ICg8YnV0dG9uIGtleT17Y30gb25DbGljaz17KCk9PnNldExhbmcoYyl9IGNsYXNzTmFtZT0ibGFuZy1idG4iIHN0eWxlPXt7anVzdGlmeUNvbnRlbnQ6J2ZsZXgtc3RhcnQnfX0+PHNwYW4gc3R5bGU9e3tmb250U2l6ZToyMn19PntjPT09J2VuJz8n8J+HrPCfh6cnOmM9PT0nc2knPyfwn4ex8J+HsCc6Yz09PSd0YSc/J/Cfh67wn4ezJzon8J+HuPCfh6YnfTwvc3Bhbj48c3Bhbj57Yz09PSdlbic/J0VuZ2xpc2gnOmM9PT0nc2knPyfgt4Pgt5LgtoLgt4Tgtr0nOmM9PT0ndGEnPyfgrqTgrq7grr/grrTgr40nOifYp9mE2LnYsdio2YrYqSd9PC9zcGFuPjwvYnV0dG9uPikpfTwvZGl2PjwvZGl2PjwvZGl2Pik7CiAgY29uc3QgaXNSdGwgPSBsYW5nID09PSAnYXInOwogIAogIGlmICghaXNBdXRoKSByZXR1cm4gKDxkaXYgY2xhc3NOYW1lPXtpc1J0bD8ncnRsJzonJ30gc3R5bGU9e3tkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGp1c3RpZnlDb250ZW50OidjZW50ZXInLG1pbkhlaWdodDonMTAwdmgnLHBhZGRpbmc6MjR9fT48ZGl2IGNsYXNzTmFtZT0iZ2xhc3MiIHN0eWxlPXt7d2lkdGg6JzEwMCUnLG1heFdpZHRoOjQ0MCxwYWRkaW5nOic0OHB4IDQwcHgnfX0+PGRpdiBzdHlsZT17e3RleHRBbGlnbjonY2VudGVyJyxtYXJnaW5Cb3R0b206MzZ9fT48ZGl2IHN0eWxlPXt7d2lkdGg6NTYsaGVpZ2h0OjU2LGJvcmRlclJhZGl1czoxNixiYWNrZ3JvdW5kOidsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHJnYmEoMjEyLDE2MCw4NSwwLjE1KSxyZ2JhKDU4LDEyMywyMTMsMC4xNSkpJyxib3JkZXI6JzFweCBzb2xpZCB2YXIoLS1ib3JkZXItYWNjZW50KScsZGlzcGxheTonaW5saW5lLWZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsanVzdGlmeUNvbnRlbnQ6J2NlbnRlcicsbWFyZ2luQm90dG9tOjE2fX0+PEljb24gaWQ9ImNwdSIgc2l6ZT17MjR9IHN0eWxlPXt7Y29sb3I6J3ZhcigtLWdvbGQpJ319IC8+PC9kaXY+PGgxIHN0eWxlPXt7Zm9udFdlaWdodDo4MDAsZm9udFNpemU6MjAsY29sb3I6J3ZhcigtLWdvbGQpJ319Pnt0eC5sb2dpbn08L2gxPjwvZGl2Pjxmb3JtIG9uU3VibWl0PXtoYW5kbGVMb2dpbn0gYXV0b0NvbXBsZXRlPSJvZmYiPjxkaXYgc3R5bGU9e3twb3NpdGlvbjoncmVsYXRpdmUnLG1hcmdpbkJvdHRvbToxNn19PjxzcGFuIHN0eWxlPXt7cG9zaXRpb246J2Fic29sdXRlJyxsZWZ0OjEzLHRvcDonNTAlJyx0cmFuc2Zvcm06J3RyYW5zbGF0ZVkoLTUwJSknLGNvbG9yOid2YXIoLS1mYWludCknfX0+PEljb24gaWQ9InVzZXIiIHNpemU9ezE1fSAvPjwvc3Bhbj48aW5wdXQgY2xhc3NOYW1lPSJpbnAiIHN0eWxlPXt7cGFkZGluZ0xlZnQ6Mzh9fSBwbGFjZWhvbGRlcj17dHgubnVtfSB2YWx1ZT17b3duZXJOdW19IG9uQ2hhbmdlPXtlPT5zZXRPd25lck51bShlLnRhcmdldC52YWx1ZS5yZXBsYWNlKC9bXjAtOV0vZywnJykpfSByZXF1aXJlZCBhdXRvQ29tcGxldGU9Im9mZiIgbmFtZT0ibm9uZS11c2VyIiAvPjwvZGl2PjxkaXYgc3R5bGU9e3twb3NpdGlvbjoncmVsYXRpdmUnLG1hcmdpbkJvdHRvbToxNn19PjxzcGFuIHN0eWxlPXt7cG9zaXRpb246J2Fic29sdXRlJyxsZWZ0OjEzLHRvcDonNTAlJyx0cmFuc2Zvcm06J3RyYW5zbGF0ZVkoLTUwJSknLGNvbG9yOid2YXIoLS1mYWludCknfX0+PEljb24gaWQ9ImxvY2siIHNpemU9ezE1fSAvPjwvc3Bhbj48aW5wdXQgY2xhc3NOYW1lPSJpbnAiIHN0eWxlPXt7cGFkZGluZ0xlZnQ6Mzh9fSB0eXBlPSJwYXNzd29yZCIgcGxhY2Vob2xkZXI9e3R4LnBhc3N9IHZhbHVlPXtwYXNzd29yZH0gb25DaGFuZ2U9e2U9PnNldFBhc3N3b3JkKGUudGFyZ2V0LnZhbHVlKX0gcmVxdWlyZWQgYXV0b0NvbXBsZXRlPSJuZXctcGFzc3dvcmQiIG5hbWU9Im5vbmUtcGFzcyIgLz48L2Rpdj57YXBwSWQgJiYgKDxkaXYgc3R5bGU9e3tiYWNrZ3JvdW5kOidyZ2JhKDIxMiwxNjAsODUsMC4wNyknLGJvcmRlcjonMXB4IHNvbGlkIHZhcigtLWJvcmRlci1hY2NlbnQpJyxib3JkZXJSYWRpdXM6MTQscGFkZGluZzonMTJweCAxNnB4JyxtYXJnaW5Cb3R0b206MTZ9fT48ZGl2IGNsYXNzTmFtZT0iYXBwLWJhZGdlIj48SWNvbiBpZD0ic21hcnRwaG9uZSIgc2l6ZT17MTN9IC8+PHNwYW4+e3R4LmFwcElkfTwvc3Bhbj48L2Rpdj48c3BhbiBzdHlsZT17e2NvbG9yOid2YXIoLS1nb2xkKScsZm9udFdlaWdodDonYm9sZCcsZm9udFNpemU6MTgsbWFyZ2luTGVmdDoxMn19PnthcHBJZH08L3NwYW4+PHNwYW4gc3R5bGU9e3tjb2xvcjondmFyKC0tbXV0ZWQpJyxmb250U2l6ZToxMSxtYXJnaW5MZWZ0Ojh9fT57dHguZGV0ZWN0ZWR9PC9zcGFuPjwvZGl2Pil9PGJ1dHRvbiB0eXBlPSJzdWJtaXQiIGRpc2FibGVkPXtsb2FkaW5nfSBzdHlsZT17e2JhY2tncm91bmQ6bG9hZGluZz8ncmdiYSgyMTIsMTYwLDg1LDAuMiknOidsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHZhcigtLWdvbGQpLCNiODg1M2EpJyxjb2xvcjpsb2FkaW5nPyd2YXIoLS1tdXRlZCknOicjMGQwZDBkJyxib3JkZXI6J25vbmUnLGJvcmRlclJhZGl1czoxNCxwYWRkaW5nOicxNHB4Jyxmb250V2VpZ2h0OjcwMCx3aWR0aDonMTAwJScsZGlzcGxheTonZmxleCcsYWxpZ25JdGVtczonY2VudGVyJyxqdXN0aWZ5Q29udGVudDonY2VudGVyJyxnYXA6OH19Pntsb2FkaW5nPzw+PHNwYW4gY2xhc3NOYW1lPSJzcGluIiAvPkxvZ2dpbmcuLi48Lz46dHguYXV0aH08L2J1dHRvbj48L2Zvcm0+PGJ1dHRvbiBvbkNsaWNrPXsoKT0+c2V0TGFuZyhudWxsKX0gc3R5bGU9e3ttYXJnaW5Ub3A6MTYsYmFja2dyb3VuZDonbm9uZScsYm9yZGVyOidub25lJyxjb2xvcjondmFyKC0tZmFpbnQpJyxmb250U2l6ZToxMixjdXJzb3I6J3BvaW50ZXInfX0+4oaQIHt0eC5zZWx9PC9idXR0b24+PC9kaXY+PC9kaXY+KTsKCiAgcmV0dXJuICg8ZGl2IGNsYXNzTmFtZT17aXNSdGw/J3J0bCc6Jyd9PjxkaXYgc3R5bGU9e3twb3NpdGlvbjoncmVsYXRpdmUnLHpJbmRleDoxfX0+e3RvYXN0ICYmICg8ZGl2IGNsYXNzTmFtZT0idG9hc3QtYW5pbSIgc3R5bGU9e3twb3NpdGlvbjonZml4ZWQnLHRvcDoyNCxsZWZ0Oic1MCUnLHRyYW5zZm9ybTondHJhbnNsYXRlWCgtNTAlKScsekluZGV4OjEwMDAwLGJhY2tncm91bmQ6J2xpbmVhci1ncmFkaWVudCgxMzVkZWcsdmFyKC0tZ29sZCksI2I4ODUzYSknLGNvbG9yOicjMGQwZDBkJyxwYWRkaW5nOicxNHB4IDMycHgnLGJvcmRlclJhZGl1czoxNixmb250V2VpZ2h0OjcwMH19Pnt0b2FzdH08L2Rpdj4pfTxkaXYgc3R5bGU9e3ttYXhXaWR0aDo5NjAsbWFyZ2luOicwIGF1dG8nLHBhZGRpbmc6JzMycHggMjBweCAxMjBweCd9fT48aGVhZGVyIGNsYXNzTmFtZT0iZ2xhc3MgZmFkZS11cCIgc3R5bGU9e3tkaXNwbGF5OidmbGV4JyxqdXN0aWZ5Q29udGVudDonc3BhY2UtYmV0d2VlbicsYWxpZ25JdGVtczonY2VudGVyJyxwYWRkaW5nOicyMHB4IDI4cHgnLG1hcmdpbkJvdHRvbToyNH19PjxkaXYgc3R5bGU9e3tkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGdhcDoxNn19PjxkaXYgc3R5bGU9e3t3aWR0aDo0NCxoZWlnaHQ6NDQsYm9yZGVyUmFkaXVzOjEzLGJhY2tncm91bmQ6J2xpbmVhci1ncmFkaWVudCgxMzVkZWcsdmFyKC0tZ29sZCksI2I4ODUzYSknLGRpc3BsYXk6J2ZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsanVzdGlmeUNvbnRlbnQ6J2NlbnRlcid9fT48SWNvbiBpZD0iY3B1IiBzaXplPXsyMH0gc3R5bGU9e3tjb2xvcjonIzBkMGQwZCd9fSAvPjwvZGl2PjxkaXY+PGgxIHN0eWxlPXt7Zm9udFdlaWdodDo4MDAsZm9udFNpemU6MTZ9fT57QlJBTkRfUEFORUxfTkFNRX08L2gxPjxwIGNsYXNzTmFtZT0ibW9ubyIgc3R5bGU9e3tmb250U2l6ZToxMSxjb2xvcjondmFyKC0tZmFpbnQpJ319Pntvd25lck51bX08L3A+PC9kaXY+PC9kaXY+PGJ1dHRvbiBvbkNsaWNrPXsoKT0+e3NldElzQXV0aChmYWxzZSk7c2V0T3duZXJOdW0oJycpO3NldFBhc3N3b3JkKCcnKTt9fSBzdHlsZT17e2JhY2tncm91bmQ6J3JnYmEoMjM5LDY4LDY4LDAuMDgpJyxjb2xvcjonI2VmNDQ0NCcsYm9yZGVyOicxcHggc29saWQgcmdiYSgyMzksNjgsNjgsMC4yKScsYm9yZGVyUmFkaXVzOjEyLHBhZGRpbmc6JzlweCAxOHB4JyxjdXJzb3I6J3BvaW50ZXInLGRpc3BsYXk6J2ZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsZ2FwOjh9fT48SWNvbiBpZD0ibG9nLW91dCIgc2l6ZT17MTN9IC8+e3R4LmxvZ291dH08L2J1dHRvbj48L2hlYWRlcj48ZGl2IGNsYXNzTmFtZT0iZmFkZS11cCBkZWxheS0xIiBzdHlsZT17e21hcmdpbkJvdHRvbToyNCxwYWRkaW5nOicxNHB4IDIwcHgnLGJhY2tncm91bmQ6J3JnYmEoMjEyLDE2MCw4NSwwLjA3KScsYm9yZGVyOicxcHggc29saWQgdmFyKC0tYm9yZGVyLWFjY2VudCknLGJvcmRlclJhZGl1czoxNixjb2xvcjondmFyKC0tZ29sZCknLGZvbnRTaXplOjEzLGRpc3BsYXk6J2ZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsZ2FwOjEyfX0+PEljb24gaWQ9ImluZm8iIHNpemU9ezE2fSAvPnt0eC5ub3RpY2V9PC9kaXY+e2FwcElkICYmICg8ZGl2IGNsYXNzTmFtZT0iZmFkZS11cCBkZWxheS0xIiBzdHlsZT17e21hcmdpbkJvdHRvbToyNCxiYWNrZ3JvdW5kOidyZ2JhKDIxMiwxNjAsODUsMC4wNyknLGJvcmRlclJhZGl1czoxNixwYWRkaW5nOicxNnB4IDI0cHgnLGRpc3BsYXk6J2ZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsZ2FwOjE2fX0+PGRpdiBjbGFzc05hbWU9ImFwcC1iYWRnZSI+PEljb24gaWQ9InNtYXJ0cGhvbmUiIHNpemU9ezE0fSAvPjxzcGFuPnt0eC5hcHBJZH08L3NwYW4+PC9kaXY+PHNwYW4gc3R5bGU9e3tmb250U2l6ZToyNCxmb250V2VpZ2h0Oidib2xkJyxjb2xvcjondmFyKC0tZ29sZCknfX0+e2FwcElkfTwvc3Bhbj48c3BhbiBzdHlsZT17e2NvbG9yOid2YXIoLS1tdXRlZCknLGZvbnRTaXplOjEyfX0+e3R4LmRldGVjdGVkfTwvc3Bhbj48L2Rpdj4pfTxmb3JtIGlkPSJzZXR0aW5nc0Zvcm0iIG9uU3VibWl0PXtoYW5kbGVTYXZlfT48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZmxleCcsZmxleERpcmVjdGlvbjonY29sdW1uJyxnYXA6MjB9fT48Q2FyZCBzdHJpcGU9IiMzYjgyZjYiIHNoYWRvdz0icmdiYSg1OSwxMzAsMjQ2LDAuMjUpIiBkZWxheT0iZGVsYXktMiI+PFNlY3Rpb25UaXRsZSBpY29uPSJ1c2VyIiBjb2xvcj0iIzYwYTVmYSIgbGFiZWw9e3R4LmJhc2ljfSAvPjxkaXYgc3R5bGU9e3tkaXNwbGF5OidncmlkJyxncmlkVGVtcGxhdGVDb2x1bW5zOidyZXBlYXQoYXV0by1maWxsLG1pbm1heCgxNjBweCwxZnIpKScsZ2FwOjE0LG1hcmdpblRvcDoyMH19PjxGaWVsZCBsYWJlbD0iTGlua2VkIE51bWJlciI+PGlucHV0IGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17b3duZXJOdW19IGRpc2FibGVkIC8+PC9GaWVsZD48RmllbGQgbGFiZWw9IkJvdCBOYW1lIj48aW5wdXQgY2xhc3NOYW1lPXtgaW5wICR7ZXJyb3JzLm5hbWU/J2lucC1lcnJvcic6Jyd9YH0gcGxhY2Vob2xkZXI9e0JSQU5EX1BBTkVMX05BTUV9IHZhbHVlPXtzLm5hbWV9IG9uQ2hhbmdlPXtlPT5oYW5kbGVJbnB1dCgnbmFtZScsZS50YXJnZXQudmFsdWUpfSBtYXhMZW5ndGg9ezE1fSAvPjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiPjxzcGFuIGNsYXNzTmFtZT17ZXJyb3JzLm5hbWU/J2Vycm9yLXRleHQnOidoaW50LXRleHQnfT57ZXJyb3JzLm5hbWV8fCcnfTwvc3Bhbj48c3BhbiBjbGFzc05hbWU9ImNvdW50ZXIiPntzLm5hbWUubGVuZ3RofS8xNTwvc3Bhbj48L2Rpdj48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iTG9jYXRpb24iPjxpbnB1dCBjbGFzc05hbWU9e2BpbnAgJHtlcnJvcnMuZnJvbT8naW5wLWVycm9yJzonJ31gfSB2YWx1ZT17cy5mcm9tfSBvbkNoYW5nZT17ZT0+aGFuZGxlSW5wdXQoJ2Zyb20nLGUudGFyZ2V0LnZhbHVlKX0gbWF4TGVuZ3RoPXsxNX0gLz48ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9e2Vycm9ycy5mcm9tPydlcnJvci10ZXh0JzonaGludC10ZXh0J30+e2Vycm9ycy5mcm9tfHwnJ308L3NwYW4+PHNwYW4gY2xhc3NOYW1lPSJjb3VudGVyIj57cy5mcm9tLmxlbmd0aH0vMTU8L3NwYW4+PC9kaXY+PC9GaWVsZD48RmllbGQgbGFiZWw9IkFnZSI+PGlucHV0IGNsYXNzTmFtZT17YGlucCAke2Vycm9ycy5hZ2U/J2lucC1lcnJvcic6Jyd9YH0gcGxhY2Vob2xkZXI9IjI0IiB2YWx1ZT17cy5hZ2V9IG9uQ2hhbmdlPXtlPT5oYW5kbGVJbnB1dCgnYWdlJyxlLnRhcmdldC52YWx1ZSl9IG1heExlbmd0aD17Mn0gLz48ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9e2Vycm9ycy5hZ2U/J2Vycm9yLXRleHQnOidoaW50LXRleHQnfT57ZXJyb3JzLmFnZXx8dHguYWdlSGludH08L3NwYW4+PC9kaXY+PC9GaWVsZD48RmllbGQgbGFiZWw9IlByZWZpeCI+PGlucHV0IGNsYXNzTmFtZT17YGlucCAke2Vycm9ycy5wcmVmaXg/J2lucC1lcnJvcic6Jyd9YH0gc3R5bGU9e3tmb250RmFtaWx5Oidtb25vc3BhY2UnfX0gdmFsdWU9e3MucHJlZml4fSBvbkNoYW5nZT17ZT0+aGFuZGxlSW5wdXQoJ3ByZWZpeCcsZS50YXJnZXQudmFsdWUpfSBtYXhMZW5ndGg9ezJ9IC8+PGRpdiBjbGFzc05hbWU9InZhbGlkYXRpb24taGludCI+PHNwYW4gY2xhc3NOYW1lPXtlcnJvcnMucHJlZml4PydlcnJvci10ZXh0JzonaGludC10ZXh0J30+e2Vycm9ycy5wcmVmaXh8fHR4LnByZWZpeEhpbnR9PC9zcGFuPjwvZGl2PjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJGb290ZXIiPjxpbnB1dCBjbGFzc05hbWU9e2BpbnAgJHtlcnJvcnMuZm9vdGVyMj8naW5wLWVycm9yJzonJ31gfSB2YWx1ZT17cy5mb290ZXIyfSBvbkNoYW5nZT17ZT0+aGFuZGxlSW5wdXQoJ2Zvb3RlcjInLGUudGFyZ2V0LnZhbHVlKX0gbWF4TGVuZ3RoPXsxNX0gLz48ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9e2Vycm9ycy5mb290ZXIyPydlcnJvci10ZXh0JzonaGludC10ZXh0J30+e2Vycm9ycy5mb290ZXIyfHwnJ308L3NwYW4+PHNwYW4gY2xhc3NOYW1lPSJjb3VudGVyIj57cy5mb290ZXIyLmxlbmd0aH0vMTU8L3NwYW4+PC9kaXY+PC9GaWVsZD48RmllbGQgbGFiZWw9Ik1vZGUiPjxzZWxlY3QgY2xhc3NOYW1lPSJpbnAiIHZhbHVlPXtzLm1vZGV9IG9uQ2hhbmdlPXtlPT51cGQoJ21vZGUnLGUudGFyZ2V0LnZhbHVlKX0+PG9wdGlvbiB2YWx1ZT0icHVibGljIj5QdWJsaWM8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJwcml2YXRlIj5Qcml2YXRlPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iaW5ib3giPkluYm94IE9ubHk8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJncm91cCI+R3JvdXAgT25seTwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImFkbWluIj5BZG1pbiBPbmx5PC9vcHRpb24+PC9zZWxlY3Q+PC9GaWVsZD48L2Rpdj48L0NhcmQ+PENhcmQgc3RyaXBlPSIjMTRiOGE2IiBzaGFkb3c9InJnYmEoMjAsMTg0LDE2NiwwLjIyKSIgZGVsYXk9ImRlbGF5LTIiPjxTZWN0aW9uVGl0bGUgaWNvbj0iZ2xvYmUiIGNvbG9yPSIjNWVlYWQ0IiBsYWJlbD0iT3duZXIgJiBQdWJsaWMgUHJvZmlsZSIgLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczoncmVwZWF0KGF1dG8tZmlsbCxtaW5tYXgoMjAwcHgsMWZyKSknLGdhcDoxNCxtYXJnaW5Ub3A6MjB9fT48RmllbGQgbGFiZWw9IkNvbnRhY3QgTnVtYmVyIj48aW5wdXQgY2xhc3NOYW1lPSJpbnAgbW9ubyIgdmFsdWU9e3Mub3duZXJOdW1iZXJ9IG9uQ2hhbmdlPXtlPT51cGQoJ293bmVyTnVtYmVyJyxlLnRhcmdldC52YWx1ZS5yZXBsYWNlKC9bXjAtOV0vZywnJykpfSBwbGFjZWhvbGRlcj0iOTY3N1hYWFhYWFgiIC8+PC9GaWVsZD48RmllbGQgbGFiZWw9Ik93bmVyIE5hbWUiPjxpbnB1dCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3Mub3duZXJuYW1lfSBvbkNoYW5nZT17ZT0+dXBkKCdvd25lcm5hbWUnLGUudGFyZ2V0LnZhbHVlKX0gcGxhY2Vob2xkZXI9Ik93bmVyIG5hbWUiIG1heExlbmd0aD17NDB9IC8+PC9GaWVsZD48RmllbGQgbGFiZWw9IkRlc2NyaXB0aW9uIiBzdHlsZT17e2dyaWRDb2x1bW46JzEvLTEnfX0+PHRleHRhcmVhIGNsYXNzTmFtZT0iaW5wIiByb3dzPXs0fSB2YWx1ZT17cy5kZXNjcmlwdGlvbn0gb25DaGFuZ2U9e2U9PnVwZCgnZGVzY3JpcHRpb24nLGUudGFyZ2V0LnZhbHVlKX0gcGxhY2Vob2xkZXI9IlB1YmxpYyBkZXNjcmlwdGlvbiAvIGFib3V0IHRoaXMgbnVtYmVyIiAvPjwvRmllbGQ+PC9kaXY+PC9DYXJkPgogICAgPENhcmQgc3RyaXBlPSIjYTg1NWY3IiBzaGFkb3c9InJnYmEoMTY4LDg1LDI0NywwLjIpIiBkZWxheT0iZGVsYXktMyI+PFNlY3Rpb25UaXRsZSBpY29uPSJ6YXAiIGNvbG9yPSIjYzA4NGZjIiBsYWJlbD17dHguc3lzfSAvPjxkaXYgc3R5bGU9e3tkaXNwbGF5OidncmlkJyxncmlkVGVtcGxhdGVDb2x1bW5zOidyZXBlYXQoYXV0by1maWxsLG1pbm1heCgyMTBweCwxZnIpKScsZ2FwOjEwLG1hcmdpblRvcDoyMH19Pntbe2w6J0FudGkgQmFkIFdvcmQnLGs6J2FudGlCYWQnfSx7bDonQW50aSBMaW5rJyxrOidhbnRpTGluayd9LHtsOidBbHdheXMgT25saW5lJyxrOidhbHdheXNPbmxpbmUnfSx7bDonQXV0byBUeXBpbmcnLGs6J2F1dG9UeXBpbmcnfSx7bDonU3RhdHVzIFNlZW4nLGs6J2F1dG9TdGF0dXNSZWFkJ30se2w6J0F1dG8gUmVhZCcsazonYXV0b1JlYWQnfSx7bDonU3RhdHVzIC8gU3RvcnkgUmVhY3QnLGs6J2F1dG9TdGF0dXNSZWFjdCd9LHtsOidBdXRvIFZvaWNlJyxrOidhdXRvVm9pY2UnfSx7bDonQXV0byBCbG9jaycsazonYXV0b0Jsb2NrJ30se2w6J0F1dG8gUmVjb3JkaW5nJyxrOidhdXRvUmVjb3JkaW5nJ30se2w6J0F1dG8gU2F2ZSBDb250YWN0cycsazonYXV0b1NhdmUnfV0ubWFwKCh7bCxrfSk9Pig8ZGl2IGtleT17a30gY2xhc3NOYW1lPSJ0b2dnbGUtcm93Ij48c3BhbiBzdHlsZT17e2ZvbnRTaXplOjEzLGNvbG9yOicjY2JkNWUxJ319PntsfTwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzW2tdfSBvbkNoYW5nZT17dj0+dXBkKGssdil9IC8+PC9kaXY+KSl9PC9kaXY+PC9DYXJkPgogICAgPENhcmQgc3RyaXBlPSIjMDZiNmQ0IiBzaGFkb3c9InJnYmEoNiwxODIsMjEyLDAuMikiIGRlbGF5PSJkZWxheS0zIj48U2VjdGlvblRpdGxlIGljb249Im1lc3NhZ2UiIGNvbG9yPSIjMjJkM2VlIiBsYWJlbD17dHguc3RhdHVzfSAvPjxkaXYgc3R5bGU9e3tkaXNwbGF5OidncmlkJyxncmlkVGVtcGxhdGVDb2x1bW5zOidyZXBlYXQoYXV0by1maWxsLG1pbm1heCgyMDBweCwxZnIpKScsZ2FwOjE0LG1hcmdpblRvcDoyMH19PjxkaXYgY2xhc3NOYW1lPSJ0b2dnbGUtcm93Ij48c3Bhbj5TdGF0dXMgTWVzc2FnZSBTZW5kPC9zcGFuPjxUb2dnbGUgdmFsdWU9e3Muc3RhdHVzTXNnU2VuZH0gb25DaGFuZ2U9e3Y9PnVwZCgnc3RhdHVzTXNnU2VuZCcsdil9IC8+PC9kaXY+e3Muc3RhdHVzTXNnU2VuZCA9PT0gJ29uJyAmJiAoPD48RmllbGQgbGFiZWw9Ik1lc3NhZ2UgVHlwZSI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3Muc3RhdHVzTXNnVHlwZX0gb25DaGFuZ2U9e2U9PnVwZCgnc3RhdHVzTXNnVHlwZScsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJkZWZhdWx0Ij5EZWZhdWx0PC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iY3VzdG9tIj5DdXN0b208L29wdGlvbj48L3NlbGVjdD48L0ZpZWxkPntzLnN0YXR1c01zZ1R5cGUgPT09ICdjdXN0b20nICYmICg8RmllbGQgbGFiZWw9IkN1c3RvbSBNZXNzYWdlIiBzdHlsZT17e2dyaWRDb2x1bW46JzEvLTEnfX0+PHRleHRhcmVhIGNsYXNzTmFtZT0iaW5wIiByb3dzPXszfSB2YWx1ZT17cy5jdXN0b21Nc2d9IG9uQ2hhbmdlPXtlPT51cGQoJ2N1c3RvbU1zZycsZS50YXJnZXQudmFsdWUpfSBwbGFjZWhvbGRlcj0iQ3VzdG9t4oCmIiAvPjwvRmllbGQ+KX08Lz4pfTwvZGl2PjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiIHN0eWxlPXt7bWFyZ2luVG9wOjEwfX0+PHNwYW4gY2xhc3NOYW1lPSJoaW50LXRleHQiPkNoYW5nZXMgc2F2ZWQgaGVyZSBvciBmcm9tIHRoZSBib3QgYXJlIGFwcGxpZWQgdG8gdGhlIGxpbmtlZCBudW1iZXIg2YXYqNin2LTYsdipLjwvc3Bhbj48L2Rpdj48Q2FyZCBzdHJpcGU9IiM4YjVjZjYiIHNoYWRvdz0icmdiYSgxMzksOTIsMjQ2LDAuMjQpIiBkZWxheT0iZGVsYXktMyI+PFNlY3Rpb25UaXRsZSBpY29uPSJtZXNzYWdlIiBjb2xvcj0iI2M0YjVmZCIgbGFiZWw9IkF1dG8gUmVwbHkgJiBDb250YWN0IFNhdmUiIC8+PGRpdiBzdHlsZT17e2Rpc3BsYXk6J2dyaWQnLGdyaWRUZW1wbGF0ZUNvbHVtbnM6J3JlcGVhdChhdXRvLWZpbGwsbWlubWF4KDIyMHB4LDFmcikpJyxnYXA6MTQsbWFyZ2luVG9wOjIwfX0+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciPjxzcGFuPkF1dG8gU2F2ZSBDb250YWN0czwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmF1dG9TYXZlfSBvbkNoYW5nZT17dj0+dXBkKCdhdXRvU2F2ZScsdil9IC8+PC9kaXY+PEZpZWxkIGxhYmVsPSJDdXN0b20gQXV0byBSZXBsaWVzIiBzdHlsZT17e2dyaWRDb2x1bW46JzEvLTEnfX0+PHRleHRhcmVhIGNsYXNzTmFtZT0iaW5wIG1vbm8iIHJvd3M9ezl9IHZhbHVlPXtzLmN1c3RvbUF1dG9SZXBsaWVzfSBvbkNoYW5nZT17ZT0+dXBkKCdjdXN0b21BdXRvUmVwbGllcycsZS50YXJnZXQudmFsdWUpfSBwbGFjZWhvbGRlcj17ImhlbGxvID0+IEhpIHRoZXJlXG5wcmljZSB8IGNvc3QgPT4gVGhlIHByaWNlIGlzIC4uLlxuVGhhbmtzIGZvciBtZXNzYWdpbmcgdXMifSAvPjwvRmllbGQ+PGRpdiBjbGFzc05hbWU9InZhbGlkYXRpb24taGludCIgc3R5bGU9e3tncmlkQ29sdW1uOicxLy0xJ319PjxzcGFuIGNsYXNzTmFtZT0iaGludC10ZXh0Ij5Vc2Ugb25lIHJlcGx5IHBlciBsaW5lLiBGb3JtYXQ6IGtleXdvcmQgPT4gcmVwbHkuIE11bHRpcGxlIGtleXdvcmRzOiBoZWxsbyB8IGhpID0+IHdlbGNvbWUuIFBsYWluIGxpbmVzIHdvcmsgYXMgcmFuZG9tIGZhbGxiYWNrIHJlcGxpZXMuPC9zcGFuPjxzcGFuIGNsYXNzTmFtZT0iY291bnRlciI+e2F1dG9SZXBseUNvdW50fS8yMDwvc3Bhbj48L2Rpdj48L2Rpdj48L0NhcmQ+CiAgICB7LyogRW1vamkgUGlja2VyIC0gT05FIEVNT0pJIEFUIEEgVElNRSAoRW50ZXIga2V5IG9ubHksIG5vIGNvbW1hIHNlcGFyYXRpb24pICovfQogICAgPGRpdiBzdHlsZT17e21hcmdpblRvcDoxNn19PjxwIHN0eWxlPXt7Zm9udFNpemU6MTEsY29sb3I6J3ZhcigtLWdvbGQpJyxtYXJnaW5Cb3R0b206NixsZXR0ZXJTcGFjaW5nOicwLjA4ZW0nfX0+e3R4LmVtb2ppVGl0bGV9PC9wPjxkaXYgY2xhc3NOYW1lPSJlbW9qaS1ncmlkIj57ZW1vamlMaXN0Lm1hcCgoZW0saWR4KT0+KDxkaXYga2V5PXtpZHh9IGNsYXNzTmFtZT0iZW1vamktb3B0aW9uIiBvbkNsaWNrPXsoKT0+cmVtb3ZlRW1vamkoaWR4KX0gdGl0bGU9IlJlbW92ZSI+e2VtfTxzcGFuIHN0eWxlPXt7Zm9udFNpemU6MTAsbWFyZ2luTGVmdDo0LG9wYWNpdHk6MC43fX0+4pyVPC9zcGFuPjwvZGl2PikpfXtlbW9qaUxpc3QubGVuZ3RoPDEwICYmICg8ZGl2IGNsYXNzTmFtZT0iaW5saW5lLWVtb2ppLWlucHV0IiBzdHlsZT17e3dpZHRoOicxMDAlJ319PjxpbnB1dCB0eXBlPSJ0ZXh0IiBjbGFzc05hbWU9ImlucCIgc3R5bGU9e3tmbGV4OjF9fSBwbGFjZWhvbGRlcj17dHguZW1vamlQbGFjZWhvbGRlciArICIgKFByZXNzIEVudGVyKSJ9IG9uS2V5RG93bj17aGFuZGxlRW1vamlLZXlEb3dufSBpZD0iZW1vamlRdWlja0lucHV0IiAvPjxidXR0b24gdHlwZT0iYnV0dG9uIiBjbGFzc05hbWU9ImVtb2ppLWFkZC1idG4iIG9uQ2xpY2s9eygpPT57Y29uc3QgaW5wPWRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdlbW9qaVF1aWNrSW5wdXQnKTsgaWYoaW5wLnZhbHVlLnRyaW0oKSl7IGFkZEVtb2ppKGlucC52YWx1ZS50cmltKCkpOyBpbnAudmFsdWU9Jyc7fSB9fT4rPC9idXR0b24+PC9kaXY+KX08ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9ImhpbnQtdGV4dCI+TWF4IDEwIGVtb2ppcyB8IFR5cGUgT05FIGVtb2ppIHRoZW4gcHJlc3MgRW50ZXI8L3NwYW4+PHNwYW4gY2xhc3NOYW1lPSJjb3VudGVyIj57ZW1vamlMaXN0Lmxlbmd0aH0vMTA8L3NwYW4+PC9kaXY+PC9kaXY+PC9kaXY+PC9DYXJkPgogICAgPENhcmQgc3RyaXBlPSIjZjU5ZTBiIiBzaGFkb3c9InJnYmEoMjQ1LDE1OCwxMSwwLjIpIiBkZWxheT0iZGVsYXktNCI+PFNlY3Rpb25UaXRsZSBpY29uPSJpbWFnZSIgY29sb3I9IiNmYmJmMjQiIGxhYmVsPXt0eC5sb2dvc30gLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczoncmVwZWF0KGF1dG8tZmlsbCxtaW5tYXgoMjAwcHgsMWZyKSknLGdhcDoxNixtYXJnaW5Ub3A6MjB9fT57W3trZXk6J21lbnUnLGxhYmVsOidNZW51IExvZ28nfSx7a2V5OidhbGl2ZScsbGFiZWw6J0FsaXZlIExvZ28nfSx7a2V5Oidvd25lcicsbGFiZWw6J093bmVyIExvZ28nfV0ubWFwKCh7a2V5LGxhYmVsfSkgPT4gKDxkaXYga2V5PXtrZXl9IHN0eWxlPXt7cGFkZGluZzoxNixiYWNrZ3JvdW5kOidyZ2JhKDI1NSwyNTUsMjU1LDAuMDIpJyxib3JkZXJSYWRpdXM6MTh9fT48cCBzdHlsZT17e2ZvbnRTaXplOjExLGNvbG9yOid2YXIoLS1tdXRlZCknfX0+e2xhYmVsfTwvcD48ZGl2IGNsYXNzTmFtZT0iaW1nLXNsb3QiPntzW2tleV0/PGltZyBzcmM9e3Nba2V5XX0gYWx0PXtsYWJlbH0gLz46PEljb24gaWQ9ImltYWdlIiBzaXplPXsyOH0gc3R5bGU9e3tjb2xvcjondmFyKC0tZmFpbnQpJ319IC8+fTwvZGl2PjxpbnB1dCBjbGFzc05hbWU9ImlucCBtb25vIiBzdHlsZT17e2ZvbnRTaXplOjExfX0gdmFsdWU9e3Nba2V5XX0gb25DaGFuZ2U9e2U9PnVwZChrZXksZS50YXJnZXQudmFsdWUpfSBwbGFjZWhvbGRlcj0iaHR0cHM6Ly/igKYiIC8+PGxhYmVsIGNsYXNzTmFtZT0idXBsb2FkLWxibCI+e3VwbG9hZGluZz09PWtleT88PjxzcGFuIGNsYXNzTmFtZT0ic3BpbiIvPnt0eC51cGxvYWRpbmd9PC8+Ojw+PEljb24gaWQ9InVwbG9hZCIgc2l6ZT17MTN9Lz57dHguZ2FsbGVyeX08Lz59PGlucHV0IHR5cGU9ImZpbGUiIGFjY2VwdD0iaW1hZ2UvKiIgaGlkZGVuIG9uQ2hhbmdlPXtlPT5oYW5kbGVVcGxvYWQoZSxrZXkpfSBkaXNhYmxlZD17dXBsb2FkaW5nIT09bnVsbH0gLz48L2xhYmVsPjwvZGl2PikpfTwvZGl2PjwvQ2FyZD4KICAgIDxkaXYgc3R5bGU9e3tkaXNwbGF5OidncmlkJyxncmlkVGVtcGxhdGVDb2x1bW5zOicxZnIgMWZyJyxnYXA6MjB9fT48Q2FyZCBzdHJpcGU9IiNlZjQ0NDQiIHNoYWRvdz0icmdiYSgyMzksNjgsNjgsMC4yKSI+PFNlY3Rpb25UaXRsZSBpY29uPSJwaG9uZS1vZmYiIGNvbG9yPSIjZjg3MTcxIiBsYWJlbD17dHguY2FsbHN9IC8+PGRpdiBzdHlsZT17e21hcmdpblRvcDoyMH19PjxkaXYgY2xhc3NOYW1lPSJ0b2dnbGUtcm93Ij48c3Bhbj5BbnRpIENhbGw8L3NwYW4+PFRvZ2dsZSB2YWx1ZT17cy5hbnRpQ2FsbH0gb25DaGFuZ2U9e3Y9PnVwZCgnYW50aUNhbGwnLHYpfSAvPjwvZGl2PntzLmFudGlDYWxsPT09J29uJyYmKDxGaWVsZCBsYWJlbD0iRXhjbHVkZWQgTnVtYmVycyI+PGlucHV0IGNsYXNzTmFtZT0iaW5wIG1vbm8iIHZhbHVlPXtzLmV4Y2x1ZGVDYWxsTnVtYmVyc30gb25DaGFuZ2U9e2U9PnVwZCgnZXhjbHVkZUNhbGxOdW1iZXJzJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD4pfTwvZGl2PjwvQ2FyZD4KICAgIDxDYXJkIHN0cmlwZT0iI2Y5NzMxNiIgc2hhZG93PSJyZ2JhKDI0OSwxMTUsMjIsMC4yKSI+PFNlY3Rpb25UaXRsZSBpY29uPSJ0cmFzaC0yIiBjb2xvcj0iI2ZiOTIzYyIgbGFiZWw9e3R4LmRlbGV0ZX0gLz48ZGl2PjxGaWVsZCBsYWJlbD0iQW50aS1EZWxldGUgTW9kZSI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYW50aURlbGV0ZX0gb25DaGFuZ2U9e2U9PnVwZCgnYW50aURlbGV0ZScsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJvZmYiPk9mZjwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImluYm94Ij5JbmJveDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9Imdyb3VwIj5Hcm91cDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImFsbCI+QWxsPC9vcHRpb24+PC9zZWxlY3Q+PC9GaWVsZD57cy5hbnRpRGVsZXRlIT09J29mZicmJig8RmllbGQgbGFiZWw9IlNlbmQgVG8iPjxzZWxlY3QgY2xhc3NOYW1lPSJpbnAiIHZhbHVlPXtzLnNlbmREZWxldGVUb30gb25DaGFuZ2U9e2U9PnVwZCgnc2VuZERlbGV0ZVRvJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9Im93bmVyIj5Pd25lcjwvb3B0aW9uPjxvcHRpb24gdmFsdWU9InNhbWUiPlNhbWUgQ2hhdDwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+KX08L2Rpdj48L0NhcmQ+PC9kaXY+CiAgICA8ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczonMWZyIDFmcicsZ2FwOjIwfX0+PENhcmQgc3RyaXBlPSIjYTg1NWY3IiBzaGFkb3c9InJnYmEoMTY4LDg1LDI0NywwLjIpIj48U2VjdGlvblRpdGxlIGljb249ImJ1ZyIgY29sb3I9IiNjMDg0ZmMiIGxhYmVsPXt0eC5hbnRpQnVnfSAvPjxkaXYgc3R5bGU9e3ttYXJnaW5Ub3A6MTR9fT48ZGl2IGNsYXNzTmFtZT0idG9nZ2xlLXJvdyI+PHNwYW4+QW50aSBCdWcgUHJvdGVjdGlvbjwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmFudGlCdWd9IG9uQ2hhbmdlPXt2PT51cGQoJ2FudGlCdWcnLHYpfSAvPjwvZGl2PjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiIHN0eWxlPXt7bWFyZ2luVG9wOjh9fT48c3BhbiBjbGFzc05hbWU9ImhpbnQtdGV4dCI+QmxvY2tzIGtub3duIGJ1ZyBleHBsb2l0czwvc3Bhbj48L2Rpdj48L2Rpdj48L0NhcmQ+CiAgICA8Q2FyZCBzdHJpcGU9IiNlYzQ4OTkiIHNoYWRvdz0icmdiYSgyMzYsNzIsMTUzLDAuMikiPjxTZWN0aW9uVGl0bGUgaWNvbj0icm9ib3QiIGNvbG9yPSIjZjQ3MmI2IiBsYWJlbD17dHguYW50aUJvdH0gLz48ZGl2IHN0eWxlPXt7bWFyZ2luVG9wOjE0fX0+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciPjxzcGFuPkFudGkgQm90IEZpbHRlcjwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmFudGlCb3R9IG9uQ2hhbmdlPXt2PT51cGQoJ2FudGlCb3QnLHYpfSAvPjwvZGl2PntzLmFudGlCb3QgPT09ICdvbicgJiYgKDxGaWVsZCBsYWJlbD0iQWN0aW9uIG9uIEJvdCI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYW50aUJvdEFjdGlvbn0gb25DaGFuZ2U9e2U9PnVwZCgnYW50aUJvdEFjdGlvbicsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJkZWxldGUiPnt0eC5hY3Rpb25EZWxldGV9PC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iZGVsZXRlK2tpY2siPnt0eC5hY3Rpb25LaWNrfTwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+KX08ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9ImhpbnQtdGV4dCI+QXV0byBkZXRlY3QgJiB7cy5hbnRpQm90QWN0aW9uPT09J2RlbGV0ZSc/J0RlbGV0ZSBtZXNzYWdlJzonRGVsZXRlICsgS2ljayB1c2VyJ308L3NwYW4+PC9kaXY+PC9kaXY+PC9DYXJkPjwvZGl2PgogICAgPENhcmQgc3RyaXBlPSIjMjJjNTVlIiBzaGFkb3c9InJnYmEoMzQsMTk3LDk0LDAuMikiPjxTZWN0aW9uVGl0bGUgaWNvbj0iY2xvY2siIGNvbG9yPSIjNGFkZTgwIiBsYWJlbD17dHguZ3JvdXB9IC8+PGRpdiBzdHlsZT17e2Rpc3BsYXk6J2dyaWQnLGdyaWRUZW1wbGF0ZUNvbHVtbnM6JzFmciAxZnInLGdhcDoxNCxtYXJnaW5Ub3A6MjB9fT48RmllbGQgbGFiZWw9Ikdyb3VwIEpJRCIgc3R5bGU9e3tncmlkQ29sdW1uOicxLy0xJ319PjxpbnB1dCBjbGFzc05hbWU9ImlucCBtb25vIiBwbGFjZWhvbGRlcj0iMTIwMzYzeHh4eHh4eHhAZy51cyIgdmFsdWU9e3MuZ2FHcm91cEppZH0gb25DaGFuZ2U9e2U9PnVwZCgnZ2FHcm91cEppZCcsZS50YXJnZXQudmFsdWUpfSAvPjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJUaW1lem9uZSI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuZ2FUaW1lem9uZX0gb25DaGFuZ2U9e2U9PnVwZCgnZ2FUaW1lem9uZScsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJBc2lhL0NvbG9tYm8iPlNyaSBMYW5rYSAoVVRDKzU6MzApPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iQXNpYS9Lb2xrYXRhIj5JbmRpYTwvb3B0aW9uPjxvcHRpb24gdmFsdWU9IkFzaWEvRHViYWkiPlVBRTwvb3B0aW9uPjxvcHRpb24gdmFsdWU9IlVUQyI+VVRDPC9vcHRpb24+PC9zZWxlY3Q+PC9GaWVsZD48RmllbGQgbGFiZWw9IkNsb3NlIFRpbWUiPjxpbnB1dCB0eXBlPSJ0aW1lIiBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuZ2FDbG9zZVRpbWV9IG9uQ2hhbmdlPXtlPT51cGQoJ2dhQ2xvc2VUaW1lJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD48RmllbGQgbGFiZWw9Ik9wZW4gVGltZSI+PGlucHV0IHR5cGU9InRpbWUiIGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5nYU9wZW5UaW1lfSBvbkNoYW5nZT17ZT0+dXBkKCdnYU9wZW5UaW1lJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD48L2Rpdj48L0NhcmQ+CiAgICA8L2Rpdj48L2Zvcm0+PC9kaXY+PGRpdiBzdHlsZT17e3Bvc2l0aW9uOidmaXhlZCcsYm90dG9tOjI4LHJpZ2h0OjI4LHpJbmRleDo5OTk5fX0+PGJ1dHRvbiBmb3JtPSJzZXR0aW5nc0Zvcm0iIHR5cGU9InN1Ym1pdCIgZGlzYWJsZWQ9e2xvYWRpbmd9IGNsYXNzTmFtZT0ic2F2ZS1idG4iIHN0eWxlPXtsb2FkaW5nP3tvcGFjaXR5OjAuNjV9Ont9fT57bG9hZGluZz88PjxzcGFuIGNsYXNzTmFtZT0ic3BpbiIvPlNhdmluZ+KApjwvPjo8PjxJY29uIGlkPSJzYXZlIiBzaXplPXsxOH0vPnt0eC5zYXZlfTwvPn08L2J1dHRvbj48L2Rpdj48L2Rpdj48L2Rpdj4pOwp9CmNvbnN0IHJvb3QgPSBSZWFjdERPTS5jcmVhdGVSb290KGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdyb290JykpOwpyb290LnJlbmRlcig8QXBwIC8+KTsKPC9zY3JpcHQ+CjwvYm9keT4KPC9odG1sPg==', 'base64').toString('utf8');
 const BUILTIN_ADMIN_IDS = ['7231690686'];
-const STORAGE_ROOT = (() => {
-    const candidates = [
-        process.env.BOT_STORAGE_ROOT,
-        process.env.RAILWAY_VOLUME_MOUNT_PATH,
-        process.env.RAILWAY_PERSISTENT_DIR,
-        process.env.RENDER_DISK_MOUNT_PATH,
-        fs.existsSync('/data') ? '/data' : '',
-        path.join(process.cwd(), '.bot-storage')
-    ].map((item) => String(item || '').trim()).filter(Boolean);
-    return candidates[0];
-})();
+const STORAGE_ROOT = process.env.RENDER_DISK_MOUNT_PATH || __dirname;
 const DATA_DIR = path.join(STORAGE_ROOT, 'data');
 const SESSIONS_DIR = path.join(STORAGE_ROOT, 'sessions');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PHONE_SETTINGS_FILE = path.join(DATA_DIR, 'phone-settings.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-const BOT_ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
-const STATUS_BACKUPS_FILE = path.join(DATA_DIR, 'status-backups.json');
-const STATUS_MEDIA_DIR = path.join(DATA_DIR, 'status-media');
 const DEFAULT_ADMINS = Array.from(
     new Set(
         [...BUILTIN_ADMIN_IDS, ...(process.env.ADMIN_IDS || '').split(',')]
@@ -912,40 +153,6 @@ const PUBLIC_BASE_URL = String(
         (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
         DEFAULT_PUBLIC_BASE_URL
 ).replace(/\/+$/, '');
-
-function cleanPublicUrl(value = '') {
-    return String(value || '').trim().replace(/\/+$/, '');
-}
-
-function getWebPanelPublicUrl() {
-    return cleanPublicUrl(process.env.WEB_PANEL_URL || process.env.PUBLIC_WEB_PANEL_URL || PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL);
-}
-
-function getSettingsPublicUrl() {
-    return cleanPublicUrl(process.env.SETTINGS_PAGE_URL || process.env.PUBLIC_SETTINGS_URL || `${getWebPanelPublicUrl()}/settings`);
-}
-
-function getPairingPublicUrl() {
-    return cleanPublicUrl(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEFAULT_PAIRING_LINK || getWebPanelPublicUrl());
-}
-
-function getContactSavePublicUrl() {
-    return cleanPublicUrl(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_PUBLIC_URL || DEFAULT_CONTACTSAVE_LINK || `${getWebPanelPublicUrl()}/contactsave`);
-}
-
-function buildWebPanelLinksMessage(phone = '', appId = null) {
-    const credential = phone ? getPhoneSettingsCredential(phone, appId) : null;
-    const lines = [
-        `🌐 روابط لوحة الويب${phone ? ` للرقم ${phone}` : ''}`,
-        `🖥️ رابط الواجهة: ${getWebPanelPublicUrl()}`,
-        `⚙️ رابط الإعدادات: ${getSettingsPublicUrl()}`,
-        `🔗 رابط الربط: ${getPairingPublicUrl()}`
-    ];
-    if (credential?.password) {
-        lines.push(`🗝️ كلمة السر: ${credential.password}`);
-    }
-    return lines.join('\n');
-}
 function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
     const safeText = String(text || BRAND_IMAGE_TEXT)
         .replace(/&/g, '&amp;')
@@ -978,48 +185,6 @@ function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
 }
 
 const DEFAULT_BRAND_IMAGE = buildBrandPlaceholderImage();
-const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
-    'أنا بوت التفاعل على الاستوري بدون توقف.',
-    'رابط البوت:',
-    '{botLink}',
-    'رابط الربط:',
-    '{pairingLink}',
-    'رابط الإعدادات:',
-    '{settingsLink}',
-    'رابط الواجهة:',
-    '{webPanelLink}'
-].join('\n');
-const DEFAULT_LINKED_WELCOME_MESSAGE = [
-    'تم ربط رقمك بنجاح ✅',
-    'رابط الإعدادات:',
-    '{settingsLink}',
-    'رابط الواجهة:',
-    '{webPanelLink}'
-].join('\n');
-const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
-const CHANNEL_PROMOTION_INTERVAL_MS = 60 * 60 * 1000;
-const CHANNEL_PROMOTION_INITIAL_DELAY_MS = CHANNEL_PROMOTION_INTERVAL_MS;
-const CHANNEL_PROMOTION_MESSAGE = `تلقائي
-
-━━*〔 🌐 الروابط الرسمية 〕*━━━┫
-
-┆ ❯ *🤖 رابط البوت*
-┆ ⟢ {botLink}
-
-┆ ❯ *🔗 رابط الربط*
-┆ ⟢ {pairingLink}
-
-┆ ❯ *⚙️ لوحة الإعدادات*
-┆ ⟢ {settingsLink}
-
-┆ ❯ *🖥️ الواجهة الرئيسية*
-┆ ⟢ {webPanelLink}
-
-╰━━━━━━━━━━━━━━━━━━━━╯
-
-*✨ سرعة • احترافية • خصوصية*
-*🚀 كل الروابط تتحدث تلقائياً من Variables*`;
-
 
 const TELEGRAM_WEBHOOK_PATH = (() => {
     const hookPath = String(process.env.TELEGRAM_WEBHOOK_PATH || '/telegram/webhook').trim() || '/telegram/webhook';
@@ -1038,7 +203,6 @@ const TELEGRAM_ENABLED = Boolean(String(BOT_TOKEN || '').trim());
 const TELEGRAM_PLACEHOLDER_TOKEN = '0000000000:render-disabled-placeholder-token';
 
 const app = express();
-EventEmitter.defaultMaxListeners = 0;
 app.set('trust proxy', 1);
 const bot = new Telegraf(TELEGRAM_ENABLED ? BOT_TOKEN : TELEGRAM_PLACEHOLDER_TOKEN);
 bot.use(session());
@@ -1058,20 +222,6 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use((req, res, next) => {
-    const originalUrl = String(req.url || '/');
-    const [pathPart, ...queryParts] = originalUrl.split('?');
-    const normalizedPath = String(pathPart || '/').replace(/\/{2,}/g, '/');
-    if (normalizedPath !== pathPart) {
-        const normalizedUrl = queryParts.length ? `${normalizedPath}?${queryParts.join('?')}` : normalizedPath;
-        if (req.method === 'GET' || req.method === 'HEAD') {
-            return res.redirect(301, normalizedUrl);
-        }
-        req.url = normalizedUrl;
-    }
-    next();
-});
-
 const waClients = new Map();
 const pairingRequests = new Map();
 const reconnectTimers = new Map();
@@ -1080,15 +230,6 @@ const clientActivity = new Map();
 const stoppedPairings = new Set();
 const ownerReactionFlows = new Map();
 const autoReplyCooldowns = new Map();
-const ghostPendingReads = new Map();
-const statusMirrorTimers = new Map();
-const ownerControlBypassMessageIds = new Set();
-const phoneSettingsAuthSessions = new Map();
-const webSettingsSessions = new Map();
-const channelPromotionTimers = new Map();
-const deletedMessageBackups = new Map();
-const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
-const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
@@ -1134,32 +275,16 @@ function bootStorage() {
     ensureDir(DATA_DIR);
     ensureDir(SESSIONS_DIR);
     ensureDir(UPLOADS_DIR);
-    ensureDir(STATUS_MEDIA_DIR);
     ensureFile(USERS_FILE, { users: {}, phoneOwners: {} });
     ensureFile(SETTINGS_FILE, {
-        startMessage: '',
+        startMessage:
+            'مرحباً بك في نظام بوت الملك فارس المتكامل!\n\n' +
+            'يمكنك من هنا ربط واتساب، تغيير إيموجي التفاعل للحالات، عرض أرقامك المربوطة، وحذف أي جلسة خاصة بك.\n\n' +
+            'الإيموجي الافتراضي الحالي: {emoji}',
         requiredChannel: '',
-        admins: DEFAULT_ADMINS,
-        linkedBotMessageEnabled: true,
-        linkedBotMessage: DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE,
-        linkedWelcomeMessageEnabled: true,
-        linkedWelcomeMessage: DEFAULT_LINKED_WELCOME_MESSAGE,
-        globalLinkedAutoReplies: '',
-        globalStatusLikeMessageEnabled: false,
-        globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
+        admins: DEFAULT_ADMINS
     });
     ensureFile(PHONE_SETTINGS_FILE, { profiles: {} });
-    ensureFile(BOT_ANALYTICS_FILE, {
-        totalIncomingMessages: 0,
-        totalStatusEvents: 0,
-        totalStatusReactions: 0,
-        totalOwnerReplies: 0,
-        totalReconnects: 0,
-        totalSessionsStarted: 0,
-        updatedAt: '',
-        lastBootAt: ''
-    });
-    ensureFile(STATUS_BACKUPS_FILE, { items: {} });
 }
 
 bootStorage();
@@ -1175,147 +300,22 @@ function saveUsersDB(db) {
     writeJSON(USERS_FILE, db);
 }
 
-let analyticsCache = null;
-let analyticsSaveTimer = null;
-
-function getDefaultAnalyticsDB() {
-    return {
-        totalIncomingMessages: 0,
-        totalStatusEvents: 0,
-        totalStatusReactions: 0,
-        totalOwnerReplies: 0,
-        totalReconnects: 0,
-        totalSessionsStarted: 0,
-        updatedAt: '',
-        lastBootAt: ''
-    };
-}
-
-function getAnalyticsDB() {
-    if (!analyticsCache) {
-        analyticsCache = { ...getDefaultAnalyticsDB(), ...(readJSON(BOT_ANALYTICS_FILE, getDefaultAnalyticsDB()) || {}) };
-    }
-    return analyticsCache;
-}
-
-function flushAnalyticsDB() {
-    if (!analyticsCache) return;
-    analyticsCache.updatedAt = new Date().toISOString();
-    writeJSON(BOT_ANALYTICS_FILE, analyticsCache);
-    if (analyticsSaveTimer) {
-        clearTimeout(analyticsSaveTimer);
-        analyticsSaveTimer = null;
-    }
-}
-
-function queueAnalyticsSave() {
-    if (analyticsSaveTimer) return;
-    analyticsSaveTimer = setTimeout(() => {
-        analyticsSaveTimer = null;
-        flushAnalyticsDB();
-    }, 1200);
-    if (typeof analyticsSaveTimer.unref === 'function') {
-        analyticsSaveTimer.unref();
-    }
-}
-
-function incrementAnalytics(field, amount = 1) {
-    const db = getAnalyticsDB();
-    db[field] = Math.max(0, Number(db[field] || 0) + Number(amount || 0));
-    db.updatedAt = new Date().toISOString();
-    queueAnalyticsSave();
-    return db[field];
-}
-
-function markAnalyticsBoot() {
-    const db = getAnalyticsDB();
-    db.lastBootAt = new Date().toISOString();
-    db.updatedAt = db.lastBootAt;
-    queueAnalyticsSave();
-}
-
 function getSettings() {
     const settings = readJSON(SETTINGS_FILE, {
-        startMessage: '',
+        startMessage: 'مرحباً بك في نظام بوت الملك فارس المتكامل!\nالإيموجي الحالي: {emoji}',
         requiredChannel: '',
-        admins: DEFAULT_ADMINS,
-        linkedBotMessageEnabled: true,
-        linkedBotMessage: DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE,
-        linkedWelcomeMessageEnabled: true,
-        linkedWelcomeMessage: DEFAULT_LINKED_WELCOME_MESSAGE,
-        globalLinkedAutoReplies: '',
-        globalStatusLikeMessageEnabled: false,
-        globalStatusLikeMessage: DEFAULT_STATUS_LIKE_REPLY_MESSAGE
+        admins: DEFAULT_ADMINS
     });
 
-    const legacyStartMessages = new Set([
-        'مرحباً بك في نظام بوت الملك فارس المتكامل!\nالإيموجي الحالي: {emoji}',
-        'مرحباً بك في نظام بوت الملك فارس المتكامل!\n\nيمكنك من هنا ربط واتساب، تغيير إيموجي التفاعل للحالات، عرض أرقامك المربوطة، وحذف أي جلسة خاصة بك.\n\nالإيموجي الافتراضي الحالي: {emoji}'
-    ]);
-    const currentStartMessage = String(settings.startMessage || '').trim();
-    settings.startMessage = legacyStartMessages.has(currentStartMessage) ? '' : String(settings.startMessage || '');
+    settings.startMessage = settings.startMessage || 'مرحباً بك في نظام بوت الملك فارس المتكامل!\nالإيموجي الحالي: {emoji}';
     settings.requiredChannel = settings.requiredChannel || '';
     settings.admins = Array.from(new Set([...(settings.admins || []), ...DEFAULT_ADMINS])).map(String);
-    settings.linkedBotMessageEnabled = settings.linkedBotMessageEnabled !== false;
-    settings.linkedBotMessage = String(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE);
-    settings.linkedWelcomeMessageEnabled = settings.linkedWelcomeMessageEnabled !== false;
-    settings.linkedWelcomeMessage = String(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE);
-    settings.globalLinkedAutoReplies = String(settings.globalLinkedAutoReplies || '').trim();
-    settings.globalStatusLikeMessageEnabled = String(settings.globalStatusLikeMessage || '').trim() ? settings.globalStatusLikeMessageEnabled === true : false;
-    settings.globalStatusLikeMessage = String(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE);
     return settings;
 }
 
 function saveSettings(settings) {
     settings.admins = Array.from(new Set((settings.admins || []).map(String)));
-    settings.linkedBotMessageEnabled = settings.linkedBotMessageEnabled !== false;
-    settings.linkedBotMessage = String(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE);
-    settings.linkedWelcomeMessageEnabled = settings.linkedWelcomeMessageEnabled !== false;
-    settings.linkedWelcomeMessage = String(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE);
-    settings.globalLinkedAutoReplies = String(settings.globalLinkedAutoReplies || '').trim();
-    settings.globalStatusLikeMessageEnabled = settings.globalStatusLikeMessageEnabled === true && Boolean(String(settings.globalStatusLikeMessage || '').trim());
-    settings.globalStatusLikeMessage = String(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE);
     writeJSON(SETTINGS_FILE, settings);
-}
-
-function formatLinkedTemplate(template, phone = '') {
-    const cleanTemplate = String(template || '').trim();
-    if (!cleanTemplate) return '';
-    const normalizedPhone = normalizePhone(phone);
-    const phoneSettings = normalizedPhone ? getActivePhoneSettings(normalizedPhone) : cloneDefaultPhoneSettings();
-    const botLink = getTelegramBotLink();
-    return cleanTemplate
-        .replaceAll('{phone}', normalizedPhone || '')
-        .replaceAll('{number}', normalizedPhone || '')
-        .replaceAll('{name}', String(phoneSettings.name || DEFAULT_PHONE_SETTINGS.name || 'بوت الملك فارس'))
-        .replaceAll('{ownerNumber}', String(phoneSettings.ownerNumber || DEFAULT_PHONE_SETTINGS.ownerNumber || ''))
-        .replaceAll('{ownerName}', String(phoneSettings.ownername || DEFAULT_PHONE_SETTINGS.ownername || ''))
-        .replaceAll('{prefix}', String(phoneSettings.prefix || DEFAULT_PHONE_SETTINGS.prefix || '.'))
-        .replaceAll('{botLink}', String(botLink || ''))
-        .replaceAll('{channelLink}', WHATSAPP_CHANNEL_LINK)
-        .replaceAll('{pairingLink}', getPairingPublicUrl())
-        .replaceAll('{settingsLink}', getSettingsPublicUrl())
-        .replaceAll('{webPanelLink}', getWebPanelPublicUrl())
-        .replaceAll('{contactSaveLink}', getContactSavePublicUrl())
-        .trim();
-}
-
-function getLinkedBotCommandMessage(phone = '') {
-    const settings = getSettings();
-    if (settings.linkedBotMessageEnabled === false) return '';
-    return formatLinkedTemplate(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE, phone);
-}
-
-function getLinkedWelcomeMessage(phone = '') {
-    const settings = getSettings();
-    if (settings.linkedWelcomeMessageEnabled === false) return '';
-    return formatLinkedTemplate(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE, phone);
-}
-
-function getGlobalStatusLikeMessage(phone = '') {
-    const settings = getSettings();
-    if (settings.globalStatusLikeMessageEnabled !== true) return '';
-    return formatLinkedTemplate(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE, phone);
 }
 
 function cloneDefaultPhoneSettings() {
@@ -1411,9 +411,7 @@ function buildPhoneSettingsAccessMessage(phone, appId = null) {
     return [
         `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
         '',
-        `🖥️ رابط الواجهة: ${getWebPanelPublicUrl()}`,
-        `⚙️ رابط الإعدادات: ${getSettingsPublicUrl()}`,
-        `🔗 رابط الربط: ${getPairingPublicUrl()}`,
+        `🌐 الرابط: ${PUBLIC_BASE_URL}/settings`,
         `📱 الرقم: ${credential.phone}`,
         `🗝️ كلمة السر: ${credential.password}`,
         '',
@@ -1542,15 +540,6 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
     clean.autoSave = ['on', 'off'].includes(clean.autoSave) ? clean.autoSave : DEFAULT_PHONE_SETTINGS.autoSave;
     clean.autoStatusRead = ['on', 'off'].includes(clean.autoStatusRead) ? clean.autoStatusRead : DEFAULT_PHONE_SETTINGS.autoStatusRead;
     clean.autoStatusReact = ['on', 'off'].includes(clean.autoStatusReact) ? clean.autoStatusReact : DEFAULT_PHONE_SETTINGS.autoStatusReact;
-    clean.keepDeletedStatus = ['on', 'off'].includes(clean.keepDeletedStatus) ? clean.keepDeletedStatus : DEFAULT_PHONE_SETTINGS.keepDeletedStatus;
-    clean.ghostMode = ['on', 'off'].includes(clean.ghostMode) ? clean.ghostMode : DEFAULT_PHONE_SETTINGS.ghostMode;
-    if (clean.ghostMode === 'on') {
-        clean.autoRead = 'off';
-        clean.alwaysOnline = 'off';
-        clean.autoTyping = 'off';
-        clean.autoRecording = 'off';
-        clean.autoStatusRead = 'off';
-    }
     clean.statusMsgSend = ['on', 'off'].includes(clean.statusMsgSend) ? clean.statusMsgSend : DEFAULT_PHONE_SETTINGS.statusMsgSend;
     clean.antiCall = ['on', 'off'].includes(clean.antiCall) ? clean.antiCall : DEFAULT_PHONE_SETTINGS.antiCall;
     clean.antiBug = ['on', 'off'].includes(clean.antiBug) ? clean.antiBug : DEFAULT_PHONE_SETTINGS.antiBug;
@@ -1610,7 +599,6 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
         }
     }
 
-    Promise.resolve(applyLivePhoneSettingsSideEffects(normalizedPhone)).catch(() => {});
     return clean;
 }
 
@@ -1697,17 +685,16 @@ function parseNumberList(value) {
     );
 }
 
-function parseAutoReplies(value, limit = MAX_AUTO_REPLIES) {
-    const maxItems = Math.max(1, Number(limit) || MAX_AUTO_REPLIES);
+function parseAutoReplies(value) {
     return String(value || '')
         .split(/\r?\n/)
         .map((item) => item.trim())
         .filter(Boolean)
-        .slice(0, maxItems);
+        .slice(0, MAX_AUTO_REPLIES);
 }
 
-function parseAutoReplyEntries(value, limit = MAX_AUTO_REPLIES) {
-    return parseAutoReplies(value, limit).map((entry) => {
+function parseAutoReplyEntries(value) {
+    return parseAutoReplies(value).map((entry) => {
         const line = String(entry || '').trim();
         const structuredMatch = line.match(/^(.+?)\s*=>\s*([\s\S]+)$/);
         if (!structuredMatch) {
@@ -1740,9 +727,9 @@ function parseAutoReplyEntries(value, limit = MAX_AUTO_REPLIES) {
     });
 }
 
-function formatAutoReplyEntriesList(rawValue, emptyText = 'لا يوجد ردود تلقائية مخصصة.', limit = MAX_AUTO_REPLIES) {
-    const replies = parseAutoReplyEntries(rawValue, limit);
-    if (!replies.length) return emptyText;
+function formatAutoRepliesList(phone) {
+    const replies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
+    if (!replies.length) return 'لا يوجد ردود تلقائية مخصصة.';
     return replies
         .map((reply, index) => {
             if (reply.isStructured) {
@@ -1751,22 +738,6 @@ function formatAutoReplyEntriesList(rawValue, emptyText = 'لا يوجد ردو�
             return `${index + 1}) ${reply.response}`;
         })
         .join('\n');
-}
-
-function formatAutoRepliesList(phone) {
-    return formatAutoReplyEntriesList(getActivePhoneSettings(phone).customAutoReplies, 'لا يوجد ردود تلقائية مخصصة.', MAX_AUTO_REPLIES);
-}
-
-function formatGlobalAutoRepliesList() {
-    const settings = getSettings();
-    return formatAutoReplyEntriesList(settings.globalLinkedAutoReplies, 'لا يوجد ردود عالمية مضافة حتى الآن.', MAX_GLOBAL_AUTO_REPLIES);
-}
-
-function getMergedAutoReplyEntries(phone) {
-    const settings = getSettings();
-    const globalEntries = parseAutoReplies(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
-    const phoneEntries = parseAutoReplies(getActivePhoneSettings(phone).customAutoReplies, MAX_AUTO_REPLIES);
-    return parseAutoReplyEntries([...globalEntries, ...phoneEntries].join('\n'), MAX_GLOBAL_AUTO_REPLIES + MAX_AUTO_REPLIES);
 }
 
 function normalizeAutoReplyKeywordsInput(value) {
@@ -1797,7 +768,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
     const botLink = getTelegramBotLink();
     const normalized = normalizeArabicReplyText(incomingText);
 
-    if (/^(?:bot|menu|help|ابدأ|ابدا|start|\/start|\/help)$/i.test(String(incomingText || '').trim())) {
+    if (/^(?:bot|menu|help|الاوامر|الأوامر|ابدأ|ابدا|start|\/start|\/help)$/i.test(String(incomingText || '').trim()) || /(الاوامر|الأوامر)/.test(normalized)) {
         return buildPublicLinkedNumberCommands(phone);
     }
 
@@ -1821,7 +792,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
     return [
         `أهلاً بك من ${settings.name || 'بوت الملك فارس'} 🌷`,
         'أرسل رسالتك وسأرد عليك بالعربية.',
-        'إذا حبيت تعرف الأوامر أرسل: .bot',
+        'إذا حبيت تعرف الأوامر أرسل: bot',
         botLink ? `رابط البوت: ${botLink}` : ''
     ].filter(Boolean).join('\n');
 }
@@ -1845,7 +816,11 @@ function normalizeArabicReplyText(value = '') {
 }
 
 function buildPublicLinkedNumberCommands(phone = '') {
-    return getLinkedBotCommandMessage(phone);
+    const botLink = getTelegramBotLink() || DEPLOYMENT_BASE_URL;
+    return [
+        'انا ربوت التفاعل على استوريات الواتس لتفعيل رقمك ادخل على رابط البوت التالي',
+        botLink
+    ].filter(Boolean).join('\n');
 }
 
 function escapeRegExp(value = '') {
@@ -1874,48 +849,29 @@ function buildPairingApiDescriptor(phone = '') {
     };
 }
 
-function findStructuredAutoReplyMatchFromEntries(replies, incomingText = '') {
-    const normalizedIncoming = normalizeArabicReplyText(incomingText);
-    if (!normalizedIncoming) {
-        return null;
-    }
-
-    for (const reply of replies) {
-        if (!reply.isStructured || !reply.normalizedKeywords.length || !reply.response) continue;
-        const matched = reply.normalizedKeywords.some((keyword) => {
-            if (!keyword) return false;
-            return (
-                normalizedIncoming === keyword ||
-                normalizedIncoming.startsWith(`${keyword} `) ||
-                normalizedIncoming.endsWith(` ${keyword}`) ||
-                normalizedIncoming.includes(` ${keyword} `)
-            );
-        });
-        if (matched) {
-            return reply;
-        }
-    }
-
-    return null;
-}
-
-function findStructuredAutoReplyMatch(phone, incomingText = '') {
-    const replies = getMergedAutoReplyEntries(phone);
-    if (!replies.length) {
-        return null;
-    }
-    return findStructuredAutoReplyMatchFromEntries(replies, incomingText);
-}
-
 function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
-    const replies = getMergedAutoReplyEntries(phone);
+    const replies = parseAutoReplyEntries(getActivePhoneSettings(phone).customAutoReplies);
     if (!replies.length) {
         return '';
     }
 
-    const matchedStructuredReply = findStructuredAutoReplyMatchFromEntries(replies, incomingText);
-    if (matchedStructuredReply?.response) {
-        return matchedStructuredReply.response;
+    const normalizedIncoming = normalizeArabicReplyText(incomingText);
+    if (normalizedIncoming) {
+        for (const reply of replies) {
+            if (!reply.isStructured || !reply.normalizedKeywords.length || !reply.response) continue;
+            const matched = reply.normalizedKeywords.some((keyword) => {
+                if (!keyword) return false;
+                return (
+                    normalizedIncoming === keyword ||
+                    normalizedIncoming.startsWith(`${keyword} `) ||
+                    normalizedIncoming.endsWith(` ${keyword}`) ||
+                    normalizedIncoming.includes(` ${keyword} `)
+                );
+            });
+            if (matched) {
+                return reply.response;
+            }
+        }
     }
 
     const fallbackReplies = replies
@@ -1948,16 +904,11 @@ function buildAutoReplyCooldownKey(phone, remoteJid) {
 function canSendLinkedNumberAutoReply(phone, remoteJid, incomingText = '') {
     const normalizedRemote = normalizeWhatsAppJid(remoteJid);
     if (!normalizedRemote || normalizedRemote === 'status@broadcast' || normalizedRemote.endsWith('@g.us')) return false;
-    const cleanIncomingText = String(incomingText || '').trim();
-    if (!cleanIncomingText) return false;
+    if (!String(incomingText || '').trim()) return false;
 
-    if (!getMergedAutoReplyEntries(phone).length) {
+    const settings = getActivePhoneSettings(phone);
+    if (!parseAutoReplyEntries(settings.customAutoReplies).length) {
         return false;
-    }
-
-    const matchedStructuredReply = findStructuredAutoReplyMatch(phone, cleanIncomingText);
-    if (matchedStructuredReply?.response) {
-        return true;
     }
 
     const cooldownKey = buildAutoReplyCooldownKey(phone, normalizedRemote);
@@ -1992,71 +943,18 @@ function extractStatusParticipant(msg) {
         content?.videoMessage?.contextInfo?.participant,
         content?.documentMessage?.contextInfo?.participant,
         content?.reactionMessage?.key?.participant,
-        content?.protocolMessage?.key?.participant
+        content?.protocolMessage?.key?.participant,
+        content?.senderKeyDistributionMessage?.groupId
     ];
 
     for (const candidate of candidates) {
-        const normalized = normalizeStatusParticipantJid(candidate);
+        const normalized = normalizeWhatsAppJid(candidate);
         if (normalized && normalized !== 'status@broadcast') {
             return normalized;
         }
     }
 
     return '';
-}
-
-function extractStatusMessageId(msg) {
-    const content = unwrapMessageContent(msg?.message);
-    const candidates = [
-        msg?.key?.id,
-        content?.protocolMessage?.key?.id,
-        content?.reactionMessage?.key?.id,
-        content?.messageContextInfo?.stanzaId
-    ];
-    for (const candidate of candidates) {
-        const normalized = String(candidate || '').trim();
-        if (normalized) return normalized;
-    }
-    return msg?.key?.id || '';
-}
-
-function buildStatusEventDedupKey(phone, participant = '', messageId = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedParticipant = normalizeStatusParticipantJid(participant);
-    const normalizedMessageId = String(messageId || '').trim();
-    if (!normalizedPhone || !normalizedParticipant || !normalizedMessageId) return '';
-    return `${normalizedPhone}::${normalizedParticipant}::${normalizedMessageId}`;
-}
-
-function pruneProcessedStatusEvents(phone = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const prefix = normalizedPhone ? `${normalizedPhone}::` : '';
-    const now = Date.now();
-
-    for (const [key, expiresAt] of global.processedStatusEvents.entries()) {
-        if (Number(expiresAt || 0) <= now || (prefix && key.startsWith(prefix))) {
-            global.processedStatusEvents.delete(key);
-        }
-    }
-}
-
-function isStatusEventRecentlyProcessed(phone, participant = '', messageId = '') {
-    const key = buildStatusEventDedupKey(phone, participant, messageId);
-    if (!key) return false;
-    const expiresAt = Number(global.processedStatusEvents.get(key) || 0);
-    if (!expiresAt) return false;
-    if (expiresAt <= Date.now()) {
-        global.processedStatusEvents.delete(key);
-        return false;
-    }
-    return true;
-}
-
-function markStatusEventProcessed(phone, participant = '', messageId = '') {
-    const key = buildStatusEventDedupKey(phone, participant, messageId);
-    if (!key) return false;
-    global.processedStatusEvents.set(key, Date.now() + STATUS_EVENT_DEDUPE_TTL_MS);
-    return true;
 }
 
 async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, incomingText = '') {
@@ -2104,73 +1002,13 @@ function startPresenceKeepAlive(sock, phone) {
     const normalized = normalizePhone(phone);
     clearPresenceTimer(normalized);
     const settings = getActivePhoneSettings(normalized);
-    if (settings.alwaysOnline !== 'on' || settings.ghostMode === 'on') return;
+    if (settings.alwaysOnline !== 'on') return;
     const timer = setInterval(async () => {
         try {
             await sock.sendPresenceUpdate('available');
         } catch (_) {}
     }, 45000);
     presenceTimers.set(normalized, timer);
-}
-
-async function syncGhostPrivacySettings(sock, enabled = false) {
-    if (!sock) return false;
-
-    const operations = enabled
-        ? [
-            ['updateReadReceiptsPrivacy', 'none'],
-            ['updateReadReceiptPrivacy', 'none'],
-            ['updateOnlinePrivacy', 'match_last_seen'],
-            ['updateLastSeenPrivacy', 'none']
-        ]
-        : [
-            ['updateReadReceiptsPrivacy', 'all'],
-            ['updateReadReceiptPrivacy', 'all'],
-            ['updateOnlinePrivacy', 'all'],
-            ['updateLastSeenPrivacy', 'all']
-        ];
-
-    let changed = false;
-    for (const [methodName, value] of operations) {
-        if (typeof sock[methodName] !== 'function') continue;
-        try {
-            await sock[methodName](value);
-            changed = true;
-        } catch (_) {}
-    }
-
-    return changed;
-}
-
-async function applyLivePhoneSettingsSideEffects(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-
-    const sock = waClients.get(normalized);
-    if (!sock) return false;
-
-    const settings = getActivePhoneSettings(normalized);
-    if (settings.ghostMode === 'on') {
-        clearPresenceTimer(normalized);
-        await syncGhostPrivacySettings(sock, true);
-        try {
-            await sock.sendPresenceUpdate('unavailable');
-        } catch (_) {}
-        return true;
-    }
-
-    await syncGhostPrivacySettings(sock, false);
-
-    if (settings.alwaysOnline === 'on') {
-        startPresenceKeepAlive(sock, normalized);
-        return true;
-    }
-
-    clearPresenceTimer(normalized);
-    try {
-        await sock.sendPresenceUpdate('unavailable');
-    } catch (_) {}
-    return true;
 }
 
 function buildImageFileName(ext = 'png') {
@@ -2225,372 +1063,23 @@ function sanitizeCallbackPhone(phone) {
     return normalizePhone(phone).slice(0, 20);
 }
 
-
-function makePhoneSettingsAuthKey(userId, phone) {
-    return `${String(userId)}:${normalizePhone(phone)}`;
-}
-
-function clearPhoneSettingsAuthForPhone(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return;
-    for (const key of Array.from(phoneSettingsAuthSessions.keys())) {
-        if (key.endsWith(`:${normalizedPhone}`)) {
-            phoneSettingsAuthSessions.delete(key);
-        }
-    }
-}
-
-function getPhoneSettingsAuthSession(userId, phone) {
-    const key = makePhoneSettingsAuthKey(userId, phone);
-    const current = phoneSettingsAuthSessions.get(key);
-    if (!current) return null;
-    if (Number(current.expiresAt || 0) <= Date.now()) {
-        phoneSettingsAuthSessions.delete(key);
-        return null;
-    }
-    return current;
-}
-
-function grantPhoneSettingsAccess(userId, phone, appId = 'default') {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return null;
-    const record = {
-        phone: normalizedPhone,
-        appId: normalizeAppId(appId),
-        expiresAt: Date.now() + PHONE_SETTINGS_AUTH_TTL_MS
-    };
-    phoneSettingsAuthSessions.set(makePhoneSettingsAuthKey(userId, normalizedPhone), record);
-    setActivePhoneSettings(normalizedPhone, record.appId);
-    return record;
-}
-
-function revokePhoneSettingsAccess(userId, phone) {
-    phoneSettingsAuthSessions.delete(makePhoneSettingsAuthKey(userId, phone));
-}
-
-function hasPhoneSettingsAccess(userId, phone) {
-    return Boolean(getPhoneSettingsAuthSession(userId, phone));
-}
-
-function createWebSettingsSession(phone, appId = 'default') {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return null;
-    const normalizedAppId = normalizeAppId(appId);
-    setActivePhoneSettings(normalizedPhone, normalizedAppId);
-    const token = crypto.randomBytes(24).toString('hex');
-    const record = {
-        token,
-        phone: normalizedPhone,
-        appId: normalizedAppId,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + WEB_SETTINGS_SESSION_TTL_MS
-    };
-    webSettingsSessions.set(token, record);
-    return record;
-}
-
-function getWebSettingsSession(token) {
-    const cleanToken = String(token || '').trim();
-    if (!cleanToken) return null;
-    const current = webSettingsSessions.get(cleanToken);
-    if (!current) return null;
-    if (Number(current.expiresAt || 0) <= Date.now()) {
-        webSettingsSessions.delete(cleanToken);
-        return null;
-    }
-    current.expiresAt = Date.now() + WEB_SETTINGS_SESSION_TTL_MS;
-    webSettingsSessions.set(cleanToken, current);
-    return current;
-}
-
-function revokeWebSettingsSession(token) {
-    const cleanToken = String(token || '').trim();
-    if (!cleanToken) return false;
-    return webSettingsSessions.delete(cleanToken);
-}
-
-function buildSettingsPanelPath(token, phone = '') {
-    const cleanToken = encodeURIComponent(String(token || '').trim());
-    const cleanPhone = normalizePhone(phone);
-    const qs = new URLSearchParams();
-    if (cleanToken) qs.set('session', cleanToken);
-    if (cleanPhone) qs.set('phone', cleanPhone);
-    const query = qs.toString();
-    return query ? `/settings?${query}` : '/settings';
-}
-
-function resolveSettingsRequest(req) {
-    const token = String(req.body?.token || req.query?.token || '').trim();
-    if (token) {
-        const session = getWebSettingsSession(token);
-        if (!session) {
-            return { ok: false, status: 401, error: 'انتهت جلسة الإعدادات، سجّل الدخول مرة أخرى.' };
-        }
-        if (!getPhoneOwner(session.phone)) {
-            revokeWebSettingsSession(token);
-            return { ok: false, status: 404, error: 'Linked number not found' };
-        }
-        setActivePhoneSettings(session.phone, session.appId);
-        return { ok: true, token, phone: session.phone, appId: session.appId, session };
-    }
-
-    const phone = normalizePhone(req.body?.num || req.query?.num || '');
-    const appId = normalizeAppId(req.body?.app || req.query?.app || 'default');
-    if (!phone || !getPhoneOwner(phone)) {
-        return { ok: false, status: 404, error: 'Linked number not found' };
-    }
-    setActivePhoneSettings(phone, appId);
-    return { ok: true, token: '', phone, appId };
-}
-
-function getPhoneSettingsSectionConfig(sectionKey = 'general') {
-    return PHONE_SETTINGS_SECTIONS.find((section) => section.key === sectionKey) || PHONE_SETTINGS_SECTIONS[0];
-}
-
-function getPhoneSettingsSectionByField(fieldKey = '') {
-    return PHONE_SETTINGS_SECTIONS.find((section) => section.fields.includes(fieldKey)) || PHONE_SETTINGS_SECTIONS[0];
-}
-
-function formatBooleanSetting(value) {
-    return String(value || '').trim() === 'on' ? 'مفعل ✅' : 'متوقف ⛔';
-}
-
-function truncateSettingValue(value, maxLength = 44) {
-    const clean = String(value || '').replace(/\s+/g, ' ').trim();
-    if (!clean) return 'غير محدد';
-    return clean.length > maxLength ? `${clean.slice(0, maxLength - 1)}…` : clean;
-}
-
-function formatPhoneSettingValue(phone, fieldKey, value) {
-    const cleanValue = String(value ?? '').trim();
-    const selectLabels = {
-        mode: {
-            public: 'عام',
-            private: 'خاص',
-            inbox: 'الخاص فقط',
-            group: 'المجموعات فقط',
-            admin: 'الأدمن فقط'
-        },
-        antiDelete: {
-            off: 'إيقاف',
-            inbox: 'في الخاص',
-            group: 'في المجموعات',
-            all: 'في الكل'
-        },
-        sendDeleteTo: {
-            owner: 'إلى المالك',
-            same: 'إلى نفس الشات'
-        },
-        statusMsgType: {
-            default: 'افتراضي',
-            custom: 'مخصص'
-        },
-        antiBotAction: {
-            delete: 'حذف الرسائل',
-            'delete+kick': 'حذف + طرد'
-        }
-    };
-
-    if (PHONE_SETTINGS_TOGGLE_FIELDS.has(fieldKey)) {
-        return formatBooleanSetting(cleanValue);
-    }
-    if (selectLabels[fieldKey]) {
-        return selectLabels[fieldKey][cleanValue] || cleanValue || 'غير محدد';
-    }
-    if (fieldKey === 'statusCustomReact') {
-        const emojis = cleanValue.split(',').map((item) => item.trim()).filter(Boolean);
-        return emojis.length ? emojis.join(' ') : getPhoneEmoji(phone);
-    }
-    if (fieldKey === 'customAutoReplies') {
-        return `${parseAutoReplies(cleanValue).length}/${MAX_AUTO_REPLIES}`;
-    }
-    if (['menu', 'alive', 'owner'].includes(fieldKey)) {
-        return truncateSettingValue(cleanValue, 80);
-    }
-    if (['description', 'customMsg'].includes(fieldKey)) {
-        return truncateSettingValue(cleanValue, 90);
-    }
-    if (fieldKey === 'excludeCallNumbers') {
-        const numbers = cleanValue.split(',').map((item) => item.trim()).filter(Boolean);
-        return numbers.length ? `${numbers.length} رقم` : 'بدون أرقام';
-    }
-    return truncateSettingValue(cleanValue, 60);
-}
-
-function buildPhoneSettingsLockMessage(phone) {
-    const settings = getActivePhoneSettings(phone);
-    return [
-        `🔐 إعدادات الرقم ${phone}`,
-        `🤖 اسم البوت: ${settings.name || DEFAULT_PHONE_SETTINGS.name}`,
-        `📍 الوضع الحالي: ${formatPhoneSettingValue(phone, 'mode', settings.mode)}`,
-        `✨ التفاعل على الحالات: ${formatPhoneSettingValue(phone, 'autoStatusReact', settings.autoStatusReact)}`,
-        '',
-        'أرسل الآن كلمة سر هذا الرقم لفتح الإعدادات الكاملة من داخل البوت.',
-        'ولو نسيتها اضغط زر إظهار كلمة السر الحالية.'
-    ].join('\n');
-}
-
-function buildPhoneSettingsMessage(phone) {
-    const settings = getActivePhoneSettings(phone);
-    const repliesCount = parseAutoReplies(settings.customAutoReplies).length;
-    return [
-        `⚙️ لوحة إعدادات الرقم ${phone}`,
-        `🤖 اسم البوت: ${settings.name || DEFAULT_PHONE_SETTINGS.name}`,
-        `👤 اسم المالك: ${settings.ownername || DEFAULT_PHONE_SETTINGS.ownername}`,
-        `📍 الوضع: ${formatPhoneSettingValue(phone, 'mode', settings.mode)}`,
-        `👀 قراءة الحالات: ${formatPhoneSettingValue(phone, 'autoStatusRead', settings.autoStatusRead)}`,
-        `😍 التفاعل على الحالات: ${formatPhoneSettingValue(phone, 'autoStatusReact', settings.autoStatusReact)}`,
-        `🛡️ حفظ الحالة بعد الحذف: ${formatPhoneSettingValue(phone, 'keepDeletedStatus', settings.keepDeletedStatus)}`,
-        `👻 وضع الشبح: ${formatPhoneSettingValue(phone, 'ghostMode', settings.ghostMode)}`,
-        `🎭 الإيموجيات: ${formatPhoneSettingValue(phone, 'statusCustomReact', settings.statusCustomReact)}`,
-        `🤖 الردود التلقائية: ${repliesCount}/${MAX_AUTO_REPLIES}`,
-        '',
-        'اختر القسم الذي تريد تعديله من الأزرار بالأسفل.'
-    ].join('\n');
-}
-
-function getPhoneSettingsAuthKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('إظهار كلمة السر الحالية 🔑', `settings_revealpass_${cleanPhone}`)],
-                [Markup.button.callback('رجوع ↩️', 'settings_menu')]
-            ]
-        }
-    };
-}
-
-function getPhoneSettingsKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    Markup.button.callback('عام 🧩', `settings_section_general_${cleanPhone}`),
-                    Markup.button.callback('الحالة والتلقائي ⚡', `settings_section_automation_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('الحماية 🛡️', `settings_section_protection_${cleanPhone}`),
-                    Markup.button.callback('الوسائط 🖼️', `settings_section_media_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('الجروب والمتقدم 🧭', `settings_section_group_${cleanPhone}`),
-                    Markup.button.callback('الردود التلقائية 🤖', `auto_reply_pick_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`),
-                    Markup.button.callback('إظهار كلمة السر 🔑', `settings_revealpass_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('تحديث العرض 🔄', `settings_dashboard_${cleanPhone}`),
-                    Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.url('لوحة الإعدادات 🌐', getSettingsPublicUrl()),
-                    Markup.button.url('الواجهة 🖥️', getWebPanelPublicUrl())
-                ],
-                [Markup.button.url('رابط الربط 🔗', getPairingPublicUrl())]
-            ]
-        }
-    };
-}
-
-function buildPhoneSettingsSectionMessage(phone, sectionKey) {
-    const section = getPhoneSettingsSectionConfig(sectionKey);
-    const settings = getActivePhoneSettings(phone);
-    const lines = [
-        `⚙️ ${section.label} | الرقم ${phone}`,
-        ''
-    ];
-
-    for (const fieldKey of section.fields) {
-        const label = SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey;
-        lines.push(`• ${label}: ${formatPhoneSettingValue(phone, fieldKey, settings[fieldKey])}`);
-    }
-
-    if (section.key === 'automation') {
-        lines.push('', `• ${SITE_SETTINGS_FIELD_LABELS.customAutoReplies}: ${formatPhoneSettingValue(phone, 'customAutoReplies', settings.customAutoReplies)}`);
-    }
-
-    lines.push('', 'اختر الزر المناسب للتعديل أو التبديل مباشرة من الأسفل.');
-    return lines.join('\n');
-}
-
-function getPhoneSettingsSectionKeyboard(phone, sectionKey) {
-    const section = getPhoneSettingsSectionConfig(sectionKey);
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const settings = getActivePhoneSettings(phone);
-    const rows = [];
-
-    for (const fieldKey of section.fields) {
-        const label = SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey;
-        const shortValue = truncateSettingValue(formatPhoneSettingValue(phone, fieldKey, settings[fieldKey]), 18);
-        let callbackData = `settings_edit_${fieldKey}_${cleanPhone}`;
-        if (PHONE_SETTINGS_SELECT_OPTIONS[fieldKey]) {
-            callbackData = `settings_select_${fieldKey}_${cleanPhone}`;
-        } else if (PHONE_SETTINGS_TOGGLE_FIELDS.has(fieldKey)) {
-            callbackData = `settings_toggle_${fieldKey}_${cleanPhone}`;
-        }
-        rows.push([Markup.button.callback(`${label}: ${shortValue}`, callbackData)]);
-    }
-
-    if (section.key === 'automation') {
-        rows.push([Markup.button.callback('إدارة الردود التلقائية 🤖', `auto_reply_pick_${cleanPhone}`)]);
-        rows.push([Markup.button.callback('تغيير إيموجي الحالات 😍', `emoji_pick_${cleanPhone}`)]);
-    }
-
-    rows.push([Markup.button.callback('رجوع للوحة الرئيسية ↩️', `settings_dashboard_${cleanPhone}`)]);
-    rows.push([Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)]);
-
-    return {
-        reply_markup: {
-            inline_keyboard: rows
-        }
-    };
-}
-
-function buildPhoneSettingEditPrompt(phone, fieldKey) {
-    const settings = getActivePhoneSettings(phone);
-    const label = SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey;
-    const hint = PHONE_SETTINGS_EDIT_HINTS[fieldKey] || 'أرسل القيمة الجديدة الآن.';
-    return [
-        `✏️ تعديل ${label} للرقم ${phone}`,
-        `القيمة الحالية: ${formatPhoneSettingValue(phone, fieldKey, settings[fieldKey])}`,
-        '',
-        hint
-    ].join('\n');
-}
-
-function getPhoneSettingChoiceKeyboard(phone, fieldKey) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const section = getPhoneSettingsSectionByField(fieldKey);
-    const currentValue = String(getActivePhoneSettings(phone)[fieldKey] || '');
-    const optionRows = (PHONE_SETTINGS_SELECT_OPTIONS[fieldKey] || []).map((option) => [
-        Markup.button.callback(`${currentValue === option.value ? '✅ ' : ''}${option.label}`, `settings_choice_${fieldKey}_${option.value}_${cleanPhone}`)
-    ]);
-    optionRows.push([Markup.button.callback('رجوع ↩️', `settings_section_${section.key}_${cleanPhone}`)]);
-    return {
-        reply_markup: {
-            inline_keyboard: optionRows
-        }
-    };
-}
-
 function buildOwnerPairingGuide() {
     return [
-        '🔗 لربط رقم جديد استخدم رابط الربط من داخل بوت تيليجرام فقط.',
+        '🔗 لربط رقم جديد استخدم بوت تيليجرام فقط.',
         '📱 أرسل الرقم بهذه الطريقة داخل البوت:',
-        '967784355543',
+        '967773987296',
         '',
-        '✅ بعد الربط ستكون إدارة الرقم من خلال بوت تيليجرام فقط.',
-        '🌐 واجهة الإعدادات الصحيحة بعد تشغيل المشروع تكون على الرابط: /settings',
-        '🛠️ تم تعطيل جميع أوامر التحكم من داخل رقم الواتساب المربوط.'
+        '⚙️ تم حذف جميع أوامر التحكم من الرقم المربوط نفسه.',
+        '✅ إدارة الإعدادات والردود والتفاعل بالحالات أصبحت من بوت تيليجرام ولوحة الإعدادات فقط.'
     ].join('\n');
 }
 
-function buildLinkedNumberWelcomeMessage(phone = '') {
-    return getLinkedWelcomeMessage(phone);
+function buildLinkedNumberWelcomeMessage() {
+    const botLink = getTelegramBotLink();
+    return [
+        'تم تسجيل دخول بنجاح',
+        botLink || DEPLOYMENT_BASE_URL
+    ].filter(Boolean).join('\n');
 }
 
 function extractWhatsAppChannelInviteCode(channelLink = '') {
@@ -2645,7 +1134,7 @@ function normalizeRequestedLikeCount(value) {
     const clean = String(value || '').replace(/[^0-9]/g, '');
     const count = Number(clean);
     if (!Number.isFinite(count) || count < 1) return 0;
-    return Math.min(count, 5000);
+    return Math.min(count, 500);
 }
 
 function extractReactionEmojiChoices(value) {
@@ -2686,20 +1175,6 @@ function buildChannelReactionEmojiPrompt() {
     ].join('\n');
 }
 
-function calculateReactionOrderCost(count) {
-    const normalizedCount = Math.max(0, Number(count) || 0);
-    if (!normalizedCount) return 0;
-    return Math.ceil(normalizedCount / 100) * 10;
-}
-
-async function boostChannelReaction(ownerId, preferredPhone, postLink, emoji, count) {
-    const target = extractChannelPostTarget(postLink);
-    if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
-        return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
-    }
-    return runChannelReactionCampaign(ownerId, preferredPhone, target, count, [emoji]);
-}
-
 function getOwnerActiveSessions(ownerId, preferredPhone = '') {
     const preferred = normalizePhone(preferredPhone);
     const phones = (getUserPhones(ownerId) || []).map((phone) => normalizePhone(phone)).filter(Boolean);
@@ -2715,36 +1190,8 @@ function getOwnerActiveSessions(ownerId, preferredPhone = '') {
 
     return ordered
         .filter((phone) => waClients.has(phone))
-        .map((phone) => ({ phone, sock: waClients.get(phone), ownerId: getPhoneOwner(phone) || null }))
+        .map((phone) => ({ phone, sock: waClients.get(phone) }))
         .filter((item) => item.sock);
-}
-
-function getGlobalActiveSessions(preferredPhone = '') {
-    const preferred = normalizePhone(preferredPhone);
-    const ordered = [];
-
-    if (preferred && waClients.has(preferred)) {
-        ordered.push(preferred);
-    }
-
-    for (const phone of waClients.keys()) {
-        const normalizedPhone = normalizePhone(phone);
-        if (normalizedPhone && !ordered.includes(normalizedPhone)) {
-            ordered.push(normalizedPhone);
-        }
-    }
-
-    return ordered
-        .filter((phone) => waClients.has(phone))
-        .map((phone) => ({ phone, sock: waClients.get(phone), ownerId: getPhoneOwner(phone) || null }))
-        .filter((item) => item.sock);
-}
-
-function getReactionCampaignSessions(ownerId, preferredPhone = '') {
-    const ownerSessions = getOwnerActiveSessions(ownerId, preferredPhone);
-    const seen = new Set(ownerSessions.map((item) => item.phone));
-    const globalSessions = getGlobalActiveSessions(preferredPhone).filter((item) => !seen.has(item.phone));
-    return [...ownerSessions, ...globalSessions];
 }
 
 async function resolveNewsletterJidForTarget(sock, target) {
@@ -2817,12 +1264,11 @@ async function reactToNewsletterPost(sock, target, emoji) {
 }
 
 async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
-    const activeSessions = getReactionCampaignSessions(ownerId, preferredPhone);
-    console.log(`[Channel React] owner=${ownerId} requested=${requestedCount} available=${activeSessions.length}`);
+    const activeSessions = getOwnerActiveSessions(ownerId, preferredPhone);
     if (!activeSessions.length) {
         return {
             ok: false,
-            error: 'لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ الإعجابات.',
+            error: 'لا يوجد أي رقم مربوط ونشط حالياً لتنفيذ الإعجابات.',
             requestedCount,
             sentCount: 0,
             availableSessions: 0,
@@ -2830,178 +1276,37 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
         };
     }
 
-    let resolvedTarget = target;
-    let resolveError = '';
-    for (const item of activeSessions) {
-        try {
-            resolvedTarget = await resolveNewsletterJidForTarget(item.sock, target);
-            if (resolvedTarget?.newsletterJid) break;
-        } catch (error) {
-            resolveError = error.message || 'تعذر تحديد القناة';
-        }
-    }
-
-    if (!resolvedTarget?.newsletterJid) {
-        return {
-            ok: false,
-            error: resolveError || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            requestedCount,
-            sentCount: 0,
-            availableSessions: activeSessions.length,
-            failures: []
-        };
-    }
-
-    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-    const executionPool = activeSessions.slice(0, normalizedRequestedCount);
+    const executionPool = activeSessions.slice(0, Math.max(1, requestedCount));
     let sentCount = 0;
     const failures = [];
-    const batchSize = executionPool.length >= 300 ? 20 : executionPool.length >= 100 ? 12 : executionPool.length >= 30 ? 8 : 4;
 
-    for (let start = 0; start < executionPool.length; start += batchSize) {
-        const batch = executionPool.slice(start, start + batchSize);
-        const settled = await Promise.allSettled(
-            batch.map(async (item, batchIndex) => {
-                const index = start + batchIndex;
-                const emoji = emojiChoices[index % emojiChoices.length] || emojiChoices[0] || CHANNEL_LIKE_EMOJIS[0];
-                await new Promise((resolve) => setTimeout(resolve, batchIndex * 120));
-                await ensureNewsletterFollow(item.sock, resolvedTarget);
-                const reactResult = await reactToNewsletterPost(item.sock, resolvedTarget, emoji);
-                if (!reactResult.ok) {
-                    throw new Error(reactResult.error || 'Reaction failed');
-                }
-                return item.phone;
-            })
-        );
+    for (let index = 0; index < executionPool.length; index += 1) {
+        const item = executionPool[index];
+        const emoji = emojiChoices[index % emojiChoices.length] || emojiChoices[0] || CHANNEL_LIKE_EMOJIS[0];
 
-        for (let index = 0; index < settled.length; index += 1) {
-            const result = settled[index];
-            const phone = batch[index]?.phone || 'unknown';
-            if (result.status === 'fulfilled') {
+        try {
+            await ensureNewsletterFollow(item.sock, target);
+            const reactResult = await reactToNewsletterPost(item.sock, target, emoji);
+            if (reactResult.ok) {
                 sentCount += 1;
             } else {
-                failures.push(phone + ': ' + (result.reason?.message || 'Unknown error'));
+                failures.push(item.phone + ': ' + reactResult.error);
             }
+        } catch (error) {
+            failures.push(item.phone + ': ' + (error.message || 'Unknown error'));
         }
 
-        if (start + batchSize < executionPool.length) {
-            await new Promise((resolve) => setTimeout(resolve, 250));
-        }
+        await new Promise((resolve) => setTimeout(resolve, 350));
     }
 
-    const primaryError = failures.length ? failures[0].split(': ').slice(1).join(': ').trim() : '';
-    if (failures.length) {
-        console.warn('[Channel React] failures:', failures.slice(0, 10));
-    }
     return {
         ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع الجلسات في تنفيذ التفاعل.'),
-        requestedCount: normalizedRequestedCount,
+        requestedCount,
         sentCount,
         availableSessions: activeSessions.length,
         failures,
-        connectedPhones: activeSessions.map((item) => item.phone),
-        target: resolvedTarget
+        connectedPhones: activeSessions.map((item) => item.phone)
     };
-}
-
-async function resolveChannelNewsletterJid(sock, channelLink = WHATSAPP_CHANNEL_LINK) {
-    const inviteCode = extractWhatsAppChannelInviteCode(channelLink);
-    if (!sock || !inviteCode || typeof sock.newsletterMetadata !== 'function') return '';
-    try {
-        const metadata = await sock.newsletterMetadata('invite', inviteCode);
-        return normalizeWhatsAppJid(metadata?.id || metadata?.jid || metadata?.newsletterJid || '');
-    } catch (_) {
-        return '';
-    }
-}
-
-function clearChannelPromotionTimer(phone) {
-    const normalized = normalizePhone(phone);
-    const current = channelPromotionTimers.get(normalized);
-    if (current?.timeout) clearTimeout(current.timeout);
-    if (current?.interval) clearInterval(current.interval);
-    channelPromotionTimers.delete(normalized);
-}
-
-async function deleteChannelPromotionMessage(sock, newsletterJid, key) {
-    if (!sock || !newsletterJid || !key?.id) return false;
-    const attempts = [
-        async () => {
-            await sock.sendMessage(newsletterJid, {
-                delete: {
-                    ...(key || {}),
-                    remoteJid: newsletterJid,
-                    fromMe: true
-                }
-            });
-        },
-        async () => {
-            await sock.sendMessage(newsletterJid, { delete: key });
-        }
-    ];
-    for (const attempt of attempts) {
-        try {
-            await attempt();
-            return true;
-        } catch (_) {}
-    }
-    return false;
-}
-
-async function publishChannelPromotion(sock, phone) {
-    const normalized = normalizePhone(phone);
-    const state = channelPromotionTimers.get(normalized) || {};
-    if (!sock) return false;
-
-    let newsletterJid = state.newsletterJid || await resolveChannelNewsletterJid(sock, WHATSAPP_CHANNEL_LINK);
-    if (!newsletterJid) return false;
-
-    if (state.lastMessageKey?.id) {
-        try {
-            await deleteChannelPromotionMessage(sock, newsletterJid, state.lastMessageKey);
-        } catch (_) {}
-    }
-
-    try {
-        const result = await sock.sendMessage(newsletterJid, { text: formatLinkedTemplate(CHANNEL_PROMOTION_MESSAGE) });
-        channelPromotionTimers.set(normalized, {
-            ...state,
-            newsletterJid,
-            lastMessageKey: result?.key || null,
-            lastSentAt: Date.now()
-        });
-        return true;
-    } catch (error) {
-        console.error(`Channel Promotion Error (${normalized}):`, error.message);
-        channelPromotionTimers.set(normalized, { ...state, newsletterJid, lastError: error.message || 'send_failed' });
-        return false;
-    }
-}
-
-function startChannelPromotionScheduler(sock, phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized || !sock) return;
-    clearChannelPromotionTimer(normalized);
-
-    const run = async () => {
-        const liveSock = waClients.get(normalized) || sock;
-        try {
-            await publishChannelPromotion(liveSock, normalized);
-        } catch (_) {}
-    };
-
-    const timeout = setTimeout(() => {
-        run().catch(() => {});
-        const interval = setInterval(() => {
-            run().catch(() => {});
-        }, CHANNEL_PROMOTION_INTERVAL_MS);
-        const current = channelPromotionTimers.get(normalized) || {};
-        channelPromotionTimers.set(normalized, { ...current, interval, timeout: null });
-    }, CHANNEL_PROMOTION_INITIAL_DELAY_MS);
-
-    const current = channelPromotionTimers.get(normalized) || {};
-    channelPromotionTimers.set(normalized, { ...current, timeout, interval: null });
 }
 
 async function autoJoinWhatsAppChannel(sock, phone) {
@@ -3038,7 +1343,7 @@ async function autoJoinWhatsAppChannel(sock, phone) {
 
 async function sendLinkedNumberWelcome(sock, phone) {
     try {
-        const messageText = buildLinkedNumberWelcomeMessage(phone);
+        const messageText = buildLinkedNumberWelcomeMessage();
         if (!String(messageText || '').trim()) return;
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const phoneJid = `${normalizePhone(phone)}@s.whatsapp.net`;
@@ -3058,266 +1363,55 @@ function isOwnerControlChat(sock, phone, remoteJid) {
     const normalizedRemote = normalizeWhatsAppJid(remoteJid);
     const normalizedPhone = normalizePhone(phone);
     const ownJid = normalizeWhatsAppJid(sock.user?.id);
-    if (!normalizedRemote || !normalizedPhone) return false;
-    const remotePhone = normalizePhone(normalizedRemote);
-    return [ownJid, `${normalizedPhone}@s.whatsapp.net`].filter(Boolean).includes(normalizedRemote)
-        || remotePhone === normalizedPhone;
-}
-
-function rememberOwnerControlBypassMessage(messageId = '') {
-    const key = String(messageId || '').trim();
-    if (!key) return;
-    ownerControlBypassMessageIds.add(key);
-    const timer = setTimeout(() => ownerControlBypassMessageIds.delete(key), 5 * 60 * 1000);
-    if (typeof timer?.unref === 'function') timer.unref();
-}
-
-function rememberOwnerControlBypassResult(result = null) {
-    rememberOwnerControlBypassMessage(result?.key?.id || '');
-}
-
-function buildOwnerControlHelpText(phoneNumber) {
-    return [
-        `📲 الرقم ${phoneNumber}`,
-        'تم تعطيل أوامر التحكم من داخل الواتساب لهذا الرقم.',
-        'استخدم بوت تيليجرام أو واجهة الإعدادات فقط لإدارة الرقم.',
-        buildWebPanelLinksMessage(phoneNumber)
-    ].join('\n\n');
-}
-
-function normalizeOwnerControlAlias(value = '') {
-    return normalizeArabicReplyText(value).replace(/[\s_.-]+/g, '');
-}
-
-const OWNER_CONTROL_FIELD_ALIASES = (() => {
-    const map = new Map();
-    const source = {
-        name: ['name', 'اسم', 'الاسم', 'اسمالبوت', 'اسم_البوت'],
-        ownername: ['ownername', 'اسم_المالك', 'المالك', 'اسممالك'],
-        ownerNumber: ['ownernumber', 'رقم_المالك', 'رقمالمالك', 'رقم_التواصل', 'رقمالتواصل'],
-        description: ['description', 'الوصف'],
-        from: ['from', 'الموقع', 'البلد'],
-        age: ['age', 'العمر'],
-        prefix: ['prefix', 'البادئة', 'البدايه'],
-        footer2: ['footer2', 'الفوتر'],
-        mode: ['mode', 'الوضع'],
-        antiBad: ['antibad', 'منع_السب', 'مكافحه_الكلمات', 'كلمات_سيئة'],
-        antiLink: ['antilink', 'منع_الروابط'],
-        autoRecording: ['autorecording', 'تسجيل_تلقائي'],
-        autoTyping: ['autotyping', 'كتابه_تلقائيه', 'كتابة_تلقائية'],
-        alwaysOnline: ['alwaysonline', 'اونلاين_دائم', 'دائم_اونلاين'],
-        autoStatusRead: ['autostatusread', 'قراءة_الحالة', 'قراءه_الحاله'],
-        autoStatusReact: ['autostatusreact', 'تفاعل_الحالة', 'تفاعل_الحاله'],
-        keepDeletedStatus: ['keepdeletedstatus', 'حفظ_الحالة_المحذوفة', 'حفظ_الحاله_المحذوفه'],
-        ghostMode: ['ghostmode', 'وضع_الشبح'],
-        autoRead: ['autoread', 'قراءة_تلقائية', 'قراءه_تلقائيه'],
-        autoBlock: ['autoblock', 'حظر_تلقائي'],
-        autoVoice: ['autovoice', 'صوت_تلقائي'],
-        antiDelete: ['antidelete', 'مكافحة_الحذف', 'مكافحه_الحذف'],
-        sendDeleteTo: ['senddeleteto', 'ارسال_المحذوف_الى', 'إرسال_المحذوف_إلى'],
-        antiCall: ['anticall', 'منع_الاتصال'],
-        excludeCallNumbers: ['excludecallnumbers', 'استثناء_اتصالات', 'الارقام_المستثناه'],
-        statusMsgSend: ['statusmsgsend', 'رد_الحالة', 'رد_الحاله'],
-        statusMsgType: ['statusmsgtype', 'نوع_رسالة_الحالة', 'نوع_رساله_الحاله'],
-        customMsg: ['custommsg', 'رسالة_الحالة', 'رساله_الحاله'],
-        menu: ['menu', 'صورة_المنيو', 'صوره_المنيو'],
-        alive: ['alive', 'صورة_alive', 'صوره_alive'],
-        owner: ['owner', 'صورة_المالك', 'صوره_المالك'],
-        statusCustomReact: ['statuscustomreact', 'ايموجي', 'إيموجي', 'ايموجيات_الحالة', 'ايموجيات_الحاله'],
-        antiBug: ['antibug', 'منع_البق'],
-        antiBot: ['antibot', 'منع_البوت'],
-        antiBotAction: ['antibotaction', 'اجراء_منع_البوت', 'إجراء_منع_البوت'],
-        gaGroupJid: ['gagroupjid', 'معرف_الجروب'],
-        gaTimezone: ['gatimezone', 'التوقيت', 'المنطقة_الزمنية'],
-        gaCloseTime: ['gaclosetime', 'وقت_الاغلاق', 'وقت_الإغلاق'],
-        gaOpenTime: ['gaopentime', 'وقت_الفتح'],
-        autoSave: ['autosave', 'حفظ_تلقائي']
-    };
-    for (const [fieldKey, aliases] of Object.entries(source)) {
-        for (const alias of aliases) {
-            map.set(normalizeOwnerControlAlias(alias), fieldKey);
-        }
-    }
-    return map;
-})();
-
-function resolveOwnerControlFieldKey(value = '') {
-    return OWNER_CONTROL_FIELD_ALIASES.get(normalizeOwnerControlAlias(value)) || '';
-}
-
-function normalizeOwnerControlOnOff(value = '') {
-    const clean = normalizeOwnerControlAlias(value);
-    if (['on', '1', 'true', 'yes', 'تفعيل', 'تشغيل', 'مفعل', 'فعال', 'نعم'].includes(clean)) return 'on';
-    if (['off', '0', 'false', 'no', 'ايقاف', 'إيقاف', 'تعطيل', 'مغلق', 'لا'].includes(clean)) return 'off';
-    return '';
-}
-
-function normalizeOwnerControlSelect(fieldKey, value = '') {
-    const clean = normalizeOwnerControlAlias(value);
-    if (!clean) return '';
-    const selectMaps = {
-        mode: {
-            public: ['public', 'عام', 'الكل'],
-            private: ['private', 'خاص'],
-            inbox: ['inbox', 'الخاصفقط', 'خاصفقط'],
-            group: ['group', 'المجموعات', 'جروب'],
-            admin: ['admin', 'الادمن', 'الأدمن']
-        },
-        antiDelete: {
-            off: ['off', 'ايقاف', 'إيقاف', 'تعطيل'],
-            inbox: ['inbox', 'الخاص'],
-            group: ['group', 'المجموعات', 'الجروب'],
-            all: ['all', 'الكل', 'عام']
-        },
-        sendDeleteTo: {
-            owner: ['owner', 'المالك'],
-            same: ['same', 'نفسالشات', 'نفس_الشات']
-        },
-        statusMsgType: {
-            default: ['default', 'افتراضي'],
-            custom: ['custom', 'مخصص']
-        },
-        antiBotAction: {
-            delete: ['delete', 'حذف'],
-            'delete+kick': ['delete+kick', 'حذفوطرد', 'حذف_وطرد']
-        }
-    };
-    const fieldMap = selectMaps[fieldKey] || {};
-    for (const [canonical, aliases] of Object.entries(fieldMap)) {
-        if (aliases.map((item) => normalizeOwnerControlAlias(item)).includes(clean)) {
-            return canonical;
-        }
-    }
-    return '';
-}
-
-function applyOwnerControlSettingUpdate(phoneNumber, rawField, rawValue) {
-    const fieldKey = resolveOwnerControlFieldKey(rawField);
-    if (!fieldKey) {
-        return { ok: false, error: '❌ اسم الحقل غير معروف.' };
-    }
-    let value = String(rawValue || '').trim();
-    if (!value) {
-        return { ok: false, error: '❌ أرسل قيمة صالحة بعد اسم الحقل.' };
-    }
-    if (fieldKey === 'customAutoReplies') {
-        return { ok: false, error: '❌ استخدم أوامر الردود: الردود / اضف_رد / مسح_الردود.' };
-    }
-    if (PHONE_SETTINGS_TOGGLE_FIELDS.has(fieldKey)) {
-        value = normalizeOwnerControlOnOff(value);
-        if (!value) {
-            return { ok: false, error: '❌ القيمة يجب أن تكون on أو off.' };
-        }
-    } else if (PHONE_SETTINGS_SELECT_OPTIONS[fieldKey]) {
-        value = normalizeOwnerControlSelect(fieldKey, value);
-        if (!value) {
-            return { ok: false, error: '❌ القيمة غير مدعومة لهذا الحقل.' };
-        }
-    } else if (fieldKey === 'statusCustomReact') {
-        value = normalizeStatusEmojiList(value, getPhoneEmoji(phoneNumber));
-        if (!String(value || '').trim()) {
-            return { ok: false, error: '❌ أرسل إيموجي واحد أو أكثر.' };
-        }
-    }
-    const settings = updatePhoneSettings(phoneNumber, { [fieldKey]: value });
-    return {
-        ok: true,
-        fieldKey,
-        settings,
-        message: `✅ تم تحديث ${SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey}: ${formatPhoneSettingValue(phoneNumber, fieldKey, settings[fieldKey])}`
-    };
-}
-
-function addOwnerControlAutoReply(phoneNumber, keywordsInput, responseInput) {
-    const entry = formatAutoReplyEntry(keywordsInput, responseInput);
-    if (!entry) {
-        return { ok: false, error: '❌ الصيغة الصحيحة: اضف_رد كلمة | كلمة ثانية => الرد' };
-    }
-    const settings = getActivePhoneSettings(phoneNumber);
-    const currentEntries = parseAutoReplies(settings.customAutoReplies);
-    if (currentEntries.length >= MAX_AUTO_REPLIES) {
-        return { ok: false, error: `❌ وصلت للحد الأقصى ${MAX_AUTO_REPLIES} ردود.` };
-    }
-    const nextReplies = [...currentEntries, entry].join('\n');
-    updatePhoneSettings(phoneNumber, { customAutoReplies: nextReplies });
-    return { ok: true, message: `✅ تم حفظ الرد التلقائي.\n\n${formatAutoRepliesList(phoneNumber)}` };
-}
-
-function clearOwnerControlAutoReplies(phoneNumber) {
-    updatePhoneSettings(phoneNumber, { customAutoReplies: '' });
-    return { ok: true, message: '✅ تم مسح جميع الردود التلقائية لهذا الرقم.' };
-}
-
-function formatWhatsAppBroadcastReport(report) {
-    const summary = [
-        '✅ تم تنفيذ إذاعة واتساب الخاصة.',
-        '',
-        `📱 الإجمالي: ${report.total || 0}`,
-        `✅ نجح: ${report.success || 0}`,
-        `⏭️ تم تجاوزه: ${report.skipped || 0}`,
-        `❌ فشل: ${report.failed || 0}`
-    ];
-
-    const issues = (report.details || [])
-        .filter((item) => item.status !== 'sent')
-        .slice(0, 10)
-        .map((item) => `• ${item.phone}: ${item.status === 'offline' ? 'غير متصل حالياً' : (item.error || 'فشل الإرسال')}`);
-
-    if (issues.length) {
-        summary.push('', '📋 ملاحظات:', ...issues);
-    }
-
-    return summary.join('\n');
-}
-
-async function sendWhatsAppLinkedNumbersBroadcast(messageText) {
-    const cleanMessage = String(messageText || '').trim();
-    const linkedPhones = Array.from(new Set(getAllLinkedPhones().map((phone) => normalizePhone(phone)).filter(Boolean)));
-    const report = { total: linkedPhones.length, success: 0, failed: 0, skipped: 0, details: [] };
-
-    if (!cleanMessage) {
-        return report;
-    }
-
-    for (const phone of linkedPhones) {
-        const sock = waClients.get(phone);
-        if (!sock) {
-            report.skipped += 1;
-            report.details.push({ phone, status: 'offline' });
-            continue;
-        }
-
-        const targets = Array.from(new Set([`${phone}@s.whatsapp.net`, normalizeWhatsAppJid(sock.user?.id)].filter(Boolean)));
-        let sent = false;
-        let lastError = null;
-
-        for (const targetJid of targets) {
-            try {
-                const result = await sock.sendMessage(targetJid, { text: cleanMessage });
-                rememberOwnerControlBypassResult(result);
-                sent = true;
-                break;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-
-        if (sent) {
-            report.success += 1;
-            report.details.push({ phone, status: 'sent' });
-        } else {
-            report.failed += 1;
-            report.details.push({ phone, status: 'failed', error: lastError?.message || 'فشل الإرسال' });
-        }
-    }
-
-    return report;
+    return [ownJid, `${normalizedPhone}@s.whatsapp.net`].filter(Boolean).includes(normalizedRemote);
 }
 
 async function handleOwnerControlMessage(sock, phoneNumber, msg) {
     return false;
 }
 
+function buildPhoneSettingsMessage(phone) {
+    const settings = getActivePhoneSettings(phone);
+    const replies = parseAutoReplies(settings.customAutoReplies);
+    const credential = getPhoneSettingsCredential(phone);
+    const pairingApi = buildPairingApiDescriptor(phone);
+    return [
+        `⚙️ إعدادات الرقم ${phone}`,
+        `🤖 عدد الردود التلقائية: ${replies.length}/${MAX_AUTO_REPLIES}`,
+        `😍 التفاعل على الحالات: ${settings.autoStatusReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        `👀 قراءة الحالات تلقائياً: ${settings.autoStatusRead === 'on' ? 'مفعلة ✅' : 'متوقفة ⛔'}`,
+        `✨ التفاعل مع الحالات تلقائياً: ${settings.autoStatusReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
+        `🎭 إيموجي الحالات الحالي: ${String(settings.statusCustomReact || DEFAULT_REACTION_EMOJI).split(',').map((item) => item.trim()).filter(Boolean).join(' ')}`,
+        credential ? `🗝️ كلمة سر لوحة الإعدادات: ${credential.password}` : '🗝️ كلمة سر لوحة الإعدادات: غير متاحة',
+        '',
+        'الردود الحالية:',
+        formatAutoRepliesList(phone),
+        '',
+        `🌐 لوحة الإعدادات: ${PUBLIC_BASE_URL}/settings`,
+        `🔗 API الربط: ${pairingApi.endpoint}`,
+        `📨 الحقول المدعومة: ${pairingApi.requestFields.join(' / ')}`,
+        '⚠️ التحكم في هذا الرقم متاح من بوت تيليجرام ولوحة الإعدادات فقط.',
+        'هذه الكلمة خاصة بهذا الرقم فقط.',
+        '',
+        buildLinkedNumberCommandsOverview(phone)
+    ].join('\n');
+}
+
+function getPhoneSettingsKeyboard(phone) {
+    const cleanPhone = sanitizeCallbackPhone(phone);
+    const settings = getActivePhoneSettings(phone);
+    return {
+        reply_markup: {
+            inline_keyboard: [
+                [Markup.button.callback('إدارة الرسائل ⚙️', `auto_reply_pick_${cleanPhone}`)],
+                [Markup.button.callback(settings.autoStatusReact === 'on' ? 'إيقاف التفاعل على الحالات ⛔' : 'تشغيل التفاعل على الحالات ✅', `emoji_react_toggle_${cleanPhone}`)],
+                [Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`)],
+                [Markup.button.url('فتح لوحة الإعدادات 🌐', `${SITE_ENDPOINTS.target_settings_page_url}`)],
+                [Markup.button.url('Contact Save 📇', 'https://whatsapp-pairing-api.onrender.com/contactsave')]
+            ]
+        }
+    };
+}
 
 function getUserRecord(userId) {
     const db = getUsersDB();
@@ -3400,14 +1494,6 @@ function addLinkedNumber(userId, phone) {
     saveUsersDB(db);
     ensurePhoneSettingsProfile(normalized, 'default');
     setPhoneEmoji(key, normalized, db.users[key].emojis[normalized]);
-    updatePhoneSettings(normalized, {
-        autoStatusRead: 'on',
-        autoStatusReact: 'on',
-        keepDeletedStatus: 'on',
-        ghostMode: 'off',
-        autoSave: 'on',
-        statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalized), DEFAULT_PHONE_SETTINGS.statusCustomReact)
-    });
     return true;
 }
 
@@ -3431,7 +1517,6 @@ function removeLinkedNumber(phone) {
     delete db.phoneOwners[normalized];
     saveUsersDB(db);
     deletePhoneSettings(normalized);
-    clearPhoneSettingsAuthForPhone(normalized);
     return true;
 }
 
@@ -3630,25 +1715,30 @@ function formatNumbersForUser(userId) {
 
 function buildLinkedNumberCommandsOverview(phone = '') {
     return [
-        `📲 الرقم ${phone}`,
-        'تم تعطيل أوامر الرقم من داخل الواتساب.',
-        'الإدارة متاحة من بوت تيليجرام وواجهة الإعدادات فقط.'
+        '📲 أوامر الرقم المربوط:',
+        '.bot - إرسال رابط البوت',
+        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
+        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت.'
     ].join('\n');
 }
 
-
 function buildTelegramCommandsOverview() {
-    return '';
+    return [
+        '🤖 أوامر البوت:',
+        '/start - الواجهة الرئيسية',
+        '/mywa - عرض الأرقام المربوطة',
+        '/unlink - حذف جلسة رقم مربوط',
+        '/setemoji - تغيير إيموجي الرقم',
+        'ومن الأزرار تحت /start تقدر تدير الردود والإعدادات وتفعيل أو إيقاف التفاعل بالإيموجي.'
+    ].join('\n');
 }
 
 function buildNumberManagerMessage(phone) {
     return [
         `⚙️ الرقم ${phone}`,
-        'يمكنك إدارة الرقم من بوت تيليجرام أو من واجهة الإعدادات فقط.',
-        buildWebPanelLinksMessage(phone)
-    ].join('\n\n');
+        'الإدارة الآن من بوت تيليجرام ولوحة الإعدادات فقط.'
+    ].join('\n');
 }
-
 
 function getNumberManagerKeyboard(phone) {
     const cleanPhone = sanitizeCallbackPhone(phone);
@@ -3698,21 +1788,20 @@ function buildStartMessage(ctx) {
     const numbersList = phones.length
         ? phones.map((phone, index) => `${index + 1}) ${phone} | ${user.emojis?.[phone] || DEFAULT_REACTION_EMOJI}`).join('\n')
         : 'لا يوجد';
-    const linkedEmojiOnly = phones.length
-        ? phones.map((phone) => user.emojis?.[phone] || DEFAULT_REACTION_EMOJI).join(' ')
-        : '';
 
-    const customStartMessage = String(settings.startMessage || '')
+    const baseMessage = String(settings.startMessage || '')
         .replaceAll('{name}', ctx.from.first_name || 'صديقي')
         .replaceAll('{username}', ctx.from.username ? `@${ctx.from.username}` : 'بدون معرف')
         .replaceAll('{count}', String(phones.length))
         .replaceAll('{emoji}', primaryEmoji)
-        .replaceAll('{numbers}', numbersList)
-        .trim();
+        .replaceAll('{numbers}', numbersList);
 
-    const baseMessage = customStartMessage || 'الايموجي الحالي :';
-    const emojiLine = linkedEmojiOnly || primaryEmoji;
-    return [baseMessage, emojiLine].filter(Boolean).join('\n').trim();
+    const summary = phones.length
+        ? `\n\n📱 أرقامك المربوطة:\n${numbersList}`
+        : '\n\n📱 لا يوجد لديك أرقام مربوطة حالياً.';
+
+    const linkedCommands = phones.length ? `\n\n${buildLinkedNumberCommandsOverview(phones[0])}` : '';
+    return `${baseMessage}${summary}\n\n${buildTelegramCommandsOverview()}${linkedCommands}`.trim();
 }
 
 function getStartKeyboard() {
@@ -3769,58 +1858,12 @@ function hasStatusContent(msg) {
     const contentKeys = Object.keys(content || {});
 
     return contentKeys.some(
-        (key) => !['messageContextInfo', 'protocolMessage', 'reactionMessage', 'senderKeyDistributionMessage'].includes(key)
+        (key) => !['messageContextInfo', 'protocolMessage', 'reactionMessage'].includes(key)
     );
 }
 
 function normalizeWhatsAppJid(jid) {
-    const raw = String(jid || '').trim();
-    if (!raw) return '';
-
-    const cleaned = raw.replace(/[\u200e\u200f\u202a-\u202e\s]/g, '');
-    const withoutDevice = cleaned
-        .replace(/@c\.us$/i, '@s.whatsapp.net')
-        .replace(/:\d+(?=@)/g, '');
-
-    if (!withoutDevice) return '';
-    if (withoutDevice === 'status@broadcast') return withoutDevice;
-
-    if (/^[^@]+@(?:s\.whatsapp\.net|g\.us|broadcast|newsletter|lid)$/i.test(withoutDevice)) {
-        return withoutDevice;
-    }
-
-    if (/^\d+$/.test(withoutDevice)) {
-        return `${withoutDevice}@s.whatsapp.net`;
-    }
-
-    const localPart = withoutDevice.split('@')[0] || '';
-    const numericLocalPart = localPart.split(':')[0] || '';
-    if (/^\d+$/.test(localPart)) {
-        return `${localPart}@s.whatsapp.net`;
-    }
-    if (/^\d+$/.test(numericLocalPart)) {
-        return `${numericLocalPart}@s.whatsapp.net`;
-    }
-
-    return withoutDevice;
-}
-
-function normalizeStatusParticipantJid(jid) {
-    const normalized = normalizeWhatsAppJid(jid);
-    if (!normalized || normalized === 'status@broadcast' || normalized.endsWith('@g.us')) {
-        return '';
-    }
-
-    if (normalized.endsWith('@s.whatsapp.net')) {
-        return normalized;
-    }
-
-    const numericId = normalizePhone(normalized);
-    if (numericId) {
-        return `${numericId}@s.whatsapp.net`;
-    }
-
-    return normalized;
+    return String(jid || '').replace(/:\d+(?=@)/, '');
 }
 
 function textFromMessage(msg) {
@@ -3852,252 +1895,8 @@ function textFromMessage(msg) {
     );
 }
 
-
 function getSessionPath(phone) {
     return path.join(SESSIONS_DIR, normalizePhone(phone));
-}
-
-function buildDeletedMessageBackupKey(phone, remoteJid, messageId) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
-    const normalizedMessageId = String(messageId || '').trim();
-    if (!normalizedPhone || !normalizedRemote || !normalizedMessageId) return '';
-    return `${normalizedPhone}::${normalizedRemote}::${normalizedMessageId}`;
-}
-
-function shouldCaptureAntiDeleteForChat(settings, remoteJid) {
-    const mode = String(settings?.antiDelete || 'off').trim();
-    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
-    const isGroup = normalizedRemote.endsWith('@g.us');
-    if (mode === 'all') return true;
-    if (mode === 'inbox') return !isGroup;
-    if (mode === 'group') return isGroup;
-    return false;
-}
-
-function pruneDeletedMessageBackups(phone = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const prefix = normalizedPhone ? `${normalizedPhone}::` : '';
-    const now = Date.now();
-    const activeEntries = [];
-
-    for (const [key, entry] of deletedMessageBackups.entries()) {
-        if (!entry || Number(entry.expiresAt || 0) <= now) {
-            deletedMessageBackups.delete(key);
-            continue;
-        }
-        if (prefix && !key.startsWith(prefix)) {
-            continue;
-        }
-        activeEntries.push([key, entry]);
-    }
-
-    if (!prefix || activeEntries.length <= MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE) {
-        return;
-    }
-
-    activeEntries
-        .sort((a, b) => Number(a[1]?.createdAt || 0) - Number(b[1]?.createdAt || 0))
-        .slice(0, Math.max(0, activeEntries.length - MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE))
-        .forEach(([key]) => deletedMessageBackups.delete(key));
-}
-
-function extractIncomingMessageContent(msg) {
-    const content = unwrapMessageContent(msg?.message);
-    const messageText = String(textFromMessage(msg) || '').trim();
-    const candidates = [
-        ['image', 'imageMessage'],
-        ['video', 'videoMessage'],
-        ['audio', 'audioMessage'],
-        ['document', 'documentMessage'],
-        ['sticker', 'stickerMessage']
-    ];
-
-    for (const [kind, key] of candidates) {
-        if (content?.[key]) {
-            return {
-                kind,
-                payload: content[key],
-                text: messageText,
-                mimetype: String(content[key]?.mimetype || '').trim(),
-                fileName: String(content[key]?.fileName || '').trim()
-            };
-        }
-    }
-
-    if (messageText) {
-        return {
-            kind: 'text',
-            payload: null,
-            text: messageText,
-            mimetype: 'text/plain',
-            fileName: ''
-        };
-    }
-
-    return null;
-}
-
-async function backupIncomingMessageForAntiDelete(sock, phoneNumber, msg) {
-    if (!sock || !msg?.key?.id || msg.key?.fromMe) return false;
-    const remoteJid = normalizeWhatsAppJid(msg.key?.remoteJid);
-    if (!remoteJid || remoteJid === 'status@broadcast') return false;
-
-    const settings = getActivePhoneSettings(phoneNumber);
-    if (!shouldCaptureAntiDeleteForChat(settings, remoteJid)) return false;
-
-    const contentInfo = extractIncomingMessageContent(msg);
-    if (!contentInfo) return false;
-
-    const backupKey = buildDeletedMessageBackupKey(phoneNumber, remoteJid, msg.key.id);
-    if (!backupKey) return false;
-
-    const senderJid = normalizeWhatsAppJid(msg.key?.participant || msg.participant || remoteJid);
-    const now = Date.now();
-    const entry = {
-        phone: normalizePhone(phoneNumber),
-        messageId: String(msg.key.id || '').trim(),
-        remoteJid,
-        senderJid,
-        senderPhone: normalizePhone(senderJid),
-        chatType: remoteJid.endsWith('@g.us') ? 'group' : 'private',
-        kind: contentInfo.kind,
-        text: contentInfo.text || '',
-        caption: contentInfo.text || '',
-        mimetype: contentInfo.mimetype || '',
-        fileName: contentInfo.fileName || '',
-        data: '',
-        createdAt: now,
-        expiresAt: now + DELETED_MESSAGE_RETENTION_MS,
-        deletedAt: 0,
-        restoredAt: 0
-    };
-
-    if (contentInfo.kind !== 'text' && contentInfo.payload && typeof downloadContentFromMessage === 'function') {
-        try {
-            const downloadType = contentInfo.kind === 'document' ? 'document' : contentInfo.kind;
-            const stream = await downloadContentFromMessage(contentInfo.payload, downloadType);
-            const buffer = await streamToBuffer(stream);
-            if (buffer.length) {
-                entry.data = buffer.toString('base64');
-            }
-        } catch (error) {
-            console.error(`Anti Delete Backup Error (${phoneNumber}):`, error.message);
-        }
-    }
-
-    deletedMessageBackups.set(backupKey, entry);
-    pruneDeletedMessageBackups(phoneNumber);
-    return true;
-}
-
-function extractRevokedMessageKey(msg) {
-    const content = unwrapMessageContent(msg?.message);
-    const protocolMessage = content?.protocolMessage;
-    const key = protocolMessage?.key;
-    if (!key?.id) return null;
-    return {
-        id: String(key.id || '').trim(),
-        remoteJid: normalizeWhatsAppJid(key.remoteJid || msg?.key?.remoteJid || ''),
-        participant: normalizeWhatsAppJid(key.participant || msg?.participant || ''),
-        fromMe: key.fromMe === true,
-        type: protocolMessage?.type
-    };
-}
-
-function buildDeletedMessageNotice(entry) {
-    const sender = entry?.senderPhone || normalizePhone(entry?.senderJid || '') || 'غير معروف';
-    const chatType = entry?.chatType === 'group' ? 'مجموعة' : 'خاص';
-    const messageTypeLabels = {
-        text: 'نص',
-        image: 'صورة',
-        video: 'فيديو',
-        audio: 'صوت',
-        document: 'ملف',
-        sticker: 'ملصق'
-    };
-    const messageType = messageTypeLabels[entry?.kind] || 'رسالة';
-    return [
-        '🗑️ تم رصد رسالة محذوفة.',
-        `👤 الرقم: ${sender}`,
-        `💬 نوع الشات: ${chatType}`,
-        `📦 نوع الرسالة: ${messageType}`
-    ].join('\\n');
-}
-
-async function sendDeletedMessageBackup(sock, targetJid, entry) {
-    if (!sock || !targetJid || !entry) return false;
-    const note = buildDeletedMessageNotice(entry);
-    const extraText = String(entry.text || entry.caption || '').trim();
-
-    if (entry.kind === 'text' || !entry.data) {
-        await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
-        return true;
-    }
-
-    const buffer = Buffer.from(entry.data, 'base64');
-    const caption = [note, extraText].filter(Boolean).join('\\n\\n');
-
-    if (entry.kind === 'image') {
-        await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' });
-        return true;
-    }
-    if (entry.kind === 'video') {
-        await sock.sendMessage(targetJid, { video: buffer, caption, mimetype: entry.mimetype || 'video/mp4' });
-        return true;
-    }
-    if (entry.kind === 'audio') {
-        await sock.sendMessage(targetJid, { audio: buffer, mimetype: entry.mimetype || 'audio/mpeg', ptt: false });
-        await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
-        return true;
-    }
-    if (entry.kind === 'document') {
-        await sock.sendMessage(targetJid, {
-            document: buffer,
-            fileName: entry.fileName || 'deleted-message.bin',
-            caption,
-            mimetype: entry.mimetype || 'application/octet-stream'
-        });
-        return true;
-    }
-    if (entry.kind === 'sticker') {
-        await sock.sendMessage(targetJid, {
-            document: buffer,
-            fileName: entry.fileName || 'deleted-sticker.webp',
-            caption,
-            mimetype: entry.mimetype || 'image/webp'
-        });
-        return true;
-    }
-
-    await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
-    return true;
-}
-
-async function handleAntiDeleteProtocolMessage(sock, phoneNumber, msg) {
-    const revokedKey = extractRevokedMessageKey(msg);
-    if (!revokedKey || revokedKey.fromMe) return false;
-
-    const remoteJid = normalizeWhatsAppJid(revokedKey.remoteJid || msg?.key?.remoteJid || '');
-    if (!remoteJid || remoteJid === 'status@broadcast') return false;
-
-    const settings = getActivePhoneSettings(phoneNumber);
-    if (!shouldCaptureAntiDeleteForChat(settings, remoteJid)) return false;
-
-    pruneDeletedMessageBackups(phoneNumber);
-    const backupKey = buildDeletedMessageBackupKey(phoneNumber, remoteJid, revokedKey.id);
-    const entry = deletedMessageBackups.get(backupKey);
-    if (!entry || entry.restoredAt) return false;
-
-    const ownJid = normalizeWhatsAppJid(sock.user?.id) || `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
-    const targetJid = settings.sendDeleteTo === 'same' ? entry.remoteJid : ownJid;
-    if (!targetJid) return false;
-
-    entry.deletedAt = Date.now();
-    await sendDeletedMessageBackup(sock, targetJid, entry);
-    entry.restoredAt = Date.now();
-    deletedMessageBackups.set(backupKey, entry);
-    return true;
 }
 
 function getTelegramBotLink() {
@@ -4197,8 +1996,6 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized)) return;
 
-    incrementAnalytics('totalReconnects');
-
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
@@ -4269,7 +2066,6 @@ function startSessionSupervisor() {
     sessionSupervisorStarted = true;
 
     const interval = setInterval(() => {
-        pruneExpiredStatusBackups();
         const phones = getAllLinkedPhones();
 
         for (const phone of phones) {
@@ -4316,7 +2112,6 @@ async function cleanupSession(phone) {
     clearPairingRequest(normalized);
     clientActivity.delete(normalized);
     clearPresenceTimer(normalized);
-    clearGhostPendingMessagesForPhone(normalized);
     stoppedPairings.delete(normalized);
 
     if (sock) {
@@ -4338,453 +2133,74 @@ async function cleanupSession(phone) {
     removeLinkedNumber(normalized);
 }
 
-
-function sanitizeFileFragment(value = '') {
-    return String(value || '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'item';
-}
-
-function getDefaultStatusBackupsDB() {
-    return { items: {} };
-}
-
-function getStatusBackupsDB() {
-    const db = readJSON(STATUS_BACKUPS_FILE, getDefaultStatusBackupsDB());
-    db.items = db.items || {};
-    return db;
-}
-
-function saveStatusBackupsDB(db) {
-    db.items = db.items || {};
-    writeJSON(STATUS_BACKUPS_FILE, db);
-}
-
-function buildStatusBackupKey(phone, participant, messageId) {
-    return [normalizePhone(phone), normalizePhone(participant) || sanitizeFileFragment(normalizeWhatsAppJid(participant)), sanitizeFileFragment(messageId)].filter(Boolean).join('__');
-}
-
-function getStatusMessagePayload(msg) {
-    const content = unwrapMessageContent(msg?.message);
-    if (content?.conversation) {
-        return { kind: 'text', text: String(content.conversation || '').trim(), payload: null, rawType: 'conversation' };
-    }
-    if (content?.extendedTextMessage?.text) {
-        return { kind: 'text', text: String(content.extendedTextMessage.text || '').trim(), payload: content.extendedTextMessage, rawType: 'extendedTextMessage' };
-    }
-    if (content?.imageMessage) return { kind: 'image', text: String(content.imageMessage.caption || '').trim(), payload: content.imageMessage, rawType: 'imageMessage' };
-    if (content?.videoMessage) return { kind: 'video', text: String(content.videoMessage.caption || '').trim(), payload: content.videoMessage, rawType: 'videoMessage' };
-    if (content?.documentMessage) return { kind: 'document', text: String(content.documentMessage.caption || '').trim(), payload: content.documentMessage, rawType: 'documentMessage' };
-    if (content?.audioMessage) return { kind: 'audio', text: '', payload: content.audioMessage, rawType: 'audioMessage' };
-    return null;
-}
-
-function getStatusBackupExtension(kind, payload = {}) {
-    const mime = String(payload?.mimetype || '').toLowerCase();
-    if (kind === 'image') return mime.includes('png') ? 'png' : 'jpg';
-    if (kind === 'video') return mime.includes('quicktime') ? 'mov' : 'mp4';
-    if (kind === 'document') return path.extname(String(payload?.fileName || ''))?.replace(/^\./, '') || 'bin';
-    if (kind === 'audio') return mime.includes('ogg') ? 'ogg' : 'mp3';
-    return 'txt';
-}
-
-async function streamToBuffer(stream) {
-    const chunks = [];
-    for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    return Buffer.concat(chunks);
-}
-
-function pruneExpiredStatusBackups() {
-    const db = getStatusBackupsDB();
-    let changed = false;
-    const now = Date.now();
-    for (const [key, entry] of Object.entries(db.items || {})) {
-        const expiresAt = Date.parse(entry?.expiresAt || 0);
-        if (expiresAt && expiresAt > now) continue;
-        const timer = statusMirrorTimers.get(key);
-        if (timer) {
-            clearTimeout(timer);
-            statusMirrorTimers.delete(key);
-        }
-        if (entry?.filePath && fs.existsSync(entry.filePath)) {
-            try { fs.rmSync(entry.filePath, { force: true }); } catch (_) {}
-        }
-        delete db.items[key];
-        changed = true;
-    }
-    if (changed) saveStatusBackupsDB(db);
-}
-
-async function backupStatusMessage(sock, phoneNumber, msg) {
-    const settings = getActivePhoneSettings(phoneNumber);
-    if (settings.keepDeletedStatus !== 'on') return null;
-    if (!hasStatusContent(msg)) return null;
-    const participant = extractStatusParticipant(msg);
-    const messageId = String(msg?.key?.id || '').trim();
-    if (!participant || !messageId) return null;
-
-    pruneExpiredStatusBackups();
-    const statusData = getStatusMessagePayload(msg);
-    if (!statusData) return null;
-
-    const key = buildStatusBackupKey(phoneNumber, participant, messageId);
-    const db = getStatusBackupsDB();
-    if (db.items[key]) return db.items[key];
-
-    const entry = {
-        phone: normalizePhone(phoneNumber),
-        participant,
-        participantPhone: normalizePhone(participant) || '',
-        messageId,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + STATUS_RETENTION_MS).toISOString(),
-        kind: statusData.kind,
-        rawType: statusData.rawType,
-        text: statusData.text || '',
-        caption: statusData.text || '',
-        mimetype: String(statusData.payload?.mimetype || '').trim(),
-        fileName: '',
-        filePath: '',
-        restoredAt: ''
-    };
-
-    if (statusData.kind !== 'text' && statusData.payload && typeof downloadContentFromMessage === 'function') {
-        const downloadKind = statusData.kind === 'document' ? 'document' : statusData.kind;
-        const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
-        const buffer = await streamToBuffer(stream);
-        if (buffer.length) {
-            const ext = getStatusBackupExtension(statusData.kind, statusData.payload);
-            const fileName = `${key}.${ext}`;
-            const filePath = path.join(STATUS_MEDIA_DIR, fileName);
-            fs.writeFileSync(filePath, buffer);
-            entry.fileName = fileName;
-            entry.filePath = filePath;
-        }
-    }
-
-    db.items[key] = entry;
-    saveStatusBackupsDB(db);
-    incrementAnalytics('totalStatusEvents');
-    return entry;
-}
-
-function extractRevokedStatusId(msg) {
-    const content = unwrapMessageContent(msg?.message);
-    return String(content?.protocolMessage?.key?.id || '').trim();
-}
-
-function clearStatusMirrorTimer(backupKey) {
-    const timer = statusMirrorTimers.get(backupKey);
-    if (timer) {
-        clearTimeout(timer);
-        statusMirrorTimers.delete(backupKey);
-    }
-}
-
-async function deleteMirroredStatusMessage(sock, mirrorKey) {
-    if (!sock || !mirrorKey?.id) return false;
-
-    const attempts = [
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                delete: {
-                    ...(mirrorKey || {}),
-                    remoteJid: 'status@broadcast',
-                    fromMe: true
-                }
-            });
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', { delete: mirrorKey });
-        }
-    ];
-
-    for (const attempt of attempts) {
-        try {
-            await attempt();
-            return true;
-        } catch (_) {}
-    }
-
-    return false;
-}
-
-function getDeletedStatusRetentionNote(entry) {
-    return `🛡️ تم حفظ نسخة من حالة محذوفة خلال أقل من 24 ساعة.\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
-}
-
-function buildRetainedStatusText(entry) {
-    const note = getDeletedStatusRetentionNote(entry);
-    return [note, String(entry.text || entry.caption || '').trim()].filter(Boolean).join('\n\n').trim();
-}
-
-function buildRetainedStatusCaption(entry) {
-    const note = getDeletedStatusRetentionNote(entry);
-    return [note, String(entry.caption || entry.text || '').trim()].filter(Boolean).join('\n\n').trim();
-}
-
-function buildRetainedStatusPayload(entry) {
-    if (entry.kind === 'text') {
-        return {
-            text: buildRetainedStatusText(entry),
-            backgroundColor: '#0B141A',
-            font: 1
-        };
-    }
-
-    if (!entry.filePath || !fs.existsSync(entry.filePath)) {
-        return null;
-    }
-
-    const buffer = fs.readFileSync(entry.filePath);
-    const caption = buildRetainedStatusCaption(entry);
-
-    if (entry.kind === 'image') {
-        return { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' };
-    }
-    if (entry.kind === 'video') {
-        return { video: buffer, caption, mimetype: entry.mimetype || 'video/mp4' };
-    }
-
-    return null;
-}
-
-function scheduleMirroredStatusExpiry(sock, backupKey, mirrorKey, expiresAt) {
-    clearStatusMirrorTimer(backupKey);
-    const expiresAtMs = Date.parse(expiresAt || 0);
-    if (!expiresAtMs) return;
-    const delayMs = expiresAtMs - Date.now();
-    if (!Number.isFinite(delayMs) || delayMs <= 0 || delayMs > 2147483647) return;
-
-    const timer = setTimeout(async () => {
-        try {
-            await deleteMirroredStatusMessage(sock, mirrorKey);
-        } catch (_) {}
-        clearStatusMirrorTimer(backupKey);
-    }, delayMs);
-
-    statusMirrorTimers.set(backupKey, timer);
-}
-
-async function repostStatusBackupToOwnStatus(sock, phoneNumber, entry) {
-    if (!sock || !entry) return null;
-
-    const payload = buildRetainedStatusPayload(entry);
-    if (!payload) return null;
-
-    const attempts = [
-        async () => sock.sendMessage('status@broadcast', payload, { broadcast: true }),
-        async () => sock.sendMessage('status@broadcast', payload)
-    ];
-
-    for (const attempt of attempts) {
-        try {
-            const result = await attempt();
-            if (result?.key?.id) {
-                const backupKey = buildStatusBackupKey(phoneNumber, entry.participant, entry.messageId);
-                scheduleMirroredStatusExpiry(sock, backupKey, result.key, entry.expiresAt);
-            }
-            return result || { key: null };
-        } catch (_) {}
-    }
-
-    return null;
-}
-
-async function sendStatusBackupCopy(sock, targetJid, entry) {
-    const note = `🛡️ تم حفظ نسخة من حالة محذوفة خلال أقل من 24 ساعة.\n👤 المصدر: ${entry.participantPhone || entry.participant || 'غير معروف'}`;
-    const caption = [note, entry.caption || entry.text || ''].filter(Boolean).join('\n\n');
-
-    if (entry.kind === 'text') {
-        await sock.sendMessage(targetJid, { text: caption });
-        return true;
-    }
-
-    if (!entry.filePath || !fs.existsSync(entry.filePath)) {
-        await sock.sendMessage(targetJid, { text: caption });
-        return true;
-    }
-
-    const buffer = fs.readFileSync(entry.filePath);
-    if (entry.kind === 'image') {
-        await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' });
-        return true;
-    }
-    if (entry.kind === 'video') {
-        await sock.sendMessage(targetJid, { video: buffer, caption, mimetype: entry.mimetype || 'video/mp4' });
-        return true;
-    }
-    if (entry.kind === 'document') {
-        await sock.sendMessage(targetJid, { document: buffer, fileName: entry.fileName || 'status-backup.bin', caption, mimetype: entry.mimetype || 'application/octet-stream' });
-        return true;
-    }
-    if (entry.kind === 'audio') {
-        await sock.sendMessage(targetJid, { audio: buffer, mimetype: entry.mimetype || 'audio/mpeg', ptt: false });
-        await sock.sendMessage(targetJid, { text: note });
-        return true;
-    }
-
-    await sock.sendMessage(targetJid, { text: caption });
-    return true;
-}
-
-async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
-    const settings = getActivePhoneSettings(phoneNumber);
-    if (settings.keepDeletedStatus !== 'on') return false;
-
-    const revokedId = extractRevokedStatusId(msg);
-    const participant = extractStatusParticipant(msg);
-    if (!revokedId || !participant) return false;
-
-    pruneExpiredStatusBackups();
-    const key = buildStatusBackupKey(phoneNumber, participant, revokedId);
-    const db = getStatusBackupsDB();
-    const entry = db.items[key];
-    if (!entry) return false;
-    if (entry.restoredAt) return true;
-
-    entry.deletedAt = new Date().toISOString();
-    entry.expiresAt = new Date(Date.now() + STATUS_RETENTION_MS).toISOString();
-    db.items[key] = entry;
-    saveStatusBackupsDB(db);
-
-    try {
-        const reposted = await repostStatusBackupToOwnStatus(sock, phoneNumber, entry);
-        if (reposted) {
-            entry.restoredAt = new Date().toISOString();
-            entry.mirroredStatusKey = reposted?.key || null;
-            db.items[key] = entry;
-            saveStatusBackupsDB(db);
-            return true;
-        }
-    } catch (_) {}
-
-    const ownJid = normalizeWhatsAppJid(sock.user?.id);
-    const phoneJid = `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
-    const targets = Array.from(new Set([ownJid, phoneJid].filter(Boolean)));
-
-    for (const target of targets) {
-        try {
-            await sendStatusBackupCopy(sock, target, entry);
-            entry.restoredAt = new Date().toISOString();
-            db.items[key] = entry;
-            saveStatusBackupsDB(db);
-            return true;
-        } catch (_) {}
-    }
-
-    return false;
-}
-
-function buildGhostChatKey(phone, remoteJid) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedRemote = normalizeWhatsAppJid(remoteJid);
-    if (!normalizedPhone || !normalizedRemote) return '';
-    return `${normalizedPhone}::${normalizedRemote}`;
-}
-
-function rememberGhostPendingMessage(phone, msg) {
-    if (!msg?.key?.id || msg.key?.fromMe) return;
-    const key = buildGhostChatKey(phone, msg.key?.remoteJid);
-    if (!key) return;
-    const pending = ghostPendingReads.get(key) || [];
-    pending.push({ ...msg.key, fromMe: false, remoteJid: normalizeWhatsAppJid(msg.key?.remoteJid) });
-    ghostPendingReads.set(key, pending.slice(-50));
-}
-
-async function flushGhostPendingMessages(sock, phone, remoteJid) {
-    const key = buildGhostChatKey(phone, remoteJid);
-    if (!key) return false;
-    const pending = ghostPendingReads.get(key) || [];
-    if (!pending.length) return false;
-    try {
-        await sock.readMessages(pending);
-        ghostPendingReads.delete(key);
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
-function dropGhostPendingMessages(phone, remoteJid) {
-    const key = buildGhostChatKey(phone, remoteJid);
-    if (!key) return false;
-    return ghostPendingReads.delete(key);
-}
-
-function clearGhostPendingMessagesForPhone(phone) {
-    const prefix = `${normalizePhone(phone)}::`;
-    for (const key of ghostPendingReads.keys()) {
-        if (key.startsWith(prefix)) {
-            ghostPendingReads.delete(key);
-        }
-    }
-}
-
 function buildStatusReactionKey(msg, participant = '') {
-    const normalizedParticipant = normalizeStatusParticipantJid(participant || msg?.key?.participant || msg?.participant);
     return {
+        ...(msg?.key || {}),
         remoteJid: 'status@broadcast',
-        id: msg?.key?.id,
-        participant: normalizedParticipant,
+        participant: participant || msg?.key?.participant || msg?.participant,
         fromMe: false
     };
 }
 
-function buildStatusReactionSendOptions(participant = '') {
-    const normalizedParticipant = normalizeStatusParticipantJid(participant);
-    const options = {
-        broadcast: true
-    };
-
-    if (normalizedParticipant) {
-        options.statusJidList = [normalizedParticipant];
-        options.participant = normalizedParticipant;
-    }
-
-    return options;
-}
-
-function buildQuotedStatusMessage(msg, participant = '') {
-    if (!msg?.message || !msg?.key?.id) {
-        return null;
-    }
-
-    return {
-        ...msg,
-        key: buildStatusReactionKey(msg, participant),
-        participant: normalizeStatusParticipantJid(participant || msg?.participant || msg?.key?.participant)
-    };
-}
-
-async function sendStatusReplyMessage(sock, participant, messageText, msg) {
-    if (!sock || !participant || !String(messageText || '').trim()) {
+async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
+    const reactionKey = buildStatusReactionKey(msg, participant);
+    if (!sock || !participant || !reactionKey.id) {
         return false;
     }
 
-    const cleanMessage = String(messageText).trim();
-    const quotedStatusMessage = buildQuotedStatusMessage(msg, participant);
+    const emoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
+    if (!emoji) {
+        return false;
+    }
+
+    reactionEmoji = emoji;
+
     const attempts = [
         async () => {
-            if (!quotedStatusMessage) {
-                throw new Error('Status quote unavailable');
-            }
-            await sock.sendMessage(participant, { text: cleanMessage }, { quoted: quotedStatusMessage });
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            }, { statusJidList: [participant] });
         },
         async () => {
-            if (!msg?.message || !msg?.key?.id) {
-                throw new Error('Original status message unavailable');
-            }
-            await sock.sendMessage(participant, { text: cleanMessage }, { quoted: msg });
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            }, { statusJidList: [participant], participant });
         },
         async () => {
-            await sock.sendMessage(participant, { text: cleanMessage });
+            await sock.sendMessage(participant, {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            }, { statusJidList: [participant] });
+        },
+        async () => {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: emoji,
+                    key: {
+                        ...reactionKey,
+                        remoteJid: 'status@broadcast',
+                        participant,
+                        fromMe: false
+                    }
+                }
+            });
         }
     ];
 
     let lastError = null;
     for (const attempt of attempts) {
         try {
+            if (typeof delay === 'function') {
+                await delay(150);
+            }
             await attempt();
             return true;
         } catch (error) {
@@ -4799,147 +2215,45 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
     return false;
 }
 
-// ====================================================================
-//  النظام المطور والموحد لمعالجة وتفاعل الحالات تلقائياً (حل نهائي وشامل)
-// ====================================================================
-
-// 1. دالة قوية واستباقية لاستخراج المعرفات (ID والجيد) لجميع أنواع الحالات (نصوص، صور، فيديوهات)
-function getRobustStatusMessageInfo(msg) {
-    const participant = normalizeStatusParticipantJid(extractStatusParticipant(msg) || msg?.key?.participant || msg?.participant || '');
-    const id = String(extractStatusMessageId(msg) || msg?.key?.id || '').trim();
-    return { id, participant };
-}
-
-// 2. دالة التحكم بالوقت والجدولة (تم تعديلها لتعطي دائماً مفعّل True وتخطي حظر الساعات والخمول الافتراضي)
-function isWithinStatusWorkingHours(phoneNumber) {
-    // تم إلغاء شروط أوقات الفتح والإغلاق والمناطق الزمنية المزعجة ليعمل البوت 24 ساعة دون توقف
-    return true;
-}
-
-// 3. دالة إرسال التفاعل (الإيموجي) عبر بروتوكول السيرفر النقي المتوافق بالكامل مع استضافة Railway
-async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant = '') {
-    try {
-        const msgInfo = getRobustStatusMessageInfo(msg);
-        const finalParticipant = normalizeStatusParticipantJid(participant || msgInfo.participant);
-        const statusMessageId = String(msgInfo.id || '').trim();
-
-        if (!finalParticipant || !statusMessageId || finalParticipant === 'status@broadcast' || finalParticipant.endsWith('@g.us')) return false;
-
-        const settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
-        let emoji = String(getPhoneEmoji(phoneNumber) || '').trim();
-        if (!emoji) {
-            emoji = String(settings.statusCustomReact || '')
-                .split(',')
-                .map((item) => item.trim())
-                .find(Boolean) || DEFAULT_REACTION_EMOJI;
-        }
-
-        const reactionKey = {
-            remoteJid: 'status@broadcast',
-            id: statusMessageId,
-            participant: finalParticipant,
-            fromMe: false
-        };
-
-        const attempts = [
-            async () => {
-                await sock.sendMessage('status@broadcast', {
-                    react: {
-                        text: emoji,
-                        key: reactionKey
-                    }
-                }, buildStatusReactionSendOptions(finalParticipant));
-            },
-            async () => {
-                await sock.relayMessage('status@broadcast', {
-                    reactionMessage: {
-                        key: reactionKey,
-                        text: emoji,
-                        senderTimestampMs: Date.now()
-                    }
-                }, {
-                    ...buildStatusReactionSendOptions(finalParticipant),
-                    statusJidList: [finalParticipant]
-                });
-            }
-        ];
-
-        let lastError = null;
-        for (const attempt of attempts) {
-            try {
-                await attempt();
-                return true;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-
-        if (lastError) throw lastError;
-        return false;
-    } catch (err) {
-        console.error(`[خطأ إرسال الإيموجي للرقم ${phoneNumber}]:`, err.message);
-        return false;
-    }
-}
-
-// 4. الدالة التشغيلية الكبرى لمعالجة الحالات الواردة (تجمع بين المشاهدة الفورية والتفاعل بالإيموجي)
-async function handleStatusAction(sock, phoneNumber, msg) {
-    try {
-        const settings = getActivePhoneSettings(phoneNumber);
-        const msgInfo = getRobustStatusMessageInfo(msg);
-        const statusMessageId = String(msgInfo.id || '').trim();
-        const normalizedParticipant = normalizeStatusParticipantJid(msgInfo.participant);
-        const ownJid = normalizeStatusParticipantJid(sock.user?.id || '');
-
-        if (!statusMessageId || !normalizedParticipant) return false;
-        if (ownJid && ownJid === normalizedParticipant) return false;
-        if (isStatusEventRecentlyProcessed(phoneNumber, normalizedParticipant, statusMessageId)) return false;
-
-        if (settings.keepDeletedStatus === 'on' && hasStatusContent(msg)) {
-            try {
-                await backupStatusMessage(sock, phoneNumber, msg);
-            } catch (backupError) {
-                console.error(`[خطأ حفظ نسخة الحالة للرقم ${phoneNumber}]:`, backupError.message);
-            }
-        }
-
-        if (settings.autoStatusRead === 'on') {
-            const readKey = {
-                remoteJid: 'status@broadcast',
-                id: statusMessageId,
-                participant: normalizedParticipant,
-                fromMe: false
-            };
-            try {
-                await sock.readMessages([readKey]);
-            } catch (_) {}
-        }
-
-        let reactedToStatus = false;
-        if (settings.autoStatusReact === 'on' && isWithinStatusWorkingHours(phoneNumber)) {
-            reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, normalizedParticipant);
-        }
-
-        if (reactedToStatus && typeof incrementAnalytics === 'function') {
-            incrementAnalytics('totalStatusReactions');
-        }
-
-        markStatusEventProcessed(phoneNumber, normalizedParticipant, statusMessageId);
-        return reactedToStatus;
-    } catch (error) {
-        console.error(`[خطأ عام في معالجة الحالة للرقم ${phoneNumber}]:`, error.message);
-        return false;
-    }
-}
-
-// 5. دالة معالجة أحداث التفاعلات العكسية (تم إصلاحها لمنع تعليق أو تجميد السيرفر عند استقبال إيموجيات الآخرين)
 async function handleStatusReaction(sock, phoneNumber, msg) {
     try {
-        const msgInfo = getRobustStatusMessageInfo(msg);
-        if (!msgInfo.id) return;
-        // معالجة وحماية الذاكرة للتفاعلات العكسية بشكل آمن وصامت
+        if (!hasStatusContent(msg)) return;
+
+        const settings = getActivePhoneSettings(phoneNumber);
+        const participant = extractStatusParticipant(msg);
+        const ownJid = normalizeWhatsAppJid(sock.user?.id);
+        const reactionKey = buildStatusReactionKey(msg, participant);
+
+        if (!reactionKey.id) return;
+
+        const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
+        if (shouldReadStatus) {
+            const readAttempts = [
+                [reactionKey],
+                msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
+                msg.key ? [msg.key] : []
+            ].filter((items) => items.length);
+
+            for (const attempt of readAttempts) {
+                try {
+                    await sock.readMessages(attempt);
+                    break;
+                } catch (_) {}
+            }
+        }
+
+        if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
+            await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+        }
+
+        if (settings.statusMsgSend === 'on' && participant && participant !== ownJid) {
+            const messageText = buildStatusAutoMessage(phoneNumber);
+            if (messageText) {
+                await sock.sendMessage(participant, { text: messageText });
+            }
+        }
     } catch (error) {
-        console.error(`[خطأ تفاعل الحالات العكسي للرقم ${phoneNumber}]:`, error.message);
+        console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
     }
 }
 
@@ -4966,15 +2280,14 @@ async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
     const text = String(textFromMessage(msg) || '').trim();
     if (!text) return false;
 
-    if (/^(?:\.bot|\.(?:الاوامر|الأوامر|اوامر)|(?:bot|menu|help))$/i.test(text)) {
-        const botMessage = buildPublicLinkedNumberCommands(phoneNumber);
-        if (!String(botMessage || '').trim()) {
-            return true;
-        }
+    if (/^\.bot$/i.test(text)) {
         await sock.sendMessage(
             from,
             {
-                text: botMessage
+                text: [
+                    'انا ربوت التفاعل على استوريات الواتس لتفعيل رقمك ادخل على رابط البوت التالي',
+                    getTelegramBotLink() || DEPLOYMENT_BASE_URL
+                ].filter(Boolean).join('\n')
             },
             { quoted: msg }
         );
@@ -4992,46 +2305,25 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 
         const settings = getActivePhoneSettings(phoneNumber);
 
-        if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
-            await applyLivePhoneSettingsSideEffects(phoneNumber);
-        }
-
         if (from === 'status@broadcast') {
-            await handleStatusAction(sock, phoneNumber, msg);
             await handleStatusReaction(sock, phoneNumber, msg);
             return;
         }
 
         if (msg.key?.fromMe) {
-            incrementAnalytics('totalOwnerReplies');
-            if (settings.ghostMode === 'on') {
-                dropGhostPendingMessages(phoneNumber, from);
-            }
             await handleOwnerControlMessage(sock, phoneNumber, msg);
             return;
         }
 
-        const revokedMessageKey = extractRevokedMessageKey(msg);
-        if (revokedMessageKey) {
-            await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
-            return;
-        }
-
-        incrementAnalytics('totalIncomingMessages');
-        await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
-
-        if (!isGroup && settings.ghostMode === 'on' && msg.key) {
-            rememberGhostPendingMessage(phoneNumber, msg);
-        }
 
         if (!isGroup) {
             const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
             if (handledPublicCommand) return;
         }
 
-        if (settings.autoRead === 'on' && settings.ghostMode !== 'on' && msg.key) {
+        if (settings.autoRead === 'on' && msg.key) {
             try {
                 await sock.readMessages([msg.key]);
             } catch (_) {}
@@ -5101,12 +2393,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0,
         keepAliveIntervalMs: 10000,
-        markOnlineOnConnect: false,
-        shouldIgnoreJid: () => false
+        markOnlineOnConnect: false
     });
-
-    sock.ev.setMaxListeners?.(0);
-    sock.ws?.setMaxListeners?.(0);
 
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
@@ -5131,7 +2419,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             clearPairingRequest(normalizedPhone);
             waClients.delete(normalizedPhone);
             clientActivity.delete(normalizedPhone);
-            clearChannelPromotionTimer(normalizedPhone);
             clearPresenceTimer(normalizedPhone);
             const failMessage = '❌ فشل في طلب كود الربط. تأكد من الرقم ثم حاول مرة أخرى بعد دقيقة.';
             if (telegramCtx) {
@@ -5149,50 +2436,15 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         await saveCreds();
     });
 
-    sock.ev.on('messages.upsert', async (chatUpdate = {}) => {
+    sock.ev.on('messages.upsert', async (payload) => {
         try {
-            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : [];
+            touchClient(normalizedPhone);
+            const messages = payload?.messages || [];
             for (const msg of messages) {
-                if (!msg) continue;
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
-        } catch (err) {
-            console.error(`[خطأ في حدث messages.upsert للرقم ${normalizedPhone}]:`, err.message);
-        }
-    });
-
-    sock.ev.on('messages.update', async (keyUpdate = []) => {
-        try {
-            if (!Array.isArray(keyUpdate)) return;
-
-            for (const item of keyUpdate) {
-                if (!item) continue;
-
-                const synthesizedMessage = {
-                    key: {
-                        ...(item.key || {}),
-                        remoteJid: item.key?.remoteJid || 'status@broadcast'
-                    },
-                    message: item.update || {},
-                    participant: item.key?.participant || item.update?.participant || item.update?.protocolMessage?.key?.participant || ''
-                };
-
-                const remoteJid = normalizeWhatsAppJid(item.key?.remoteJid || synthesizedMessage.key.remoteJid || '');
-                const looksLikeStatus = remoteJid === 'status@broadcast' || Boolean(synthesizedMessage.participant);
-
-                if (looksLikeStatus) {
-                    await handleStatusAction(sock, normalizedPhone, synthesizedMessage);
-                    await handleStatusReaction(sock, normalizedPhone, synthesizedMessage);
-                }
-
-                if (!item?.update) continue;
-                const updateContent = unwrapMessageContent(item.update);
-                const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                if (!isRevocationUpdate) continue;
-                await handleIncomingMessage(sock, normalizedPhone, synthesizedMessage);
-            }
         } catch (error) {
-            console.error(`messages.update Error (${normalizedPhone}):`, error.message);
+            console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
         }
     });
 
@@ -5226,16 +2478,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         if (connection === 'open') {
             console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
-            incrementAnalytics('totalSessionsStarted');
             clearReconnectTimer(normalizedPhone);
-            updatePhoneSettings(normalizedPhone, {
-                autoStatusRead: 'on',
-                autoStatusReact: 'on',
-                statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalizedPhone), DEFAULT_PHONE_SETTINGS.statusCustomReact)
-            });
             startPresenceKeepAlive(sock, normalizedPhone);
-            await applyLivePhoneSettingsSideEffects(normalizedPhone);
-            startChannelPromotionScheduler(sock, normalizedPhone);
 
             const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
             if (finalOwnerId) {
@@ -5246,15 +2490,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 pendingPair.completed = true;
                 pairingRequests.set(normalizedPhone, pendingPair);
                 stoppedPairings.delete(normalizedPhone);
-                pruneProcessedStatusEvents(normalizedPhone);
-                updatePhoneSettings(normalizedPhone, {
-                    autoStatusRead: 'on',
-                    autoStatusReact: 'on',
-                    keepDeletedStatus: 'on',
-                    ghostMode: 'off',
-                    autoSave: 'on',
-                    statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalizedPhone), DEFAULT_PHONE_SETTINGS.statusCustomReact)
-                });
+                updatePhoneSettings(normalizedPhone, { autoStatusRead: 'on', autoStatusReact: 'on' });
                 await autoJoinWhatsAppChannel(sock, normalizedPhone);
                 await sendLinkedNumberWelcome(sock, normalizedPhone);
                 const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
@@ -5329,7 +2565,6 @@ bot.start(async (ctx) => {
     await sendStartMessage(ctx);
 });
 
-
 bot.command('mywa', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     upsertTelegramUser(ctx);
@@ -5403,7 +2638,7 @@ ${buildTelegramCommandsOverview()}`);
         }
 
         const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '📲 اختر الرقم الذي تريد عرض أوامره وإدارته من داخل الرقم المربوط:', { reply_markup: { inline_keyboard: rows } });
+        return safeReply(ctx, '⚙️ لم يعد هناك أوامر داخل الرقم المربوط؛ الإدارة من البوت فقط.', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data === 'auto_replies') {
@@ -5431,12 +2666,11 @@ ${buildTelegramCommandsOverview()}`);
         }
 
         if (phones.length === 1) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phones[0] };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phones[0]), getPhoneSettingsAuthKeyboard(phones[0]));
+            return safeReply(ctx, buildPhoneSettingsMessage(phones[0]), getPhoneSettingsKeyboard(phones[0]));
         }
 
         const rows = phones.map((phone) => [Markup.button.callback(`⚙️ ${phone}`, `settings_phone_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته، وبعدها سأطلب منك كلمة السر الخاصة به:', { reply_markup: { inline_keyboard: rows } });
+        return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data.startsWith('settings_phone_')) {
@@ -5444,8 +2678,7 @@ ${buildTelegramCommandsOverview()}`);
         if (!userOwnsPhone(ctx.from.id, phone)) {
             return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
         }
-        ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-        return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
+        return safeReply(ctx, buildPhoneSettingsMessage(phone), getPhoneSettingsKeyboard(phone));
     }
     if (data.startsWith('linked_commands_')) {
         const phone = normalizePhone(data.replace('linked_commands_', ''));
@@ -5542,124 +2775,13 @@ ${buildTelegramCommandsOverview()}`);
         return safeReply(ctx, `✅ تم حذف جلسة الرقم ${phone} نهائياً.`);
     }
 
-
-    if (data.startsWith('settings_revealpass_')) {
-        const phone = normalizePhone(data.replace('settings_revealpass_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        return safeReply(ctx, buildPhoneSettingsAccessMessage(phone));
-    }
-
-    if (data.startsWith('settings_dashboard_')) {
-        const phone = normalizePhone(data.replace('settings_dashboard_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
-        }
-        return safeReply(ctx, buildPhoneSettingsMessage(phone), getPhoneSettingsKeyboard(phone));
-    }
-
-    if (data.startsWith('settings_lock_')) {
-        const phone = normalizePhone(data.replace('settings_lock_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        revokePhoneSettingsAccess(ctx.from.id, phone);
-        ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-        return safeReply(ctx, `🔒 تم قفل إعدادات الرقم ${phone}.\nأرسل كلمة السر مرة أخرى إذا أردت فتحها.`, getPhoneSettingsAuthKeyboard(phone));
-    }
-
-    if (data.startsWith('settings_section_')) {
-        const parts = data.replace('settings_section_', '').split('_');
-        const phone = normalizePhone(parts.pop() || '');
-        const sectionKey = String(parts.join('_') || 'general').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
-        }
-        return safeReply(ctx, buildPhoneSettingsSectionMessage(phone, sectionKey), getPhoneSettingsSectionKeyboard(phone, sectionKey));
-    }
-
-    if (data.startsWith('settings_toggle_')) {
-        const parts = data.replace('settings_toggle_', '').split('_');
-        const phone = normalizePhone(parts.pop() || '');
-        const fieldKey = String(parts.join('_') || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
-        }
-        const settings = getActivePhoneSettings(phone);
-        const nextValue = String(settings[fieldKey] || '') === 'on' ? 'off' : 'on';
-        updatePhoneSettings(phone, { [fieldKey]: nextValue });
-        const section = getPhoneSettingsSectionByField(fieldKey);
-        return safeReply(ctx, buildPhoneSettingsSectionMessage(phone, section.key), getPhoneSettingsSectionKeyboard(phone, section.key));
-    }
-
-    if (data.startsWith('settings_select_')) {
-        const parts = data.replace('settings_select_', '').split('_');
-        const phone = normalizePhone(parts.pop() || '');
-        const fieldKey = String(parts.join('_') || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
-        }
-        const label = SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey;
-        return safeReply(ctx, `🎛️ اختر القيمة الجديدة لـ ${label} للرقم ${phone}:`, getPhoneSettingChoiceKeyboard(phone, fieldKey));
-    }
-
-    if (data.startsWith('settings_choice_')) {
-        const parts = data.replace('settings_choice_', '').split('_');
-        const phone = normalizePhone(parts.pop() || '');
-        const fieldKey = String(parts.shift() || '').trim();
-        const value = String(parts.join('_') || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
-        }
-        updatePhoneSettings(phone, { [fieldKey]: value });
-        const section = getPhoneSettingsSectionByField(fieldKey);
-        return safeReply(ctx, buildPhoneSettingsSectionMessage(phone, section.key), getPhoneSettingsSectionKeyboard(phone, section.key));
-    }
-
-    if (data.startsWith('settings_edit_')) {
-        const parts = data.replace('settings_edit_', '').split('_');
-        const phone = normalizePhone(parts.pop() || '');
-        const fieldKey = String(parts.join('_') || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = { step: 'wait_settings_password', targetPhone: phone };
-            return safeReply(ctx, buildPhoneSettingsLockMessage(phone), getPhoneSettingsAuthKeyboard(phone));
-        }
-        ctx.session = { step: 'wait_setting_value', targetPhone: phone, fieldKey };
-        return safeReply(ctx, buildPhoneSettingEditPrompt(phone, fieldKey));
-    }
-
     if (data === 'admin_stats' && isAdmin(ctx.from.id)) {
         const usersCount = getAllUserIds().length;
         const phonesCount = getAllLinkedPhones().length;
         const adminsCount = getSettings().admins.length;
-        const analytics = getAnalyticsDB();
         return safeReply(
             ctx,
-            `📊 إحصائيات البوت (محفوظة بعد إعادة التشغيل):\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة الآن: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}\n✉️ إجمالي الرسائل المستلمة: ${analytics.totalIncomingMessages || 0}\n📸 حالات تم حفظها: ${analytics.totalStatusEvents || 0}\n😍 تفاعلات الحالة المنفذة: ${analytics.totalStatusReactions || 0}\n💬 ردود المالك: ${analytics.totalOwnerReplies || 0}\n🔁 مرات إعادة الاتصال: ${analytics.totalReconnects || 0}\n🟢 مرات تشغيل الجلسات: ${analytics.totalSessionsStarted || 0}`
+            `📊 إحصائيات البوت:\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}`
         );
     }
 
@@ -5676,11 +2798,6 @@ ${buildTelegramCommandsOverview()}`);
     if (data === 'admin_broadcast' && isAdmin(ctx.from.id)) {
         ctx.session = { step: 'wait_broadcast_message' };
         return safeReply(ctx, '📣 أرسل الآن الرسالة التي تريد إرسالها لجميع المستخدمين.');
-    }
-
-    if (data === 'admin_wabroadcast' && isAdmin(ctx.from.id)) {
-        ctx.session = { step: 'wait_wa_broadcast_message' };
-        return safeReply(ctx, '📲 أرسل الآن الرسالة التي تريد إرسالها خاص داخل واتساب لكل الأرقام المربوطة والمتصلة.');
     }
 });
 
@@ -5700,20 +2817,13 @@ bot.command('admin', async (ctx) => {
             '/stats - إحصائيات البوت\n' +
             '/setstart - تغيير رسالة /start\n' +
             '/setchannel - تفعيل أو إلغاء الاشتراك الإجباري\n' +
-            '/broadcast - إرسال رسالة جماعية لكل المستخدمين على تيليجرام\n' +
-            '/wabroadcast - إرسال رسالة خاصة داخل واتساب لكل الأرقام المربوطة\n' +
+            '/broadcast - إرسال رسالة جماعية لكل المستخدمين\n' +
             '/admins - عرض الأدمنية\n' +
             '/addadmin 123456789 - إضافة أدمن\n' +
             '/deladmin 123456789 - حذف أدمن\n' +
-            '/statusview 967xxxx on|off - تشغيل أو إيقاف رد مشاهدة الحالة لرقم محدد\n' +
-            '/setstatusmsg 967xxxx نص الرسالة - تغيير رسالة مشاهدة الحالة لرقم محدد\n' +
-            '/setbotmsg - تغيير أو حذف رسالة .bot لكل الأرقام\n' +
-            '/setwelcome - تغيير أو حذف رسالة الترحيب داخل الواتساب لكل الأرقام\n' +
-            '/addreply - إضافة رد عالمي حسب أمر/كلمة لكل الأرقام\n' +
-            '/delreply - حذف رد عالمي من الردود العامة\n' +
-            '/listreplies - عرض الردود العامة الحالية\n' +
-            '/setstatuslikemsg - تغيير أو حذف رسالة الرد بعد لايك الحالة لكل الأرقام\n' +
-            'المتغيرات المدعومة في الرسائل العامة: {phone} {number} {name} {ownerNumber} {ownerName} {prefix} {botLink} {channelLink}\n' +
+            '/statusview 967xxxx on|off - تشغيل أو إيقاف رد مشاهدة الحالة\n' +
+            '/setstatusmsg 967xxxx نص الرسالة - تغيير رسالة مشاهدة الحالة\n' +
+            'أمر لايكات القناة داخل الرقم المربوط: ' + CHANNEL_LIKE_COMMAND + '\n' +
             'متغيرات رسالة /start المدعومة: {name} {username} {count} {emoji} {numbers}',
         {
             reply_markup: {
@@ -5725,9 +2835,6 @@ bot.command('admin', async (ctx) => {
                     [
                         Markup.button.callback('اشتراك إجباري 📢', 'admin_setchannel'),
                         Markup.button.callback('إذاعة عامة 📣', 'admin_broadcast')
-                    ],
-                    [
-                        Markup.button.callback('إذاعة واتساب 📲', 'admin_wabroadcast')
                     ]
                 ]
             }
@@ -5744,11 +2851,10 @@ bot.command('stats', async (ctx) => {
     const usersCount = getAllUserIds().length;
     const phonesCount = getAllLinkedPhones().length;
     const adminsCount = getSettings().admins.length;
-    const analytics = getAnalyticsDB();
 
     await safeReply(
         ctx,
-        `📊 إحصائيات البوت (محفوظة بعد إعادة التشغيل):\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة الآن: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}\n✉️ إجمالي الرسائل المستلمة: ${analytics.totalIncomingMessages || 0}\n📸 حالات تم حفظها: ${analytics.totalStatusEvents || 0}\n😍 تفاعلات الحالة المنفذة: ${analytics.totalStatusReactions || 0}\n💬 ردود المالك: ${analytics.totalOwnerReplies || 0}\n🔁 مرات إعادة الاتصال: ${analytics.totalReconnects || 0}\n🟢 مرات تشغيل الجلسات: ${analytics.totalSessionsStarted || 0}`
+        `📊 إحصائيات البوت:\n\n👤 المستخدمون: ${usersCount}\n📱 الأرقام المربوطة: ${phonesCount}\n🛡️ عدد المدراء: ${adminsCount}`
     );
 });
 
@@ -5869,163 +2975,6 @@ bot.command('broadcast', async (ctx) => {
     await safeReply(ctx, `✅ تمت الإذاعة الجماعية.\n\nنجح: ${success}\nفشل: ${failed}`);
 });
 
-bot.command('wabroadcast', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) {
-        return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    }
-
-    const text = String(ctx.message?.text || '').replace(/^\/wabroadcast(?:@\w+)?/i, '').trim();
-    if (!text) {
-        ctx.session = { step: 'wait_wa_broadcast_message' };
-        return safeReply(ctx, '📲 أرسل الآن الرسالة التي تريد إرسالها خاص داخل واتساب لكل الأرقام المربوطة والمتصلة.');
-    }
-
-    const report = await sendWhatsAppLinkedNumbersBroadcast(text);
-    return safeReply(ctx, formatWhatsAppBroadcastReport(report));
-});
-
-function saveGlobalAdminSetting(patch = {}) {
-    const settings = getSettings();
-    Object.assign(settings, patch || {});
-    saveSettings(settings);
-    return settings;
-}
-
-function removeGlobalReplyByInput(input = '') {
-    const settings = getSettings();
-    const rawReplies = parseAutoReplies(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
-    if (!rawReplies.length) {
-        return { ok: false, reason: 'empty' };
-    }
-
-    const trimmed = String(input || '').trim();
-    if (!trimmed) {
-        return { ok: false, reason: 'invalid' };
-    }
-
-    if (/^(?:all|off|clear|مسح|حذف الكل)$/i.test(trimmed)) {
-        settings.globalLinkedAutoReplies = '';
-        saveSettings(settings);
-        return { ok: true, clearedAll: true, removedEntry: null };
-    }
-
-    const replies = parseAutoReplyEntries(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
-    let removeIndex = -1;
-
-    if (/^\d+$/.test(trimmed)) {
-        const numericIndex = Number(trimmed) - 1;
-        if (numericIndex >= 0 && numericIndex < rawReplies.length) {
-            removeIndex = numericIndex;
-        }
-    }
-
-    if (removeIndex < 0) {
-        const normalizedNeedle = normalizeArabicReplyText(trimmed);
-        removeIndex = replies.findIndex((reply) =>
-            reply.normalizedKeywords.includes(normalizedNeedle) ||
-            normalizeArabicReplyText(reply.response).includes(normalizedNeedle)
-        );
-    }
-
-    if (removeIndex < 0) {
-        return { ok: false, reason: 'not_found' };
-    }
-
-    const removedEntry = replies[removeIndex] || null;
-    rawReplies.splice(removeIndex, 1);
-    settings.globalLinkedAutoReplies = rawReplies.join('\n');
-    saveSettings(settings);
-    return { ok: true, clearedAll: false, removedEntry };
-}
-
-bot.command('setbotmsg', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    const value = String(ctx.message?.text || '').replace(/^\/setbotmsg(?:@\w+)?/i, '').trim();
-    if (!value) {
-        ctx.session = { step: 'wait_admin_bot_message' };
-        return safeReply(ctx, '✏️ أرسل الآن رسالة .bot الجديدة لكل الأرقام.\nإذا تريد حذفها نهائياً أرسل: off');
-    }
-    if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
-        saveGlobalAdminSetting({ linkedBotMessageEnabled: false });
-        return safeReply(ctx, '✅ تم حذف رد .bot نهائياً من جميع الأرقام المربوطة.');
-    }
-    saveGlobalAdminSetting({ linkedBotMessageEnabled: true, linkedBotMessage: value });
-    return safeReply(ctx, '✅ تم تحديث رسالة .bot لكل الأرقام المربوطة.');
-});
-
-bot.command('setwelcome', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    const value = String(ctx.message?.text || '').replace(/^\/setwelcome(?:@\w+)?/i, '').trim();
-    if (!value) {
-        ctx.session = { step: 'wait_admin_welcome_message' };
-        return safeReply(ctx, '✏️ أرسل الآن رسالة الترحيب التي تُرسل داخل واتساب بعد ربط الرقم.\nإذا تريد حذفها نهائياً أرسل: off');
-    }
-    if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
-        saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: false });
-        return safeReply(ctx, '✅ تم حذف رسالة الترحيب التلقائية من جميع الأرقام المربوطة.');
-    }
-    saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: true, linkedWelcomeMessage: value });
-    return safeReply(ctx, '✅ تم تحديث رسالة الترحيب التلقائية لكل الأرقام المربوطة.');
-});
-
-bot.command('addreply', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    const settings = getSettings();
-    const count = parseAutoReplyEntries(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES).length;
-    if (count >= MAX_GLOBAL_AUTO_REPLIES) {
-        return safeReply(ctx, `❌ وصلت للحد الأقصى ${MAX_GLOBAL_AUTO_REPLIES} رد عام. احذف بعض الردود أولاً.`);
-    }
-    ctx.session = { step: 'wait_admin_global_reply_keyword' };
-    return safeReply(ctx, '📝 أرسل الآن أمر الرسالة أو الكلمات المفتاحية التي تريد أن يلتقطها أي رقم مربوط.\nمثال: سلام أو سلام، هلا');
-});
-
-bot.command('delreply', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    const value = String(ctx.message?.text || '').replace(/^\/delreply(?:@\w+)?/i, '').trim();
-    if (!value) {
-        ctx.session = { step: 'wait_admin_global_reply_delete' };
-        return safeReply(ctx, `🗑️ أرسل رقم الرد أو كلمة من كلماته لحذفه.\nولحذف الكل أرسل: all\n\n${formatGlobalAutoRepliesList()}`);
-    }
-    const result = removeGlobalReplyByInput(value);
-    if (!result.ok) {
-        return safeReply(ctx, result.reason === 'empty' ? '❌ لا يوجد ردود عامة محفوظة حالياً.' : '❌ لم أجد الرد المطلوب حذفه.');
-    }
-    if (result.clearedAll) {
-        return safeReply(ctx, '✅ تم حذف جميع الردود العامة من كل الأرقام المربوطة.');
-    }
-    return safeReply(ctx, `✅ تم حذف الرد العام:
-${result.removedEntry?.raw || value}`);
-});
-
-bot.command('listreplies', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    return safeReply(ctx, `📋 الردود العامة الحالية لكل الأرقام المربوطة:
-
-${formatGlobalAutoRepliesList()}`);
-});
-
-bot.command('setstatuslikemsg', async (ctx) => {
-    upsertTelegramUser(ctx);
-    if (!isAdmin(ctx.from.id)) return safeReply(ctx, '❌ هذا الأمر خاص بالمطور فقط.');
-    const value = String(ctx.message?.text || '').replace(/^\/setstatuslikemsg(?:@\w+)?/i, '').trim();
-    if (!value) {
-        ctx.session = { step: 'wait_admin_status_like_message' };
-        return safeReply(ctx, '✏️ أرسل الآن رسالة الرد بعد لايك الحالة لكل الأرقام.\nإذا تريد حذفها نهائياً أرسل: off');
-    }
-    if (/^(?:off|delete|remove|حذف)$/i.test(value)) {
-        saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: false });
-        return safeReply(ctx, '✅ تم حذف رسالة الرد بعد لايك الحالة من جميع الأرقام المربوطة.');
-    }
-    saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true, globalStatusLikeMessage: value });
-    return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
-});
-
 // =========================
 // تيليجرام - النصوص والحالات
 // =========================
@@ -6037,130 +2986,10 @@ bot.on('text', async (ctx) => {
 
     if (!sessionState && incomingText.startsWith('/')) return;
 
-    const bypassSubscriptionSteps = new Set([
-        'wait_new_start_message',
-        'wait_force_channel',
-        'wait_broadcast_message',
-        'wait_wa_broadcast_message',
-        'wait_admin_bot_message',
-        'wait_admin_welcome_message',
-        'wait_admin_global_reply_keyword',
-        'wait_admin_global_reply_response',
-        'wait_admin_global_reply_delete',
-        'wait_admin_status_like_message'
-    ]);
-
-    if (!bypassSubscriptionSteps.has(sessionState)) {
+    if (sessionState !== 'wait_new_start_message' && sessionState !== 'wait_force_channel' && sessionState !== 'wait_broadcast_message') {
         if (!(await ensureSubscription(ctx))) return;
     }
 
-    if (sessionState === 'wait_admin_bot_message') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-        if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
-            saveGlobalAdminSetting({ linkedBotMessageEnabled: false });
-            ctx.session = null;
-            return safeReply(ctx, '✅ تم حذف رد .bot نهائياً من جميع الأرقام المربوطة.');
-        }
-        saveGlobalAdminSetting({ linkedBotMessageEnabled: true, linkedBotMessage: incomingText });
-        ctx.session = null;
-        return safeReply(ctx, '✅ تم تحديث رسالة .bot لكل الأرقام المربوطة.');
-    }
-
-    if (sessionState === 'wait_admin_welcome_message') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-        if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
-            saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: false });
-            ctx.session = null;
-            return safeReply(ctx, '✅ تم حذف رسالة الترحيب التلقائية من جميع الأرقام المربوطة.');
-        }
-        saveGlobalAdminSetting({ linkedWelcomeMessageEnabled: true, linkedWelcomeMessage: incomingText });
-        ctx.session = null;
-        return safeReply(ctx, '✅ تم تحديث رسالة الترحيب التلقائية لكل الأرقام المربوطة.');
-    }
-
-    if (sessionState === 'wait_admin_global_reply_keyword') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-        const keywords = normalizeAutoReplyKeywordsInput(incomingText);
-        if (!keywords.length) {
-            return safeReply(ctx, '❌ أرسل كلمة أو أمر واحد على الأقل مثل: سلام');
-        }
-        ctx.session = {
-            step: 'wait_admin_global_reply_response',
-            pendingGlobalReplyKeywords: keywords
-        };
-        return safeReply(ctx, `✅ تم حفظ أمر الرسالة: ${keywords.join(' | ')}\nالآن أرسل الرسالة التي تريد الرد بها على هذا الأمر.`);
-    }
-
-    if (sessionState === 'wait_admin_global_reply_response') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-        const keywords = Array.isArray(ctx.session?.pendingGlobalReplyKeywords) ? ctx.session.pendingGlobalReplyKeywords : [];
-        const responseText = String(incomingText || '').trim().slice(0, 1000);
-        if (!keywords.length) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ حصل خلل في حفظ أمر الرسالة. أعد تنفيذ /addreply من جديد.');
-        }
-        if (!responseText) {
-            return safeReply(ctx, '❌ أرسل نص الرسالة التي تريد أن يرد بها البوت.');
-        }
-        const settings = getSettings();
-        const currentReplies = parseAutoReplies(settings.globalLinkedAutoReplies, MAX_GLOBAL_AUTO_REPLIES);
-        if (currentReplies.length >= MAX_GLOBAL_AUTO_REPLIES) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ وصلت للحد الأقصى ${MAX_GLOBAL_AUTO_REPLIES} رد عام. احذف بعض الردود أولاً.`);
-        }
-        const entry = buildStructuredAutoReplyEntry(keywords.join(' | '), responseText);
-        if (!entry) {
-            return safeReply(ctx, '❌ ما قدرت أحفظ الرد العام. حاول مرة ثانية.');
-        }
-        currentReplies.push(entry);
-        saveGlobalAdminSetting({ globalLinkedAutoReplies: currentReplies.join('\n') });
-        ctx.session = null;
-        return safeReply(ctx, `✅ تم حفظ الرد العام بنجاح لكل الأرقام المربوطة.\n\n${formatGlobalAutoRepliesList()}`);
-    }
-
-    if (sessionState === 'wait_admin_global_reply_delete') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-        const result = removeGlobalReplyByInput(incomingText);
-        if (!result.ok) {
-            return safeReply(ctx, result.reason === 'empty' ? '❌ لا يوجد ردود عامة محفوظة حالياً.' : '❌ لم أجد الرد المطلوب حذفه.');
-        }
-        ctx.session = null;
-        if (result.clearedAll) {
-            return safeReply(ctx, '✅ تم حذف جميع الردود العامة من كل الأرقام المربوطة.');
-        }
-        return safeReply(ctx, `✅ تم حذف الرد العام:
-${result.removedEntry?.raw || incomingText}`);
-    }
-
-    if (sessionState === 'wait_admin_status_like_message') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-        if (/^(?:off|delete|remove|حذف)$/i.test(incomingText)) {
-            saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: false });
-            ctx.session = null;
-            return safeReply(ctx, '✅ تم حذف رسالة الرد بعد لايك الحالة من جميع الأرقام المربوطة.');
-        }
-        saveGlobalAdminSetting({ globalStatusLikeMessageEnabled: true, globalStatusLikeMessage: incomingText });
-        ctx.session = null;
-        return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
-    }
     if (sessionState === 'wait_phone') {
         const phone = normalizePhone(incomingText);
         if (!phone) {
@@ -6261,82 +3090,6 @@ ${result.removedEntry?.raw || incomingText}`);
         return safeReply(ctx, `✅ تم حفظ الرد التلقائي للرقم ${phone}.\n\n${formatAutoRepliesList(phone)}`);
     }
 
-    if (sessionState === 'wait_settings_password') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-
-        const auth = authenticateSettingsUser(phone, incomingText);
-        if (!auth.ok) {
-            return safeReply(ctx, '❌ كلمة السر غير صحيحة. أعد المحاولة أو اضغط زر إظهار كلمة السر الحالية.');
-        }
-
-        grantPhoneSettingsAccess(ctx.from.id, phone, auth.appId);
-        ctx.session = null;
-        return safeReply(ctx, buildPhoneSettingsMessage(phone), getPhoneSettingsKeyboard(phone));
-    }
-
-    if (sessionState === 'wait_setting_value') {
-        const phone = ctx.session?.targetPhone;
-        const fieldKey = String(ctx.session?.fieldKey || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        if (!fieldKey) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ حصل خلل أثناء تحديد الحقل المطلوب تعديله.');
-        }
-        if (!hasPhoneSettingsAccess(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '🔒 انتهت جلسة فتح الإعدادات. افتح الإعدادات من جديد وأدخل كلمة السر مرة ثانية.');
-        }
-
-        const trimmed = String(incomingText || '').trim();
-        const patch = {};
-
-        if (!trimmed) {
-            return safeReply(ctx, '❌ أرسل قيمة صالحة أولاً.');
-        }
-
-        if (fieldKey === 'ownerNumber') {
-            patch[fieldKey] = normalizePhone(trimmed);
-            if (!patch[fieldKey]) {
-                return safeReply(ctx, '❌ أرسل رقم صحيح مع مفتاح الدولة.');
-            }
-        } else if (fieldKey === 'statusCustomReact') {
-            patch[fieldKey] = normalizeStatusEmojiList(trimmed, getPhoneEmoji(phone));
-            if (!patch[fieldKey]) {
-                return safeReply(ctx, '❌ أرسل إيموجي واحد على الأقل بشكل صحيح.');
-            }
-        } else if (fieldKey === 'age') {
-            const ageValue = trimmed.replace(/\D/g, '').slice(0, 2);
-            if (!ageValue) {
-                return safeReply(ctx, '❌ أرسل العمر كرقم فقط.');
-            }
-            patch[fieldKey] = ageValue;
-        } else if (['gaOpenTime', 'gaCloseTime'].includes(fieldKey)) {
-            if (!/^\d{2}:\d{2}$/.test(trimmed)) {
-                return safeReply(ctx, '❌ الصيغة الصحيحة للوقت هي HH:MM مثل 05:00');
-            }
-            patch[fieldKey] = trimmed;
-        } else if (['menu', 'alive', 'owner'].includes(fieldKey)) {
-            if (!/^https?:\/\//i.test(trimmed) && !/^data:image\//i.test(trimmed)) {
-                return safeReply(ctx, '❌ أرسل رابط صورة مباشر يبدأ بـ http أو https');
-            }
-            patch[fieldKey] = trimmed;
-        } else {
-            patch[fieldKey] = trimmed;
-        }
-
-        updatePhoneSettings(phone, patch);
-        ctx.session = null;
-        const section = getPhoneSettingsSectionByField(fieldKey);
-        return safeReply(ctx, buildPhoneSettingsSectionMessage(phone, section.key), getPhoneSettingsSectionKeyboard(phone, section.key));
-    }
-
     if (sessionState === 'wait_new_start_message') {
         if (!isAdmin(ctx.from.id)) {
             ctx.session = null;
@@ -6392,17 +3145,6 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, `✅ تمت الإذاعة الجماعية.\n\nنجح: ${success}\nفشل: ${failed}`);
     }
-
-    if (sessionState === 'wait_wa_broadcast_message') {
-        if (!isAdmin(ctx.from.id)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ هذا الخيار خاص بالمطور فقط.');
-        }
-
-        const report = await sendWhatsAppLinkedNumbersBroadcast(incomingText);
-        ctx.session = null;
-        return safeReply(ctx, formatWhatsAppBroadcastReport(report));
-    }
 });
 
 // =========================
@@ -6420,7 +3162,7 @@ function buildUnifiedSettingsHubHTML() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</title>
+  <title>لوحة الإعدادات الموحّدة</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -6432,7 +3174,7 @@ function buildUnifiedSettingsHubHTML() {
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</h1>
+      <h1>لوحة إعدادات الرقم + Contact Save</h1>
       <p>تم جمع إعدادات الرقم المربوط مع صفحة Contact Save في مكان واحد. لو المتصفح منع فتح أي إطار خارجي، استخدم أزرار الفتح المباشر الموجودة فوق كل قسم.</p>
     </section>
     <section class="grid">
@@ -6446,9 +3188,9 @@ function buildUnifiedSettingsHubHTML() {
       <div class="card">
         <div class="row">
           <div><div class="title">إعدادات Contact Save</div><div class="sub">كل إعدادات حفظ جهات الاتصال التلقائي مضافة داخل هذه اللوحة</div></div>
-          <div class="btns"><a class="btn primary" href="${getContactSavePublicUrl()}" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
+          <div class="btns"><a class="btn primary" href="https://whatsapp-pairing-api.onrender.com/contactsave" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
         </div>
-        <iframe class="frame" src="${getContactSavePublicUrl()}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <iframe class="frame" src="https://whatsapp-pairing-api.onrender.com/contactsave" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
         <div class="note">إذا لم يظهر القسم الخارجي داخل الصفحة بسبب قيود المتصفح أو الموقع، استخدم زر فتح Contact Save مباشرة.</div>
       </div>
     </section>
@@ -6480,17 +3222,7 @@ app.post('/minibot/api/login', (req, res) => {
         if (!auth.ok) {
             return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        const session = createWebSettingsSession(auth.phone, auth.appId);
-        const redirectPath = buildSettingsPanelPath(session?.token, auth.phone);
-        return res.json({
-            success: true,
-            app: auth.appId,
-            number: auth.phone,
-            token: session?.token || '',
-            sessionToken: session?.token || '',
-            redirectPath,
-            redirectUrl: `${getSettingsPublicUrl()}?${new URLSearchParams({ session: session?.token || '', phone: auth.phone }).toString()}`
-        });
+        return res.json({ success: true, app: auth.appId, number: auth.phone });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -6498,13 +3230,14 @@ app.post('/minibot/api/login', (req, res) => {
 
 app.get('/minibot/api/settings/load', (req, res) => {
     try {
-        const resolved = resolveSettingsRequest(req);
-        if (!resolved.ok) {
-            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        const phone = normalizePhone(req.query?.num || '');
+        const appId = normalizeAppId(req.query?.app || 'default');
+        if (!phone || !getPhoneOwner(phone)) {
+            return res.status(404).json({ success: false, error: 'Linked number not found' });
         }
-        const settings = getPhoneSettings(resolved.phone, resolved.appId);
-        setActivePhoneSettings(resolved.phone, resolved.appId);
-        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
+        const settings = getPhoneSettings(phone, appId);
+        setActivePhoneSettings(phone, appId);
+        return res.json({ success: true, app: appId, settings });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Load failed' });
     }
@@ -6512,14 +3245,15 @@ app.get('/minibot/api/settings/load', (req, res) => {
 
 app.post('/minibot/api/settings/save', (req, res) => {
     try {
-        const resolved = resolveSettingsRequest(req);
-        if (!resolved.ok) {
-            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        const phone = normalizePhone(req.body?.num || '');
+        const appId = normalizeAppId(req.body?.app || 'default');
+        if (!phone || !getPhoneOwner(phone)) {
+            return res.status(404).json({ success: false, error: 'Linked number not found' });
         }
-        const settings = savePhoneSettings(resolved.phone, resolved.appId, req.body || {});
-        const liveSock = waClients.get(resolved.phone);
-        if (liveSock) startPresenceKeepAlive(liveSock, resolved.phone);
-        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
+        const settings = savePhoneSettings(phone, appId, req.body || {});
+        const liveSock = waClients.get(phone);
+        if (liveSock) startPresenceKeepAlive(liveSock, phone);
+        return res.json({ success: true, app: appId, settings });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Save failed' });
     }
@@ -6527,12 +3261,12 @@ app.post('/minibot/api/settings/save', (req, res) => {
 
 app.post('/minibot/api/image/upload', (req, res) => {
     try {
-        const resolved = resolveSettingsRequest(req);
-        if (!resolved.ok) {
-            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
-        }
+        const phone = normalizePhone(req.body?.num || '');
         const fieldKey = String(req.body?.fieldKey || '').trim();
         const imageBase64 = String(req.body?.image || '').trim();
+        if (!phone || !getPhoneOwner(phone)) {
+            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        }
         if (!['menu', 'alive', 'owner'].includes(fieldKey)) {
             return res.status(400).json({ success: false, error: 'Invalid field key' });
         }
@@ -6542,7 +3276,7 @@ app.post('/minibot/api/image/upload', (req, res) => {
         const fileName = buildImageFileName('png');
         const filePath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(imageBase64, 'base64'));
-        return res.json({ success: true, number: resolved.phone, app: resolved.appId, fieldKey, url: getUploadPublicUrl(fileName), token: resolved.token || '' });
+        return res.json({ success: true, fieldKey, url: getUploadPublicUrl(fileName) });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Upload failed' });
     }
@@ -6556,17 +3290,7 @@ app.post('/api/login', (req, res) => {
         if (!auth.ok) {
             return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        const session = createWebSettingsSession(auth.phone, auth.appId);
-        const redirectPath = buildSettingsPanelPath(session?.token, auth.phone);
-        return res.json({
-            success: true,
-            app: auth.appId,
-            number: auth.phone,
-            token: session?.token || '',
-            sessionToken: session?.token || '',
-            redirectPath,
-            redirectUrl: `${getSettingsPublicUrl()}?${new URLSearchParams({ session: session?.token || '', phone: auth.phone }).toString()}`
-        });
+        return res.json({ success: true, app: auth.appId, number: auth.phone });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -6574,13 +3298,14 @@ app.post('/api/login', (req, res) => {
 
 app.get('/api/settings/load', (req, res) => {
     try {
-        const resolved = resolveSettingsRequest(req);
-        if (!resolved.ok) {
-            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        const phone = normalizePhone(req.query?.num || '');
+        const appId = normalizeAppId(req.query?.app || 'default');
+        if (!phone || !getPhoneOwner(phone)) {
+            return res.status(404).json({ success: false, error: 'Linked number not found' });
         }
-        const settings = getPhoneSettings(resolved.phone, resolved.appId);
-        setActivePhoneSettings(resolved.phone, resolved.appId);
-        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
+        const settings = getPhoneSettings(phone, appId);
+        setActivePhoneSettings(phone, appId);
+        return res.json({ success: true, app: appId, settings });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Load failed' });
     }
@@ -6588,14 +3313,15 @@ app.get('/api/settings/load', (req, res) => {
 
 app.post('/api/settings/save', (req, res) => {
     try {
-        const resolved = resolveSettingsRequest(req);
-        if (!resolved.ok) {
-            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        const phone = normalizePhone(req.body?.num || '');
+        const appId = normalizeAppId(req.body?.app || 'default');
+        if (!phone || !getPhoneOwner(phone)) {
+            return res.status(404).json({ success: false, error: 'Linked number not found' });
         }
-        const settings = savePhoneSettings(resolved.phone, resolved.appId, req.body || {});
-        const liveSock = waClients.get(resolved.phone);
-        if (liveSock) startPresenceKeepAlive(liveSock, resolved.phone);
-        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
+        const settings = savePhoneSettings(phone, appId, req.body || {});
+        const liveSock = waClients.get(phone);
+        if (liveSock) startPresenceKeepAlive(liveSock, phone);
+        return res.json({ success: true, app: appId, settings });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Save failed' });
     }
@@ -6603,12 +3329,12 @@ app.post('/api/settings/save', (req, res) => {
 
 app.post('/api/image/upload', (req, res) => {
     try {
-        const resolved = resolveSettingsRequest(req);
-        if (!resolved.ok) {
-            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
-        }
+        const phone = normalizePhone(req.body?.num || '');
         const fieldKey = String(req.body?.fieldKey || '').trim();
         const imageBase64 = String(req.body?.image || '').trim();
+        if (!phone || !getPhoneOwner(phone)) {
+            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        }
         if (!['menu', 'alive', 'owner'].includes(fieldKey)) {
             return res.status(400).json({ success: false, error: 'Invalid field key' });
         }
@@ -6618,7 +3344,7 @@ app.post('/api/image/upload', (req, res) => {
         const fileName = buildImageFileName('png');
         const filePath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(imageBase64, 'base64'));
-        return res.json({ success: true, number: resolved.phone, app: resolved.appId, fieldKey, url: getUploadPublicUrl(fileName), token: resolved.token || '' });
+        return res.json({ success: true, fieldKey, url: getUploadPublicUrl(fileName) });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Upload failed' });
     }
@@ -6639,8 +3365,17 @@ app.get('/api/dashboard/load', (req, res) => {
             app: appId,
             settings,
             stats,
+            gna: {
+                command: CHANNEL_LIKE_COMMAND,
+                emojiChoices: CHANNEL_LIKE_EMOJIS,
+                note: 'العدد الفعلي يعتمد على عدد الجلسات النشطة المربوطة لنفس الحساب. وإذا جمعت نقاطاً فكل 30 نقطة تمنحك سعة إضافية حتى 500 لايك.'
+            },
             pairingApi: buildPairingApiDescriptor(phone),
-            analytics: getAnalyticsDB()
+            rewards: {
+                dailyGiftPoints: DAILY_GIFT_POINTS,
+                likePackagePoints: POINTS_PER_LIKE_PACKAGE,
+                likePackageLikes: LIKES_PER_POINTS_PACKAGE
+            }
         });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Dashboard load failed' });
@@ -6678,11 +3413,7 @@ bot.command('setstatusmsg', async (ctx) => {
 
 
 function buildLandingPageHTML() {
-    const webPanelUrl = getWebPanelPublicUrl();
-    const settingsUrl = getSettingsPublicUrl();
-    const pairingUrl = getPairingPublicUrl();
-    const botLink = getTelegramBotLink();
-    return "<!DOCTYPE html>\n<html lang=\"ar\" dir=\"rtl\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">بوت الملك فارس</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</div>\n        <div class=\"footer-copy\">© 2026 بوت الملك فارس · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n".replaceAll('" + settingsUrl + "', settingsUrl).replaceAll('" + pairingUrl + "/', `${webPanelUrl}/`).replaceAll('" + pairingUrl + "', pairingUrl).replaceAll('" + botLink + "', botLink);
+    return "<!DOCTYPE html>\n<html lang=\"si\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden queen bot, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, queen bot, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, queen bot store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, queen bot official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>👑 بوت الملك فارس</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ بوت الملك فارس ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">بوت الملك فارس</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">👑 بوت الملك فارس</div>\n        <div class=\"footer-copy\">© 2026 بوت الملك فارس · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n";
 }
 
 function buildLandingSectionHTML(sectionId = '') {
@@ -6704,6 +3435,10 @@ app.get('/auto-save', (req, res) => {
     res.send(buildLandingSectionHTML('autoSaveSection'));
 });
 
+app.get('/points', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingSectionHTML('pointsBlock'));
+});
 
 app.get('/pair', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -6869,6 +3604,20 @@ app.get('/api/qr', async (req, res) => {
     }
 });
 
+app.post('/api/daily-gift', (req, res) => {
+    try {
+        const { num, pass } = req.body || {};
+        const auth = authenticateSettingsUser(num, pass);
+        if (!auth.ok) return res.status(401).json({ success: false, error: auth.error });
+        const result = claimDailyGift(auth.ownerId || getPhoneOwner(auth.phone));
+        if (!result.ok) {
+            return res.status(429).json({ success: false, error: `الهدية اليومية غير متاحة الآن. حاول بعد ${formatDurationMs(result.waitMs)}.`, points: result.points, waitMs: result.waitMs });
+        }
+        return res.json({ success: true, awarded: result.awarded, points: result.points, nextAt: result.nextAt });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message || 'فشل استلام الهدية اليومية' });
+    }
+});
 
 app.get('/', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -6939,7 +3688,6 @@ async function initTelegramTransport() {
 
 const server = app.listen(APP_PORT, async () => {
     console.log(`Server running on port ${APP_PORT}`);
-    markAnalyticsBoot();
 
     let telegramStatus = { enabled: false, mode: 'disabled' };
     try {
@@ -6972,10 +3720,6 @@ async function gracefulShutdown(signal) {
     }
     reconnectTimers.clear();
 
-    for (const phone of channelPromotionTimers.keys()) {
-        clearChannelPromotionTimer(phone);
-    }
-
     for (const pending of pairingRequests.values()) {
         if (pending?.timer) {
             clearTimeout(pending.timer);
@@ -7002,7 +3746,6 @@ async function gracefulShutdown(signal) {
         console.error('Server Close Warning:', error.message);
     }
 
-    flushAnalyticsDB();
     process.exit(0);
 }
 
@@ -9566,34 +6309,34 @@ function decodeMergedPythonSource() {
 
 const PythonMergedLayer = (() => {
     const DEFAULT_START_MESSAGE_TEMPLATE = "{emoji}";
-    const DEFAULT_AUTO_REPLY_CHANNEL_URL = WHATSAPP_CHANNEL_LINK;
-    const DEFAULT_CONTACT_NUMBER = "967784355543";
+    const DEFAULT_AUTO_REPLY_CHANNEL_URL = "https://whatsapp.com/channel/0029Vb73l855K3zVq2QgsH1M";
+    const DEFAULT_CONTACT_NUMBER = "967773987296";
     const DEFAULT_SITE_BRAND_NAME = "fares";
     const DEFAULT_SITE_FOOTER = "fares";
     const DEFAULT_LINKED_MESSAGE_IMAGE_URL = "https://www.genspark.ai/api/files/s/18UAzOdi";
     const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${DEFAULT_AUTO_REPLY_CHANNEL_URL}\n📞 رقم التواصل: ${DEFAULT_CONTACT_NUMBER}`;
     const DEFAULT_AUTO_REPLY_MESSAGE_TEMPLATE = `🔗 هذا رابط القناة الخاصة بنا\n{channel_url}\n\n📞 رقم التواصل: ${DEFAULT_CONTACT_NUMBER}`;
-    const DEFAULT_WHATSAPP_ALIVE_MESSAGE = "✅ *𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ is active now*\n\n👑 *Owner:* 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\n🤖 *Status:* Ready";
+    const DEFAULT_WHATSAPP_ALIVE_MESSAGE = "✅ *Golden Queen is active now*\n\n👑 *Owner:* Golden Queen\n🤖 *Status:* Ready";
     const DEFAULT_WHATSAPP_BOT_MESSAGE = "👑 *GOLDEN QUEEN VERIFICATION*\n\n🔑 *Link Code:* {code}\n\n📱 *طريقة الربط:*\n1️⃣ افتح واتساب.\n2️⃣ ادخل على الأجهزة المرتبطة.\n3️⃣ اختر ربط جهاز.\n4️⃣ استخدم الكود أعلاه إذا طُلب منك ذلك.\n\n✅ بعد اكتمال الربط سيصلك تلقائيًا تأكيد الربط وكلمة سر الإعدادات ورابط البوت.";
     const DEFAULT_WHATSAPP_SETTINGS_MESSAGE = "⚙️ رسالة الإعدادات";
     const PASSWORD_DISCOVERY_COMMAND = ".settings";
     const PASSWORD_DISCOVERY_ATTEMPT_DELAYS = Object.freeze([15, 45, 60]);
     const PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS = 12;
-    const TARGET_SITE_BASE_URL = getWebPanelPublicUrl();
-    const TARGET_SETTINGS_PAGE_URL = getSettingsPublicUrl();
+    const TARGET_SITE_BASE_URL = "https://whatsapp-pairing-api.onrender.com";
+    const TARGET_SETTINGS_PAGE_URL = `${TARGET_SITE_BASE_URL}/settings`;
     const IMMUTABLE_SITE_SETTINGS_KEYS = new Set(["__v", "_id", "app", "createdAt", "id", "num", "updatedAt"]);
     const ARABIC_DIGIT_SOURCE = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
     const ARABIC_DIGIT_TARGET = '01234567890123456789';
     const START_MESSAGE_AUTO_LINE_PATTERNS = [
-        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?الإيموجي الحالي\\s*:\\s*.*$', 'gmu'), '{emoji}'],
+        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?الإيموجي الحالي\\s*:\\s*.*$', 'gmu'), '{emoji} الإيموجي الحالي: {emoji}'],
         [new RegExp('^[^\\S\\r\\n]*\\{?auto_reply_status\\}?[^\\S\\r\\n]*$', 'gmu'), ''],
-        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الأساسي\\s*:\\s*.*$', 'gmu'), ''],
-        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الاساسي\\s*:\\s*.*$', 'gmu'), ''],
+        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الأساسي\\s*:\\s*.*$', 'gmu'), '{admin_text}'],
+        [new RegExp('^[^\\S\\r\\n]*(?:\\S+\\s*)?المطور الاساسي\\s*:\\s*.*$', 'gmu'), '{admin_text}'],
     ];
     const USER_EMOJI_TRIGGERS = new Set(["تغيير ايموجي الحاله", "تغيير إيموجي الحاله", "تغيير ايموجي الحالة", "تغيير إيموجي الحالة", "غير الايموجي", "غيّر الايموجي", "غير الإيموجي", "غيّر الإيموجي"]);
     const DRF_TEXT_TRIGGERS = new Set(["اعدادات الموقع", "إعدادات الموقع", "اعدادات الموقع /drf", "إعدادات الموقع /drf", "drf", "/drf"]);
     const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": "https://www.genspark.ai/api/files/s/18UAzOdi", "alive": "https://www.genspark.ai/api/files/s/18UAzOdi", "owner": "https://www.genspark.ai/api/files/s/18UAzOdi", "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
-    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "ownerNumber": "967784355543", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "alive": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "owner": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
+    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb73l855K3zVq2QgsH1M\n📞 رقم التواصل: 967773987296", "ownerNumber": "967773987296", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb73l855K3zVq2QgsH1M\n📞 رقم التواصل: 967773987296", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "alive": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "owner": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
     const ALL_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "load_dotenv_file", "get_green_api_authorization_url", "get_url_base", "get_pairing_api_profile", "normalize_ascii_digits", "normalize_phone_number", "get_pair_language_code", "get_pair_language_pack", "get_drf_language_pack", "normalize_settings_url", "parse_drf_credentials_message", "load_registered_users", "save_registered_users", "load_user_emoji_settings", "save_user_emoji_settings", "load_linked_whatsapp_users", "save_linked_whatsapp_users", "load_pending_pairings", "save_pending_pairings", "load_auto_reply_log", "save_auto_reply_log", "get_effective_user_emoji", "load_settings", "save_settings", "register_user", "is_admin", "normalize_channel_reference", "build_force_subscription_url", "build_main_keyboard", "build_status_emoji_keyboard", "build_pair_language_keyboard", "build_dev_keyboard", "build_pair_api_keyboard", "build_force_sub_keyboard", "build_whatsapp_messages_keyboard", "build_whatsapp_message_preview", "whatsapp_messages_text", "build_subscription_keyboard", "normalize_start_message_template", "fill_known_placeholders", "build_start_manual_login_hint", "render_start_message", "build_pairing_confirmation_keyboard", "update_number_records", "show_user_status_react_prompt", "prompt_user_status_custom_react_input", "admin_status_text", "settings_text", "force_sub_settings_text", "normalize_chat_id", "build_auto_reply_message", "build_alive_channel_message", "build_bot_channel_message", "build_settings_channel_message", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "render_whatsapp_pair_code_message", "build_whatsapp_command_reply", "build_pairing_success_instruction_message", "build_password_wait_message", "register_pending_pairing", "store_manual_site_login", "update_linked_user_emoji", "find_user_whatsapp_record", "find_linked_number_for_user", "get_all_user_whatsapp_records", "get_user_primary_whatsapp_record", "build_user_linked_summary", "build_owned_numbers_text", "build_owned_numbers_keyboard", "unlink_user_number", "resolve_user_record", "show_owned_numbers_panel", "send_password_for_user_number", "record_belongs_to_user", "extract_site_password_from_record", "extract_numeric_tokens_from_text", "extract_site_password_from_message_text", "upsert_site_metadata_for_number", "find_user_record_for_number", "has_invalid_header_characters", "extract_cookie_dict", "apply_cookie_records", "parse_auth_config", "apply_auth_config", "build_sync_headers", "extract_site_api_error", "ensure_site_api_success", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "is_settings_not_found_error", "build_site_app_id_candidates", "load_site_settings_from_session", "login_to_settings_site", "sync_user_emoji_to_settings_site", "sync_user_emoji_to_site", "sync_user_status_react_emojis_to_site", "build_site_settings_urls", "humanize_site_setting_label", "format_site_setting_value", "get_linked_site_credentials", "load_site_settings_sync", "coerce_site_setting_value", "save_site_settings_sync", "build_drf_keyboard", "render_drf_settings_text", "show_drf_panel", "drf_command", "get_green_api_send_message_url", "send_whatsapp_message_sync", "send_whatsapp_message", "get_green_api_send_file_url", "send_whatsapp_image_by_url_sync", "send_whatsapp_image_by_url", "build_linked_number_private_message", "deliver_linked_number_private_bundle", "get_green_api_logout_url", "logout_whatsapp_instance_sync", "logout_whatsapp_instance", "track_background_task", "get_record_for_number", "build_auto_stop_prefix_value", "schedule_pairing_confirmation_prompt", "apply_confirmed_pairing_updates", "process_pairing_confirmation_yes", "auto_request_site_password", "iter_nested_values", "extract_scalar_from_payload", "normalize_site_password", "derive_site_app_id_from_password", "extract_pairing_site_metadata", "merge_site_metadata", "apply_site_metadata", "build_pair_code_result", "extract_telegram_user_id", "extract_number_from_payload", "resolve_pairing_target_number", "payload_indicates_pairing_success", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_private_whatsapp_command", "payload_indicates_status_interaction", "mark_event_processed", "notify_site_password_detected", "notify_successful_pairing", "process_external_webhook", "build_number_variants", "find_code_in_payload", "resolve_pair_code_api_url", "start_healthcheck_server", "build_pairing_headers", "build_pairing_attempts", "request_pair_code_sync", "request_pair_code", "is_user_subscribed", "prompt_force_subscription", "ensure_subscription", "start", "menu", "user_emoji_command", "dev_command", "ping", "handle_buttons", "broadcast_message_to_all", "handle_text", "help_command", "post_init", "ensure_embedded_companion_files", "main"]);
     const IMPLEMENTED_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "normalize_ascii_digits", "normalize_phone_number", "normalize_channel_reference", "normalize_start_message_template", "fill_known_placeholders", "normalize_chat_id", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "extract_numeric_tokens_from_text", "build_sync_headers", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "humanize_site_setting_label", "format_site_setting_value", "coerce_site_setting_value", "normalize_site_password", "derive_site_app_id_from_password", "iter_nested_values", "extract_scalar_from_payload", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_number_from_payload", "build_number_variants", "find_code_in_payload", "resolve_pairing_target_number", "extract_private_whatsapp_command"]);
 
@@ -9664,6 +6407,11 @@ const PythonMergedLayer = (() => {
             normalized = normalized.replace(pattern, replacement);
         }
         normalized = normalized.replace(/^.*(?:حالة الرد التلقائي|\{auto_reply_status\}).*$/gmu, '');
+        normalized = normalized.replace(/\n{3,}/g, '\n\n').trim();
+        const missingLines = [];
+        if (!normalized.includes('{emoji}') && !normalized.includes('الإيموجي الحالي')) missingLines.push('{emoji} الإيموجي الحالي: {emoji}');
+        if (!normalized.includes('{admin_text}') && !normalized.includes('المطور الأساسي') && !normalized.includes('المطور الاساسي')) missingLines.push('{admin_text}');
+        if (missingLines.length) normalized = `${normalized.replace(/\s+$/, '')}\n${missingLines.join('\n')}`;
         normalized = normalized.replace(/\n{3,}/g, '\n\n').trim();
         return normalized || DEFAULT_START_MESSAGE_TEMPLATE;
     }
