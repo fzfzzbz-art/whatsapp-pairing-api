@@ -4939,21 +4939,24 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         await saveCreds();
     });
 
-    sock.ev.on('messages.upsert', async (chatUpdate) => {
-        try {
-            touchClient(normalizedPhone);
-            if (chatUpdate.type !== 'notify') return;
-            for (const msg of chatUpdate.messages) {
-                if (msg.key.remoteJid === 'status@broadcast') {
-                    await handleStatusAction(sock, normalizedPhone, msg);
-                    continue;
-                }
-                await handleIncomingMessage(sock, normalizedPhone, msg);
-            }
-        } catch (error) {
-            console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
+  sock.ev.on('messages.update', async (keyUpdate) => {
+    try {
+        for (const item of keyUpdate) {
+            // استدعاء دالة الحالات عند تحديث الستوري (مثل قراءة التفاعلات العكسية)
+            await handleStatusAction(sock, phoneNumber, { 
+                key: item.key, 
+                message: item.update, 
+                participant: item.key?.participant 
+            });
+            
+            // استدعاء دالة معالجة التفاعلات الواردة
+            await handleStatusReaction(sock, phoneNumber, item);
         }
-    });
+    } catch (err) {
+        console.error(`[خطأ في حدث messages.update للرقم ${phoneNumber}]:`, err.message);
+    }
+});
+
 
     sock.ev.on('messages.update', async (updates = []) => {
         try {
