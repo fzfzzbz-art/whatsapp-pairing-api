@@ -1,12 +1,7 @@
- const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    Browsers,
-    DisconnectReason,
-    delay,
-    downloadContentFromMessage
-} = require('@whiskeysockets/baileys');
+ // ====================================================================
+// المكاتب الأساسية المستدعاة للسيرفر والقروبات
+// ====================================================================
+const BaileysModule = require('@whiskeysockets/baileys');
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
@@ -14,6 +9,26 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+
+// ====================================================================
+// التغذية الذكية والموحدة لمنع أي تعارض برميجي داخل السيرفر
+// ====================================================================
+const makeWASocket = BaileysModule.default || BaileysModule;
+const { 
+    useMultiFileAuthState, 
+    fetchLatestBaileysVersion, 
+    Browsers, 
+    DisconnectReason, 
+    delay, 
+    downloadContentFromMessage 
+} = BaileysModule;
+
+// حيلة برمجية لحقن القيمة للأكواد السفلية العميقة بالملف
+if (!BaileysModule.default) {
+    BaileysModule.default = BaileysModule;
+}
+
+// تأكد أن الكود يبدأ مباشرة بعد هذا السطر بالمتغيرات المتبقية لديك (مثل إعدادات التليجرام أو السيرفر)
 
 // =========================
 // الإعدادات الأساسية
