@@ -21,7 +21,10 @@ const { EventEmitter } = require('events');
 const APP_PORT = Number(process.env.PORT || 8080);
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
-const DEFAULT_REACTION_EMOJI = '❤️';
+if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
+// تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
+const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
+const DEFAULT_REACTION_EMOJI = '👑';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'بوت الملك فارس';
 const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
@@ -389,13 +392,9 @@ const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
-if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
-const processedStatusEvents = global.processedStatusEvents;
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
-const STATUS_EVENT_DEDUPE_TTL_MS = Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 6 * 60 * 60 * 1000);
-const STATUS_DEFAULT_REACTION_EMOJI = '👑';
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
 const PAIRING_API_ROUTE = '/api/pairing';
@@ -1311,30 +1310,20 @@ function extractStatusMessageId(msg) {
         msg?.key?.id,
         content?.protocolMessage?.key?.id,
         content?.reactionMessage?.key?.id,
-        content?.messageContextInfo?.stanzaId,
-        content?.extendedTextMessage?.contextInfo?.stanzaId,
-        content?.imageMessage?.contextInfo?.stanzaId,
-        content?.videoMessage?.contextInfo?.stanzaId,
-        content?.documentMessage?.contextInfo?.stanzaId
+        content?.messageContextInfo?.stanzaId
     ];
-
     for (const candidate of candidates) {
         const normalized = String(candidate || '').trim();
-        if (normalized) {
-            return normalized;
-        }
+        if (normalized) return normalized;
     }
-
-    return '';
+    return msg?.key?.id || '';
 }
 
 function buildStatusEventDedupKey(phone, participant = '', messageId = '') {
     const normalizedPhone = normalizePhone(phone);
     const normalizedParticipant = normalizeWhatsAppJid(participant);
     const normalizedMessageId = String(messageId || '').trim();
-    if (!normalizedPhone || !normalizedParticipant || !normalizedMessageId) {
-        return '';
-    }
+    if (!normalizedPhone || !normalizedParticipant || !normalizedMessageId) return '';
     return `${normalizedPhone}::${normalizedParticipant}::${normalizedMessageId}`;
 }
 
@@ -1343,9 +1332,9 @@ function pruneProcessedStatusEvents(phone = '') {
     const prefix = normalizedPhone ? `${normalizedPhone}::` : '';
     const now = Date.now();
 
-    for (const [key, expiresAt] of processedStatusEvents.entries()) {
+    for (const [key, expiresAt] of global.processedStatusEvents.entries()) {
         if (Number(expiresAt || 0) <= now || (prefix && key.startsWith(prefix))) {
-            processedStatusEvents.delete(key);
+            global.processedStatusEvents.delete(key);
         }
     }
 }
@@ -1353,10 +1342,10 @@ function pruneProcessedStatusEvents(phone = '') {
 function isStatusEventRecentlyProcessed(phone, participant = '', messageId = '') {
     const key = buildStatusEventDedupKey(phone, participant, messageId);
     if (!key) return false;
-    const expiresAt = Number(processedStatusEvents.get(key) || 0);
+    const expiresAt = Number(global.processedStatusEvents.get(key) || 0);
     if (!expiresAt) return false;
     if (expiresAt <= Date.now()) {
-        processedStatusEvents.delete(key);
+        global.processedStatusEvents.delete(key);
         return false;
     }
     return true;
@@ -1365,7 +1354,7 @@ function isStatusEventRecentlyProcessed(phone, participant = '', messageId = '')
 function markStatusEventProcessed(phone, participant = '', messageId = '') {
     const key = buildStatusEventDedupKey(phone, participant, messageId);
     if (!key) return false;
-    processedStatusEvents.set(key, Date.now() + STATUS_EVENT_DEDUPE_TTL_MS);
+    global.processedStatusEvents.set(key, Date.now() + STATUS_EVENT_DEDUPE_TTL_MS);
     return true;
 }
 
@@ -3781,11 +3770,9 @@ function clearGhostPendingMessagesForPhone(phone) {
 
 function buildStatusReactionKey(msg, participant = '') {
     const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
-    const statusMessageId = extractStatusMessageId(msg);
     return {
-        ...(msg?.key || {}),
-        id: statusMessageId || msg?.key?.id,
         remoteJid: 'status@broadcast',
+        id: msg?.key?.id,
         participant: normalizedParticipant,
         fromMe: false
     };
@@ -3861,95 +3848,61 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
 
 async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant = '') {
     const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
-    if (!sock || !normalizedParticipant) return false;
+    if (!normalizedParticipant) return false;
 
+    // محاولة جلب الإيموجي المحفوظ للرقم من الدالة الخاصة ببوتك
     let emoji = typeof pickRandomStatusEmoji === 'function' ? pickRandomStatusEmoji(phoneNumber) : null;
+    
+    // إذا لم يجد الكود إيموجي مخزن، يختار فوراً وبشكل عشوائي إيموجي مميز من القائمة التالية
     if (!emoji) {
-        const fallbackEmojis = ['👑', '✨', '🔥', '💜', '⚡', '✅', '😍', '🎯'];
-        emoji = fallbackEmojis[Math.floor(Math.random() * fallbackEmojis.length)] || STATUS_DEFAULT_REACTION_EMOJI;
+        const defaultEmojis = ['👑', '✨', '🔥', '💜', '⚡', '✅', '😍', '🎯', '💚', '💫'];
+        emoji = defaultEmojis[Math.floor(Math.random() * defaultEmojis.length)];
     }
 
     const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
-    if (!reactionKey.id) return false;
 
-    const sendOptions = typeof buildStatusReactionSendOptions === 'function'
-        ? buildStatusReactionSendOptions(normalizedParticipant)
-        : { statusJidList: [normalizedParticipant] };
-
-    const attempts = [
-        async () => sock.sendMessage('status@broadcast', {
+    try {
+        // الإرسال المتوافق مع بروتوكول الحالات في واتساب
+        await sock.sendMessage('status@broadcast', {
             react: {
                 text: emoji,
                 key: reactionKey
             }
-        }, sendOptions),
-        async () => sock.sendMessage('status@broadcast', {
-            react: {
-                text: emoji,
-                key: {
-                    ...reactionKey,
-                    fromMe: true
-                }
-            }
-        }, sendOptions)
-    ];
-
-    for (const attempt of attempts) {
-        try {
-            if (typeof delay === 'function') {
-                await delay(150);
-            }
-            await attempt();
-            return true;
-        } catch (_) {
-        }
+        }, {
+            statusJidList: [normalizedParticipant]
+        });
+        return true;
+    } catch (err) {
+        console.error(`[خطأ الإيموجي]: تفشل إرسال التفاعل للرقم ${phoneNumber}:`, err.message);
+        return false;
     }
-
-    return false;
 }
 
 async function handleStatusAction(sock, phoneNumber, msg) {
     try {
-        const settings = typeof getActivePhoneSettings === 'function'
-            ? getActivePhoneSettings(phoneNumber)
-            : (typeof getPhoneSettings === 'function'
-                ? getPhoneSettings(phoneNumber)
-                : { autoStatusRead: 'on', autoStatusReact: 'on' });
+        const settings = typeof getPhoneSettings === 'function' ? getPhoneSettings(phoneNumber) : { autoStatusRead: 'on', autoStatusReact: 'on' };
         if (!settings) return;
 
         const participant = extractStatusParticipant(msg);
-        const ownJid = normalizeWhatsAppJid(sock?.user?.id);
-        const reactionKey = buildStatusReactionKey(msg, participant);
-        const statusMessageId = reactionKey.id || extractStatusMessageId(msg);
+        const ownJid = normalizeWhatsAppJid(sock.user?.id);
+        const statusMessageId = extractStatusMessageId(msg);
 
-        if (!reactionKey.id || !participant || participant === ownJid) return;
+        // تجاهل الحالات الشخصية أو البيانات الفارغة
+        if (!statusMessageId || !participant || participant === ownJid) return;
+        
+        // فحص منع التكرار الفوري
         if (isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
         let reactedToStatus = false;
 
+        // أولاً: إرسال المشاهدة التلقائية
         if (shouldReadStatus) {
-            const readAttempts = [
-                [reactionKey],
-                msg?.key ? [{
-                    ...msg.key,
-                    id: reactionKey.id || msg.key?.id,
-                    remoteJid: 'status@broadcast',
-                    participant: participant || msg.key?.participant || msg?.participant,
-                    fromMe: false
-                }] : [],
-                msg?.key ? [msg.key] : []
-            ].filter((items) => items.length);
-
-            for (const attempt of readAttempts) {
-                try {
-                    await sock.readMessages(attempt);
-                    break;
-                } catch (_) {
-                }
-            }
+            const reactionKey = buildStatusReactionKey(msg, participant);
+            await sock.readMessages([reactionKey]);
         }
 
+        // ثانياً: إرسال التفاعل (الإيموجي) في نفس اللحظة
         if (settings.autoStatusReact === 'on') {
             reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedToStatus && typeof incrementAnalytics === 'function') {
@@ -3957,23 +3910,20 @@ async function handleStatusAction(sock, phoneNumber, msg) {
             }
         }
 
-        const globalStatusMessage = reactedToStatus
-            ? (typeof getGlobalStatusLikeMessage === 'function' ? getGlobalStatusLikeMessage(phoneNumber) : '')
-            : '';
-        const fallbackStatusMessage = settings.statusMsgSend === 'on'
-            ? (typeof buildStatusAutoMessage === 'function' ? buildStatusAutoMessage(phoneNumber) : '')
-            : '';
+        // ثالثاً: إرسال الرد النصي في الخاص إذا قمت بتفعيله
+        const globalStatusMessage = reactedToStatus ? (typeof getGlobalStatusLikeMessage === 'function' ? getGlobalStatusLikeMessage(phoneNumber) : '') : '';
+        const fallbackStatusMessage = settings.statusMsgSend === 'on' ? (typeof buildStatusAutoMessage === 'function' ? buildStatusAutoMessage(phoneNumber) : '') : '';
         const messageText = globalStatusMessage || fallbackStatusMessage;
 
         if (messageText) {
             await sendStatusReplyMessage(sock, participant, messageText, msg);
         }
 
-        if (statusMessageId && (shouldReadStatus || reactedToStatus || Boolean(messageText))) {
-            markStatusEventProcessed(phoneNumber, participant, statusMessageId);
-        }
+        // رابعاً: حفظ الحالة لمنع تكرار الإيموجي والمشاهدة مجدداً لنفس الستوري
+        markStatusEventProcessed(phoneNumber, participant, statusMessageId);
+
     } catch (error) {
-        console.error(`Status Action Error (${phoneNumber}):`, error.message);
+        console.error(`خطأ معالجة ستوري (${phoneNumber}):`, error.message);
     }
 }
 
@@ -4208,11 +4158,15 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         await saveCreds();
     });
 
-    sock.ev.on('messages.upsert', async (payload) => {
+    sock.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             touchClient(normalizedPhone);
-            const messages = payload?.messages || [];
-            for (const msg of messages) {
+            if (chatUpdate.type !== 'notify') return;
+            for (const msg of chatUpdate.messages) {
+                if (msg.key.remoteJid === 'status@broadcast') {
+                    await handleStatusAction(sock, normalizedPhone, msg);
+                    continue;
+                }
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (error) {
@@ -4224,14 +4178,20 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         try {
             touchClient(normalizedPhone);
             for (const item of updates) {
+                const remoteJid = item.key?.remoteJid;
+                if (remoteJid === 'status@broadcast') {
+                    await handleStatusAction(sock, normalizedPhone, {
+                        key: item.key,
+                        message: item.update,
+                        participant: item.key?.participant
+                    });
+                    continue;
+                }
+
                 if (!item?.update) continue;
-                const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
                 const updateContent = unwrapMessageContent(item.update);
-                const isStatusUpdate = remoteJid === 'status@broadcast';
-                const updateParticipant = extractStatusParticipant({ key: item.key, message: item.update, participant: item.key?.participant || item.update?.protocolMessage?.key?.participant });
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                const resemblesStatusPayload = Boolean(isStatusUpdate || updateParticipant || extractStatusMessageId({ key: item.key, message: item.update }));
-                if (!resemblesStatusPayload && !isRevocationUpdate) continue;
+                if (!isRevocationUpdate) continue;
                 await handleIncomingMessage(sock, normalizedPhone, {
                     key: item.key,
                     message: item.update,
