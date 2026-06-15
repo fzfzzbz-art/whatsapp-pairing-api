@@ -2,10 +2,10 @@
   "name": "whatsapp-pairing-api-render-fix",
   "version": "1.0.0",
   "private": true,
-  "main": "target.merged.render.fixed.js",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node target.merged.render.fixed.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=18.18.0"
