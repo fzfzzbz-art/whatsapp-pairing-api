@@ -55,7 +55,14 @@ const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const POINTS_PER_LIKE_PACKAGE = 30;
 const LIKES_PER_POINTS_PACKAGE = 500;
 const MAX_AUTO_REPLIES = 10;
-const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api.onrender.com';
+const DEPLOYMENT_BASE_URL = String(
+    process.env.PUBLIC_BASE_URL ||
+        process.env.RENDER_EXTERNAL_URL ||
+        (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
+        (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
+        (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : '') ||
+        'https://whatsapp-pairing-api.onrender.com'
+).replace(/\/+$/, '');
 const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
 const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
 📞 رقم التواصل: 967773987296`;
@@ -1081,7 +1088,10 @@ function authenticateSettingsUser(num, pass) {
 }
 
 function normalizePhone(phone) {
-    return String(phone || '').replace(/\D/g, '');
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.length < 8 || digits.length > 15) return '';
+    return digits;
 }
 
 function sanitizeCallbackPhone(phone) {
@@ -1432,7 +1442,7 @@ function getPhoneSettingsKeyboard(phone) {
                 [Markup.button.callback(settings.autoStatusReact === 'on' ? 'إيقاف التفاعل على الحالات ⛔' : 'تشغيل التفاعل على الحالات ✅', `emoji_react_toggle_${cleanPhone}`)],
                 [Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`)],
                 [Markup.button.url('فتح لوحة الإعدادات 🌐', `${SITE_ENDPOINTS.target_settings_page_url}`)],
-                [Markup.button.url('Contact Save 📇', 'https://whatsapp-pairing-api.onrender.com/contactsave')]
+                [Markup.button.url('Contact Save 📇', `${DEPLOYMENT_BASE_URL}/contactsave`)]
             ]
         }
     };
@@ -2017,6 +2027,68 @@ function clearPairingRequest(phone) {
     pairingRequests.delete(normalized);
 }
 
+async function waitForPairingReady(sock, timeoutMs = 20000) {
+    if (!sock?.ev?.on) return;
+
+    await new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            try {
+                sock.ev.off?.('connection.update', onUpdate);
+            } catch (_) {}
+            clearTimeout(timer);
+            resolve();
+        };
+
+        const onUpdate = (update = {}) => {
+            if (update.connection === 'connecting' || update.connection === 'open' || !!update.qr) {
+                finish();
+            }
+        };
+
+        const timer = setTimeout(finish, timeoutMs);
+        if (typeof timer.unref === 'function') {
+            timer.unref();
+        }
+
+        sock.ev.on('connection.update', onUpdate);
+    });
+}
+
+async function requestPairingCodeRobustly(sock, phone, maxAttempts = 3) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) {
+        throw new Error('رقم الهاتف غير صالح ويجب أن يكون بصيغة E.164 بدون +');
+    }
+
+    if (!sock || typeof sock.requestPairingCode !== 'function') {
+        throw new Error('دالة requestPairingCode غير متاحة في جلسة واتساب الحالية');
+    }
+
+    await waitForPairingReady(sock, 20000);
+
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            const code = await sock.requestPairingCode(normalized);
+            if (String(code || '').trim()) {
+                return String(code).trim();
+            }
+            lastError = new Error('تم استلام كود ربط فارغ من واتساب');
+        } catch (error) {
+            lastError = error;
+        }
+
+        if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        }
+    }
+
+    throw lastError || new Error('تعذر إنشاء كود الربط');
+}
+
 function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized)) return;
@@ -2388,9 +2460,15 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
     }
 }
 
-async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null) {
+async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null, options = {}) {
     const normalizedPhone = normalizePhone(phoneNumber);
     if (!normalizedPhone) return null;
+
+    const flowOptions = {
+        requestPairingCode: true,
+        deliverPairingMessage: true,
+        ...options
+    };
 
     clearReconnectTimer(normalizedPhone);
     stoppedPairings.delete(normalizedPhone);
@@ -2421,22 +2499,24 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         markOnlineOnConnect: false
     });
 
+    sock.__lastPairingCode = '';
+
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
 
-    if (!state.creds.registered) {
+    if (!state.creds.registered && flowOptions.requestPairingCode) {
         try {
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            const code = await sock.requestPairingCode(normalizedPhone);
+            const code = await requestPairingCodeRobustly(sock, normalizedPhone);
+            sock.__lastPairingCode = code;
             schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
 
             const pairingMessage = `✅ كود الربط لرقم ${normalizedPhone}:\n\n\`${code}\`\n\n🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.\n⏳ إذا تأخر إكمال الربط كثيراً سيتم إيقاف الكود تلقائياً وإشعارك برسالة.`;
 
-            if (telegramCtx) {
+            if (flowOptions.deliverPairingMessage && telegramCtx) {
                 await safeReply(telegramCtx, pairingMessage);
             }
 
-            if (typeof pairingNotifier === 'function') {
+            if (flowOptions.deliverPairingMessage && typeof pairingNotifier === 'function') {
                 await pairingNotifier(pairingMessage);
             }
         } catch (error) {
@@ -2445,11 +2525,20 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             waClients.delete(normalizedPhone);
             clientActivity.delete(normalizedPhone);
             clearPresenceTimer(normalizedPhone);
-            const failMessage = '❌ فشل في طلب كود الربط. تأكد من الرقم ثم حاول مرة أخرى بعد دقيقة.';
-            if (telegramCtx) {
+            try {
+                sock.ws?.close?.();
+            } catch (_) {}
+            try {
+                sock.end?.();
+            } catch (_) {}
+            try {
+                fs.rmSync(sessionPath, { recursive: true, force: true });
+            } catch (_) {}
+            const failMessage = '❌ فشل في طلب كود الربط. تأكد من الرقم بصيغة الدولة بدون + وأن واتساب في هاتفك محدث، ثم حاول مرة أخرى بعد دقيقة.';
+            if (flowOptions.deliverPairingMessage && telegramCtx) {
                 await safeReply(telegramCtx, failMessage);
             }
-            if (typeof pairingNotifier === 'function') {
+            if (flowOptions.deliverPairingMessage && typeof pairingNotifier === 'function') {
                 await pairingNotifier(failMessage);
             }
             return null;
@@ -3032,9 +3121,20 @@ bot.on('text', async (ctx) => {
             return safeReply(ctx, '✅ هذا الرقم مربوط لديك بالفعل ومفعل حالياً.');
         }
 
+        if (pairingRequests.has(phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '⏳ يوجد طلب كود ربط جاري لهذا الرقم بالفعل. انتظر دقيقة ثم أعد المحاولة إذا لم يصلك الكود.');
+        }
+
         await safeReply(ctx, '⏳ جاري إنشاء الجلسة وطلب كود الربط، انتظر قليلاً...');
         ctx.session = null;
-        await startWhatsApp(phone, ctx, ctx.from.id);
+
+        try {
+            await startWhatsApp(phone, ctx, ctx.from.id);
+        } catch (error) {
+            console.error(`Telegram Pairing Flow Error (${phone}):`, error);
+            await safeReply(ctx, '❌ حدث خطأ أثناء تجهيز جلسة الربط. حاول مرة أخرى بعد دقيقة.');
+        }
         return;
     }
 
@@ -3213,9 +3313,9 @@ function buildUnifiedSettingsHubHTML() {
       <div class="card">
         <div class="row">
           <div><div class="title">إعدادات Contact Save</div><div class="sub">كل إعدادات حفظ جهات الاتصال التلقائي مضافة داخل هذه اللوحة</div></div>
-          <div class="btns"><a class="btn primary" href="https://whatsapp-pairing-api.onrender.com/contactsave" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
+          <div class="btns"><a class="btn primary" href="${DEPLOYMENT_BASE_URL}/contactsave" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
         </div>
-        <iframe class="frame" src="https://whatsapp-pairing-api.onrender.com/contactsave" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <iframe class="frame" src="${DEPLOYMENT_BASE_URL}/contactsave" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
         <div class="note">إذا لم يظهر القسم الخارجي داخل الصفحة بسبب قيود المتصفح أو الموقع، استخدم زر فتح Contact Save مباشرة.</div>
       </div>
     </section>
@@ -3475,11 +3575,9 @@ app.post('/api/pair', async (req, res) => {
         const phone = normalizePhone(req.body?.phone || req.body?.num || '');
         if (!phone) return res.status(400).json({ success: false, error: 'رقم غير صالح' });
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        const sock = await startWhatsApp(phone, null, null);
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        if (!sock || !sock.requestPairingCode) throw new Error('تعذر إنشاء جلسة الربط');
-        const code = await sock.requestPairingCode(phone);
-        schedulePairingTimeout(phone, null, getSessionPath(phone), sock);
+        const sock = await startWhatsApp(phone, null, null, null, { deliverPairingMessage: false });
+        const code = String(sock?.__lastPairingCode || '').trim();
+        if (!sock || !code) throw new Error('تعذر إنشاء جلسة الربط');
         return res.json({ success: true, phone, code });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'فشل إنشاء كود الربط' });
@@ -3504,11 +3602,9 @@ app.post('/api/pairing', async (req, res) => {
         const phone = normalizePhone(req.body?.num || req.body?.phone || '');
         if (!phone) return res.status(400).json({ success: false, error: 'رقم غير صالح' });
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        const sock = await startWhatsApp(phone, null, null);
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        if (!sock || !sock.requestPairingCode) throw new Error('تعذر إنشاء جلسة الربط');
-        const code = await sock.requestPairingCode(phone);
-        schedulePairingTimeout(phone, null, getSessionPath(phone), sock);
+        const sock = await startWhatsApp(phone, null, null, null, { deliverPairingMessage: false });
+        const code = String(sock?.__lastPairingCode || '').trim();
+        if (!sock || !code) throw new Error('تعذر إنشاء جلسة الربط');
         return res.json({ success: true, phone, num: phone, code });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'فشل إنشاء كود الربط' });
@@ -6347,7 +6443,7 @@ const PythonMergedLayer = (() => {
     const PASSWORD_DISCOVERY_COMMAND = ".settings";
     const PASSWORD_DISCOVERY_ATTEMPT_DELAYS = Object.freeze([15, 45, 60]);
     const PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS = 12;
-    const TARGET_SITE_BASE_URL = "https://whatsapp-pairing-api.onrender.com";
+    const TARGET_SITE_BASE_URL = PUBLIC_BASE_URL;
     const TARGET_SETTINGS_PAGE_URL = `${TARGET_SITE_BASE_URL}/settings`;
     const IMMUTABLE_SITE_SETTINGS_KEYS = new Set(["__v", "_id", "app", "createdAt", "id", "num", "updatedAt"]);
     const ARABIC_DIGIT_SOURCE = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
