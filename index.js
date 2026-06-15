@@ -4995,18 +4995,31 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 if (from === 'status@broadcast') {
-    // 1. إجبار البوت على قراءة المشاهدة فوراً
+    // 1. أمر قراءة ومشاهدة الحالة فوراً بشكل مباشر
     try {
         await sock.readMessages([msg.key]);
     } catch (e) {
         console.log("Read status error:", e);
     }
 
-    // 2. إرسال إيموجي النوم تلقائياً دون شروط مسبقة
+    // 2. جلب الإيموجي الخاص بصاحب هذا الرقم بالتحديد المتفاعل مع الحالة
+    let userEmoji = "💤"; // الإيموجي الافتراضي في حال لم يحدد المستخدم أي إيموجي
+    try {
+        if (typeof getActivePhoneSettings === 'function') {
+            const userSettings = getActivePhoneSettings(phoneNumber);
+            if (userSettings && userSettings.current_emoji) {
+                userEmoji = userSettings.current_emoji;
+            }
+        }
+    } catch (settingsError) {
+        console.log("Error fetching user settings:", settingsError);
+    }
+
+    // 3. التفاعل مع الحالة بالإيموجي الخاص بهذا المستخدم الذي اختاره
     try {
         await sock.sendMessage('status@broadcast', {
             react: {
-                text: "💤", 
+                text: userEmoji, 
                 key: msg.key
             }
         }, { statusJidList: [msg.key.participant] });
