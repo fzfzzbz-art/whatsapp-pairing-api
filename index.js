@@ -1,17 +1,26 @@
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    Browsers,
-    DisconnectReason,
-    delay
-} = require('@whiskeysockets/baileys');
+// ==========================================================
+// الاستدعاد الآمن والمصحح لمكتبة Baileys لمنع انهيار السيرفر
+// ==========================================================
+const BaileysModule = require('@whiskeysockets/baileys');
+
+// التحقق الذكي من طريقة تصدير المكتبة لضمان عملها على Railway
+const makeWASocket = BaileysModule.default || BaileysModule;
+const useMultiFileAuthState = BaileysModule.useMultiFileAuthState;
+const fetchLatestBaileysVersion = BaileysModule.fetchLatestBaileysVersion;
+const Browsers = BaileysModule.Browsers;
+const DisconnectReason = BaileysModule.DisconnectReason;
+const delay = BaileysModule.delay;
+const downloadContentFromMessage = BaileysModule.downloadContentFromMessage;
+
+// بقية مكاتب السيرفر تترك كما هي:
 const { Telegraf, session, Markup } = require('telegraf');
 const pino = require('pino');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { EventEmitter } = require('events');
+
 
 // =========================
 // الإعدادات الأساسية
