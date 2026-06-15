@@ -389,9 +389,11 @@ const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
+const processedStatusEvents = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
+const STATUS_EVENT_DEDUPE_TTL_MS = Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 6 * 60 * 60 * 1000);
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
 const PAIRING_API_ROUTE = '/api/pairing';
@@ -1288,8 +1290,7 @@ function extractStatusParticipant(msg) {
         content?.videoMessage?.contextInfo?.participant,
         content?.documentMessage?.contextInfo?.participant,
         content?.reactionMessage?.key?.participant,
-        content?.protocolMessage?.key?.participant,
-        content?.senderKeyDistributionMessage?.groupId
+        content?.protocolMessage?.key?.participant
     ];
 
     for (const candidate of candidates) {
@@ -1300,6 +1301,70 @@ function extractStatusParticipant(msg) {
     }
 
     return '';
+}
+
+function extractStatusMessageId(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    const candidates = [
+        msg?.key?.id,
+        content?.protocolMessage?.key?.id,
+        content?.reactionMessage?.key?.id,
+        content?.messageContextInfo?.stanzaId,
+        content?.extendedTextMessage?.contextInfo?.stanzaId,
+        content?.imageMessage?.contextInfo?.stanzaId,
+        content?.videoMessage?.contextInfo?.stanzaId,
+        content?.documentMessage?.contextInfo?.stanzaId
+    ];
+
+    for (const candidate of candidates) {
+        const normalized = String(candidate || '').trim();
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return '';
+}
+
+function buildStatusEventDedupKey(phone, participant = '', messageId = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const normalizedMessageId = String(messageId || '').trim();
+    if (!normalizedPhone || !normalizedParticipant || !normalizedMessageId) {
+        return '';
+    }
+    return `${normalizedPhone}::${normalizedParticipant}::${normalizedMessageId}`;
+}
+
+function pruneProcessedStatusEvents(phone = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const prefix = normalizedPhone ? `${normalizedPhone}::` : '';
+    const now = Date.now();
+
+    for (const [key, expiresAt] of processedStatusEvents.entries()) {
+        if (Number(expiresAt || 0) <= now || (prefix && key.startsWith(prefix))) {
+            processedStatusEvents.delete(key);
+        }
+    }
+}
+
+function isStatusEventRecentlyProcessed(phone, participant = '', messageId = '') {
+    const key = buildStatusEventDedupKey(phone, participant, messageId);
+    if (!key) return false;
+    const expiresAt = Number(processedStatusEvents.get(key) || 0);
+    if (!expiresAt) return false;
+    if (expiresAt <= Date.now()) {
+        processedStatusEvents.delete(key);
+        return false;
+    }
+    return true;
+}
+
+function markStatusEventProcessed(phone, participant = '', messageId = '') {
+    const key = buildStatusEventDedupKey(phone, participant, messageId);
+    if (!key) return false;
+    processedStatusEvents.set(key, Date.now() + STATUS_EVENT_DEDUPE_TTL_MS);
+    return true;
 }
 
 async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, incomingText = '') {
@@ -2806,7 +2871,7 @@ function hasStatusContent(msg) {
     const contentKeys = Object.keys(content || {});
 
     return contentKeys.some(
-        (key) => !['messageContextInfo', 'protocolMessage', 'reactionMessage'].includes(key)
+        (key) => !['messageContextInfo', 'protocolMessage', 'reactionMessage', 'senderKeyDistributionMessage'].includes(key)
     );
 }
 
@@ -3714,8 +3779,10 @@ function clearGhostPendingMessagesForPhone(phone) {
 
 function buildStatusReactionKey(msg, participant = '') {
     const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
+    const statusMessageId = extractStatusMessageId(msg);
     return {
         ...(msg?.key || {}),
+        id: statusMessageId || msg?.key?.id,
         remoteJid: 'status@broadcast',
         participant: normalizedParticipant,
         fromMe: false
@@ -3797,12 +3864,10 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
         return false;
     }
 
-    const emoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
+    const emoji = pickRandomStatusEmoji(phoneNumber) || DEFAULT_REACTION_EMOJI;
     if (!emoji) {
         return false;
     }
-
-    reactionEmoji = emoji;
     const sendOptions = buildStatusReactionSendOptions(normalizedParticipant);
 
     const attempts = [
@@ -3884,9 +3949,11 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const reactionKey = buildStatusReactionKey(msg, participant);
+        const statusMessageId = reactionKey.id || extractStatusMessageId(msg);
         let reactedToStatus = false;
 
-        if (!reactionKey.id) return;
+        if (!reactionKey.id || !participant || participant === ownJid) return;
+        if (isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
         const forceVisibleReaction = settings.autoStatusReact === 'on';
@@ -3905,7 +3972,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             }
         }
 
-        if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
+        if (settings.autoStatusReact === 'on') {
             reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedToStatus) {
                 incrementAnalytics('totalStatusReactions');
@@ -3913,11 +3980,15 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         }
 
         const globalStatusMessage = reactedToStatus ? getGlobalStatusLikeMessage(phoneNumber) : '';
-        const fallbackStatusMessage = settings.statusMsgSend === 'on' && participant && participant !== ownJid ? buildStatusAutoMessage(phoneNumber) : '';
+        const fallbackStatusMessage = settings.statusMsgSend === 'on' ? buildStatusAutoMessage(phoneNumber) : '';
         const messageText = globalStatusMessage || fallbackStatusMessage;
 
-        if (messageText && participant && participant !== ownJid) {
+        if (messageText) {
             await sendStatusReplyMessage(sock, participant, messageText, msg);
+        }
+
+        if (statusMessageId && (shouldReadStatus || reactedToStatus || Boolean(messageText))) {
+            markStatusEventProcessed(phoneNumber, participant, statusMessageId);
         }
     } catch (error) {
         console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
@@ -4081,7 +4152,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0,
         keepAliveIntervalMs: 10000,
-        markOnlineOnConnect: false
+        markOnlineOnConnect: false,
+        shouldIgnoreJid: () => false
     });
 
     sock.ev.setMaxListeners?.(0);
@@ -4148,8 +4220,10 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
                 const updateContent = unwrapMessageContent(item.update);
                 const isStatusUpdate = remoteJid === 'status@broadcast';
+                const updateParticipant = extractStatusParticipant({ key: item.key, message: item.update, participant: item.key?.participant || item.update?.protocolMessage?.key?.participant });
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                if (!isStatusUpdate && !isRevocationUpdate) continue;
+                const resemblesStatusPayload = Boolean(isStatusUpdate || updateParticipant || extractStatusMessageId({ key: item.key, message: item.update }));
+                if (!resemblesStatusPayload && !isRevocationUpdate) continue;
                 await handleIncomingMessage(sock, normalizedPhone, {
                     key: item.key,
                     message: item.update,
@@ -4206,6 +4280,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 pendingPair.completed = true;
                 pairingRequests.set(normalizedPhone, pendingPair);
                 stoppedPairings.delete(normalizedPhone);
+                pruneProcessedStatusEvents(normalizedPhone);
                 updatePhoneSettings(normalizedPhone, { autoStatusRead: 'on', autoStatusReact: 'on' });
                 await autoJoinWhatsAppChannel(sock, normalizedPhone);
                 await sendLinkedNumberWelcome(sock, normalizedPhone);
@@ -4312,9 +4387,6 @@ bot.command('setemoji', async (ctx) => {
         ctx.session = { step: 'wait_emoji', targetPhone: phones[0] };
         return safeReply(ctx, `😍 أرسل الآن الإيموجي الجديد للرقم ${phones[0]}`);
     }
-if (config.autoStatusReact === "on") {
-    await client.sendMessage(jid, { react: { text: config.statusCustomReact, key: statusKey } });
-}
 
     const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
     await safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
