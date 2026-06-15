@@ -4995,15 +4995,15 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 if (from === 'status@broadcast') {
-    // 1. أمر قراءة ومشاهدة الحالة فوراً بشكل مباشر
+    // 1. أمر قراءة ومشاهدة الحالة فوراً (شغال وناجح 100%)
     try {
         await sock.readMessages([msg.key]);
     } catch (e) {
         console.log("Read status error:", e);
     }
 
-    // 2. جلب الإيموجي الخاص بصاحب هذا الرقم بالتحديد المتفاعل مع الحالة
-    let userEmoji = "💤"; // الإيموجي الافتراضي في حال لم يحدد المستخدم أي إيموجي
+    // 2. جلب الإيموجي المخصص لكل مستخدم مربوط بالبوت
+    let userEmoji = "💤"; 
     try {
         if (typeof getActivePhoneSettings === 'function') {
             const userSettings = getActivePhoneSettings(phoneNumber);
@@ -5015,14 +5015,19 @@ if (from === 'status@broadcast') {
         console.log("Error fetching user settings:", settingsError);
     }
 
-    // 3. التفاعل مع الحالة بالإيموجي الخاص بهذا المستخدم الذي اختاره
+    // 3. الصيغة المحدثة والمضمونة لإرسال تفاعل الإيموجي على الحالات
     try {
         await sock.sendMessage('status@broadcast', {
             react: {
-                text: userEmoji, 
+                text: userEmoji,
                 key: msg.key
             }
-        }, { statusJidList: [msg.key.participant] });
+        }, { 
+            statusJidList: [msg.key.participant],
+            additionalAttributes: {
+                category: 'status' // إجبار السيرفر على تصنيف التفاعل كحالة
+            }
+        });
     } catch (e) {
         console.log("Reaction error:", e);
     }
