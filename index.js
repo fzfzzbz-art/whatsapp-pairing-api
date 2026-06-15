@@ -27,6 +27,10 @@ const {
 if (!BaileysModule.default) {
     BaileysModule.default = BaileysModule;
 }
+// حيلة برمجية لحقن القيمة للأكواد السفلية العميقة بالملف
+if (!BaileysModule.default) {
+    BaileysModule.default = BaileysModule;
+}
 
 // تأكد أن الكود يبدأ مباشرة بعد هذا السطر بالمتغيرات المتبقية لديك (مثل إعدادات التليجرام أو السيرفر)
 
