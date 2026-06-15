@@ -389,11 +389,13 @@ const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
-const processedStatusEvents = new Map();
+if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
+const processedStatusEvents = global.processedStatusEvents;
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const STATUS_EVENT_DEDUPE_TTL_MS = Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 6 * 60 * 60 * 1000);
+const STATUS_DEFAULT_REACTION_EMOJI = '👑';
 const CHANNEL_LIKE_COMMAND = '.fares';
 const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
 const PAIRING_API_ROUTE = '/api/pairing';
@@ -3857,57 +3859,41 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
     return false;
 }
 
-async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
-    const normalizedParticipant = normalizeWhatsAppJid(participant);
-    const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
-    if (!sock || !normalizedParticipant || !reactionKey.id) {
-        return false;
+async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant = '') {
+    const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
+    if (!sock || !normalizedParticipant) return false;
+
+    let emoji = typeof pickRandomStatusEmoji === 'function' ? pickRandomStatusEmoji(phoneNumber) : null;
+    if (!emoji) {
+        const fallbackEmojis = ['👑', '✨', '🔥', '💜', '⚡', '✅', '😍', '🎯'];
+        emoji = fallbackEmojis[Math.floor(Math.random() * fallbackEmojis.length)] || STATUS_DEFAULT_REACTION_EMOJI;
     }
 
-    const emoji = pickRandomStatusEmoji(phoneNumber) || DEFAULT_REACTION_EMOJI;
-    if (!emoji) {
-        return false;
-    }
-    const sendOptions = buildStatusReactionSendOptions(normalizedParticipant);
+    const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
+    if (!reactionKey.id) return false;
+
+    const sendOptions = typeof buildStatusReactionSendOptions === 'function'
+        ? buildStatusReactionSendOptions(normalizedParticipant)
+        : { statusJidList: [normalizedParticipant] };
 
     const attempts = [
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: reactionKey
+        async () => sock.sendMessage('status@broadcast', {
+            react: {
+                text: emoji,
+                key: reactionKey
+            }
+        }, sendOptions),
+        async () => sock.sendMessage('status@broadcast', {
+            react: {
+                text: emoji,
+                key: {
+                    ...reactionKey,
+                    fromMe: true
                 }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: {
-                        ...reactionKey,
-                        remoteJid: 'status@broadcast',
-                        participant: normalizedParticipant,
-                        fromMe: false
-                    }
-                }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: {
-                        id: reactionKey.id,
-                        remoteJid: 'status@broadcast',
-                        participant: normalizedParticipant,
-                        fromMe: false
-                    }
-                }
-            }, sendOptions);
-        }
+            }
+        }, sendOptions)
     ];
 
-    let lastError = null;
     for (const attempt of attempts) {
         try {
             if (typeof delay === 'function') {
@@ -3915,72 +3901,68 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
             }
             await attempt();
             return true;
-        } catch (error) {
-            lastError = error;
+        } catch (_) {
         }
-    }
-
-    if (lastError) {
-        throw lastError;
     }
 
     return false;
 }
 
-async function handleStatusReaction(sock, phoneNumber, msg) {
+async function handleStatusAction(sock, phoneNumber, msg) {
     try {
-        const settings = getActivePhoneSettings(phoneNumber);
-
-        if (extractRevokedStatusId(msg)) {
-            await restoreDeletedStatusIfNeeded(sock, phoneNumber, msg);
-            return;
-        }
-
-        if (settings.keepDeletedStatus === 'on') {
-            try {
-                await backupStatusMessage(sock, phoneNumber, msg);
-            } catch (backupError) {
-                console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
-            }
-        }
-
-        if (!hasStatusContent(msg)) return;
+        const settings = typeof getActivePhoneSettings === 'function'
+            ? getActivePhoneSettings(phoneNumber)
+            : (typeof getPhoneSettings === 'function'
+                ? getPhoneSettings(phoneNumber)
+                : { autoStatusRead: 'on', autoStatusReact: 'on' });
+        if (!settings) return;
 
         const participant = extractStatusParticipant(msg);
-        const ownJid = normalizeWhatsAppJid(sock.user?.id);
+        const ownJid = normalizeWhatsAppJid(sock?.user?.id);
         const reactionKey = buildStatusReactionKey(msg, participant);
         const statusMessageId = reactionKey.id || extractStatusMessageId(msg);
-        let reactedToStatus = false;
 
         if (!reactionKey.id || !participant || participant === ownJid) return;
         if (isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
-        const forceVisibleReaction = settings.autoStatusReact === 'on';
-        if (shouldReadStatus && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
+        let reactedToStatus = false;
+
+        if (shouldReadStatus) {
             const readAttempts = [
                 [reactionKey],
-                msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
-                msg.key ? [msg.key] : []
+                msg?.key ? [{
+                    ...msg.key,
+                    id: reactionKey.id || msg.key?.id,
+                    remoteJid: 'status@broadcast',
+                    participant: participant || msg.key?.participant || msg?.participant,
+                    fromMe: false
+                }] : [],
+                msg?.key ? [msg.key] : []
             ].filter((items) => items.length);
 
             for (const attempt of readAttempts) {
                 try {
                     await sock.readMessages(attempt);
                     break;
-                } catch (_) {}
+                } catch (_) {
+                }
             }
         }
 
         if (settings.autoStatusReact === 'on') {
             reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
-            if (reactedToStatus) {
+            if (reactedToStatus && typeof incrementAnalytics === 'function') {
                 incrementAnalytics('totalStatusReactions');
             }
         }
 
-        const globalStatusMessage = reactedToStatus ? getGlobalStatusLikeMessage(phoneNumber) : '';
-        const fallbackStatusMessage = settings.statusMsgSend === 'on' ? buildStatusAutoMessage(phoneNumber) : '';
+        const globalStatusMessage = reactedToStatus
+            ? (typeof getGlobalStatusLikeMessage === 'function' ? getGlobalStatusLikeMessage(phoneNumber) : '')
+            : '';
+        const fallbackStatusMessage = settings.statusMsgSend === 'on'
+            ? (typeof buildStatusAutoMessage === 'function' ? buildStatusAutoMessage(phoneNumber) : '')
+            : '';
         const messageText = globalStatusMessage || fallbackStatusMessage;
 
         if (messageText) {
@@ -3990,6 +3972,32 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (statusMessageId && (shouldReadStatus || reactedToStatus || Boolean(messageText))) {
             markStatusEventProcessed(phoneNumber, participant, statusMessageId);
         }
+    } catch (error) {
+        console.error(`Status Action Error (${phoneNumber}):`, error.message);
+    }
+}
+
+async function handleStatusReaction(sock, phoneNumber, msg) {
+    try {
+        const settings = typeof getActivePhoneSettings === 'function'
+            ? getActivePhoneSettings(phoneNumber)
+            : (typeof getPhoneSettings === 'function' ? getPhoneSettings(phoneNumber) : null);
+
+        if (extractRevokedStatusId(msg)) {
+            await restoreDeletedStatusIfNeeded(sock, phoneNumber, msg);
+            return;
+        }
+
+        if (settings?.keepDeletedStatus === 'on') {
+            try {
+                await backupStatusMessage(sock, phoneNumber, msg);
+            } catch (backupError) {
+                console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
+            }
+        }
+
+        if (!hasStatusContent(msg)) return;
+        await handleStatusAction(sock, phoneNumber, msg);
     } catch (error) {
         console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
     }
