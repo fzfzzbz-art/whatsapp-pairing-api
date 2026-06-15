@@ -4,9 +4,22 @@
 // ====================================================================
 // الاستدعاء الموحد والذكي لمكتبة Baileys (حل نهائي لتعارض أعلى وأسفل الملف)
 // ====================================================================
-const BaileysModule = require('@whiskeysockets/baileys');
 
-// تغذية الأسطر العلوية للملف
+// ====================================================================
+// المكاتب الأساسية المستدعاة للسيرفر والقروبات
+// ====================================================================
+const BaileysModule = require('@whiskeysockets/baileys');
+const { Telegraf, session, Markup } = require('telegraf');
+const pino = require('pino');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { EventEmitter } = require('events');
+
+// ====================================================================
+// التغذية الذكية والموحدة لمنع أي تعارض برميجي داخل السيرفر
+// ====================================================================
 const makeWASocket = BaileysModule.default || BaileysModule;
 const { 
     useMultiFileAuthState, 
@@ -17,28 +30,12 @@ const {
     downloadContentFromMessage 
 } = BaileysModule;
 
-// حيلة برمجية ذكية: إعادة حقن قيمة default داخل الـ require الأصلي لخدمة سطر 1461 الأسفل
+// حيلة برمجية لحقن القيمة للأكواد السفلية العميقة بالملف
 if (!BaileysModule.default) {
     BaileysModule.default = BaileysModule;
 }
 
-// التحقق الذكي من طريقة تصدير المكتبة لضمان عملها على Railway
-const makeWASocket = BaileysModule.default || BaileysModule;
-const useMultiFileAuthState = BaileysModule.useMultiFileAuthState;
-const fetchLatestBaileysVersion = BaileysModule.fetchLatestBaileysVersion;
-const Browsers = BaileysModule.Browsers;
-const DisconnectReason = BaileysModule.DisconnectReason;
-const delay = BaileysModule.delay;
-const downloadContentFromMessage = BaileysModule.downloadContentFromMessage;
-
-// بقية مكاتب السيرفر تترك كما هي:
-const { Telegraf, session, Markup } = require('telegraf');
-const pino = require('pino');
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { EventEmitter } = require('events');
+// تأكد أن الكود يبدأ مباشرة بعد هذا السطر بالمتغيرات المتبقية لديك (مثل إعدادات التليجرام أو السيرفر)
 
 
 // =========================
