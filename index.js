@@ -8,9 +8,9 @@
  * CURRENT_EMOJI=🔥
  * START_MESSAGE={emoji}
  * SITE_BRAND_NAME=بوت الملك فارس
- * PAIRING_SITE_BASE_URL=https://whatsapp-pairing-api.onrender.com
- * PAIRING_API_URL=https://whatsapp-pairing-api.onrender.com/api/pairing
- * QR_API_URL=https://whatsapp-pairing-api.onrender.com/api/qr
+ * PAIRING_SITE_BASE_URL=https://whatsapp-pairing-api-production-8d35.up.railway.app/api/pairing
+ * PAIRING_API_URL=https://whatsapp-pairing-api-production-8d35.up.railway.app/api/pairing
+ * QR_API_URL=https://whatsapp-pairing-api-production-8d35.up.railway.app/api/pairing
  * PAIRING_API_METHOD=POST
  * PAIRING_API_NUMBER_FIELD=num
  * PAIRING_API_TOKEN=
@@ -126,9 +126,9 @@ const DEFAULT_SETTINGS = {
   currentEmoji: process.env.CURRENT_EMOJI || '🔥',
   startMessage: process.env.START_MESSAGE || '{emoji}',
   siteBrandName: process.env.SITE_BRAND_NAME || 'بوت الملك فارس',
-  pairingSiteBaseUrl: (process.env.PAIRING_SITE_BASE_URL || 'https://whatsapp-pairing-api.onrender.com').replace(/\/$/, ''),
-  pairingApiUrl: (process.env.PAIRING_API_URL || 'https://whatsapp-pairing-api.onrender.com/api/pairing').trim(),
-  qrApiUrl: (process.env.QR_API_URL || 'https://whatsapp-pairing-api.onrender.com/api/qr').trim(),
+  pairingSiteBaseUrl: (process.env.PAIRING_SITE_BASE_URL || 'https://whatsapp-pairing-api-production-8d35.up.railway.app/api/pairing').replace(/\/$/, ''),
+  pairingApiUrl: (process.env.PAIRING_API_URL || 'https://whatsapp-pairing-api-production-8d35.up.railway.app/api/pairing').trim(),
+  qrApiUrl: (process.env.QR_API_URL || 'https://whatsapp-pairing-api-production-8d35.up.railway.app/api/pairing').trim(),
   pairingApiMethod: (process.env.PAIRING_API_METHOD || 'POST').toUpperCase().trim(),
   pairingApiNumberField: (process.env.PAIRING_API_NUMBER_FIELD || 'num').trim(),
   pairingApiToken: (process.env.PAIRING_API_TOKEN || '').trim(),
