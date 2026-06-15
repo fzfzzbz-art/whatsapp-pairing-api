@@ -1,7 +1,26 @@
 // ==========================================================
 // الاستدعاد الآمن والمصحح لمكتبة Baileys لمنع انهيار السيرفر
 // ==========================================================
+// ====================================================================
+// الاستدعاء الموحد والذكي لمكتبة Baileys (حل نهائي لتعارض أعلى وأسفل الملف)
+// ====================================================================
 const BaileysModule = require('@whiskeysockets/baileys');
+
+// تغذية الأسطر العلوية للملف
+const makeWASocket = BaileysModule.default || BaileysModule;
+const { 
+    useMultiFileAuthState, 
+    fetchLatestBaileysVersion, 
+    Browsers, 
+    DisconnectReason, 
+    delay, 
+    downloadContentFromMessage 
+} = BaileysModule;
+
+// حيلة برمجية ذكية: إعادة حقن قيمة default داخل الـ require الأصلي لخدمة سطر 1461 الأسفل
+if (!BaileysModule.default) {
+    BaileysModule.default = BaileysModule;
+}
 
 // التحقق الذكي من طريقة تصدير المكتبة لضمان عملها على Railway
 const makeWASocket = BaileysModule.default || BaileysModule;
