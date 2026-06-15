@@ -4938,11 +4938,28 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         touchClient(normalizedPhone);
         await saveCreds();
     });
+// ==========================================================
+// الكود الصحيح والمغلق برمجياً للأحداث (بدون أي أقواس مكسورة)
+// ==========================================================
 
-  sock.ev.on('messages.update', async (keyUpdate) => {
+sock.ev.on('messages.upsert', async (chatUpdate) => {
     try {
+        const msg = chatUpdate.messages[0];
+        if (!msg) return;
+
+        // استدعاء دالة معالجة الحالات الذكية
+        await handleStatusAction(sock, phoneNumber, msg);
+    } catch (err) {
+        console.error(`[خطأ في حدث messages.upsert للرقم ${phoneNumber}]:`, err.message);
+    }
+});
+
+sock.ev.on('messages.update', async (keyUpdate) => {
+    try {
+        if (!keyUpdate || !Array.isArray(keyUpdate)) return;
+        
         for (const item of keyUpdate) {
-            // استدعاء دالة الحالات عند تحديث الستوري (مثل قراءة التفاعلات العكسية)
+            // استدعاء دالة الحالات عند التحديث
             await handleStatusAction(sock, phoneNumber, { 
                 key: item.key, 
                 message: item.update, 
@@ -4957,20 +4974,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     }
 });
 
-
-    sock.ev.on('messages.update', async (updates = []) => {
-        try {
-            touchClient(normalizedPhone);
-            for (const item of updates) {
-                const remoteJid = item.key?.remoteJid;
-                if (remoteJid === 'status@broadcast') {
-                    await handleStatusAction(sock, normalizedPhone, {
-                        key: item.key,
-                        message: item.update,
-                        participant: item.key?.participant
-                    });
-                    continue;
-                }
 
                 if (!item?.update) continue;
                 const updateContent = unwrapMessageContent(item.update);
