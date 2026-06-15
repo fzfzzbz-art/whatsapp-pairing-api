@@ -1,5 +1,9 @@
 {
-  "current_emoji": "🔥",
+  "auto_read_status": true,
+  "status_reaction": true,
+  "current_emoji": "💤",
+  "autoRead": "on",
+  "ghostMode": "off",
   "auto_reply_enabled": true,
   "pair_code_api_url": "",
   "pair_code_api_method": "POST",
@@ -10,5 +14,5 @@
   "linked_number_sync_token": "",
   "linked_number_sync_number_field": "phoneNumber",
   "linked_number_sync_emoji_field": "emoji",
-  "linked_number_sync_auto_reply_field": "autoReplyEnabled"
+  "linked_number_sync_auto_reply_field": "autoReply"
 }
