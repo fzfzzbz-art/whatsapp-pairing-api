@@ -1,47 +1,15 @@
-// 1. الاستيرادات (Imports)
-const { default: makeWASocket, ... } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, fetchLatestBaileysVersion, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
+const pino = require('pino');
 
-// 2. دالة الاتصال بقاعدة البيانات (التي أضفتها)
-async function getMongoAuthState(phone) {
-    const db = mongoose.connection.db;
-    const collection = db.collection('sessions');
-
-    const saveCreds = async (creds) => {
-        await collection.updateOne(
-            { _id: phone },
-            { $set: { creds } },
-            { upsert: true }
-        );
-    };
-
-    const getCreds = async () => {
-        const doc = await collection.findOne({ _id: phone });
-        return doc ? doc.creds : null;
-    };
-
-    const savedCreds = await getCreds();
-    return {
-        state: {
-            creds: savedCreds || {
-                // ... (محتويات الـ creds التي أضفتها)
-            },
-            keys: {}
-        },
-        saveCreds
-    };
-} // تأكد من وجود هذا القوس لإغلاق الدالة
-
-// 3. الاتصال بـ MongoDB
+// --- 1. الاتصال بقاعدة البيانات ---
 mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
-.catch(err => console.error('❌ فشل الاتصال:', err));
+.catch(err => console.error('❌ فشل الاتصال بقاعدة البيانات:', err));
 
-// 4. باقي الكود (المتغيرات والدوال الأخرى...)
-
-// ضع هذا الكود هنا بعد الاستيرادات
+// --- 2. دالة التعامل مع الجلسات في MongoDB ---
 async function getMongoAuthState(phone) {
     const db = mongoose.connection.db;
     const collection = db.collection('sessions');
@@ -83,8 +51,25 @@ async function getMongoAuthState(phone) {
     };
 }
 
-// 3. باقي إعدادات المتغيرات (const APP_PORT = ...)
+// --- 3. عند إنشاء الاتصال (في دالة الربط الخاصة بك) ---
+// استبدل الجزء القديم بهذا المنطق:
+async function startBot(normalizedPhone) {
+    const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+    const { version } = await fetchLatestBaileysVersion();
 
+    const sock = makeWASocket({
+        version,
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: false,
+        auth: state, // نستخدم الحالة من MongoDB
+        browser: ['Ubuntu', 'Chrome', '20.0.0'],
+    });
+
+    // سطر الحفظ الهام جداً:
+    sock.ev.on('creds.update', saveCreds);
+
+    return sock;
+}
 
 // الإعدادات الأساسية
 // =========================
