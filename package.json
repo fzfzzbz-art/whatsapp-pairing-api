@@ -1,13 +1,22 @@
 {
-  "name": "whatsapp-bot-stable",
+  "name": "bot-fares-omar",
   "version": "1.0.0",
+  "private": true,
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
-    "@whiskeysockets/baileys": "latest",
+    "@whiskeysockets/baileys": "6.6.0",
+    "telegraf": "4.12.2",
     "express": "4.19.2",
-    "pino": "8.14.0"
+    "pino": "8.14.0",
+    "crypto": "1.0.1",
+    "fs": "0.0.1-security",
+    "path": "0.12.7"
   }
 }
