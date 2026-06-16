@@ -11,8 +11,8 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "latest",
-    "express": "4.21.2",
+    "@whiskeysockets/baileys": "6.7.21",
+    "express": "4.2.2",
     "pino": "10.3.1",
     "telegraf": "4.16.3"
   }
