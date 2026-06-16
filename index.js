@@ -1,4 +1,4 @@
-'use strict';
+ 'use strict';
 
 const fs = require('fs');
 const path = require('path');
@@ -47,17 +47,21 @@ function installMissingDependencies(packageNames) {
     ensurePackageManifest(projectDir);
     console.log(`جاري تجهيز التبعيات المطلوبة... (${uniquePackages.join(', ')})`);
 
-    execSync(`npm install --no-save ${uniquePackages.map((pkg) => `"${pkg}"`).join(' ')}`, {
-        cwd: projectDir,
-        stdio: 'inherit',
-        env: {
-            ...process.env,
-            NPM_CONFIG_AUDIT: 'false',
-            NPM_CONFIG_FUND: 'false',
-            NPM_CONFIG_UPDATE_NOTIFIER: 'false',
-            npm_config_loglevel: process.env.npm_config_loglevel || 'error'
-        }
-    });
+    try {
+        execSync(`npm install --no-save ${uniquePackages.map((pkg) => `"${pkg}"`).join(' ')}`, {
+            cwd: projectDir,
+            stdio: 'inherit',
+            env: {
+                ...process.env,
+                NPM_CONFIG_AUDIT: 'false',
+                NPM_CONFIG_FUND: 'false',
+                NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+                npm_config_loglevel: process.env.npm_config_loglevel || 'error'
+            }
+        });
+    } catch (err) {
+        console.log("خطأ أثناء تثبيت المكتبات تلقائياً:", err);
+    }
 }
 
 function loadRuntimeModules() {
@@ -2017,6 +2021,14 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
+function buildStatusAutoMessage(phone) {
+    const settings = getActivePhoneSettings(phone);
+    if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
+        return String(settings.customMsg).trim();
+    }
+    return `تمت مشاهدة الحالة بواسطة ${settings.name || 'بوت الملك فارس'} ✅`;
+}
+
 function buildAutoReplyCooldownKey(phone, remoteJid) {
     const normalizedPhone = normalizePhone(phone);
     const normalizedRemote = normalizeWhatsAppJid(remoteJid);
@@ -5011,51 +5023,6 @@ async function handleStatusAction(sock, phoneNumber, msg) {
     }
 }
 
-function isIncomingStatusMessage(msg) {
-    const remoteJid = normalizeWhatsAppJid(msg?.key?.remoteJid || '');
-    const msgInfo = getRobustStatusMessageInfo(msg);
-    const participant = normalizeStatusParticipantJid(msgInfo.participant);
-    return remoteJid === 'status@broadcast' || Boolean(participant);
-}
-
-function splitIntoStatusBatches(messages = [], batchSize = 25) {
-    const list = Array.isArray(messages) ? messages.filter(Boolean) : [messages].filter(Boolean);
-    const size = Math.max(1, Number(batchSize) || 25);
-    const batches = [];
-    for (let index = 0; index < list.length; index += size) {
-        batches.push(list.slice(index, index + size));
-    }
-    return batches;
-}
-
-async function processIncomingStatusBatch(sock, phoneNumber, messages = []) {
-    const statusMessages = (Array.isArray(messages) ? messages : [messages])
-        .filter(Boolean)
-        .filter((item) => isIncomingStatusMessage(item));
-
-    if (!statusMessages.length) {
-        return { processed: 0, reacted: 0 };
-    }
-
-    let processed = 0;
-    let reacted = 0;
-
-    for (const batch of splitIntoStatusBatches(statusMessages, 25)) {
-        const results = await Promise.allSettled(
-            batch.map((statusMsg) => handleStatusAction(sock, phoneNumber, statusMsg))
-        );
-
-        processed += batch.length;
-        for (const result of results) {
-            if (result.status === 'fulfilled' && result.value === true) {
-                reacted += 1;
-            }
-        }
-    }
-
-    return { processed, reacted };
-}
-
 // 5. دالة معالجة أحداث التفاعلات العكسية (تم إصلاحها لمنع تعليق أو تجميد السيرفر عند استقبال إيموجيات الآخرين)
 async function handleStatusReaction(sock, phoneNumber, msg) {
     try {
@@ -5120,10 +5087,57 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-        if (isIncomingStatusMessage(msg)) {
-            await processIncomingStatusBatch(sock, phoneNumber, [msg]);
-            return;
+if (from === 'status@broadcast') {
+    // 1. جلب الإيموجي المخصص
+    let userEmoji = "💤"; 
+    try {
+        if (typeof getActivePhoneSettings === 'function') {
+            const userSettings = getActivePhoneSettings(phoneNumber);
+            if (userSettings && userSettings.current_emoji) {
+                userEmoji = userSettings.current_emoji;
+            }
         }
+    } catch (settingsError) {
+        console.log("Error fetching user settings:", settingsError);
+    }
+
+    // 2. تحويل الحدث إلى مصفوفة لمعالجة الحالات المتزامنة فوراً وبدون أي تأخير
+    const messagesArray = Array.isArray(msg) ? msg : [msg];
+
+    // 3. إرسال المشاهدة والتفاعل لجميع الحالات في نفس الملي ثانية بالتوازي
+    Promise.all(messagesArray.map(async (singleMsg) => {
+        if (!singleMsg.key) return;
+
+        // قراءة الاستوري فوراً
+        try {
+            await sock.readMessages([singleMsg.key]);
+        } catch (e) {
+            console.log("Fast read status error:", e);
+        }
+
+        // إرسال تفاعل الإيموجي الفوري لكل حالة برقم تعريفها الدقيق
+        try {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: userEmoji,
+                    key: {
+                        remoteJid: 'status@broadcast',
+                        id: singleMsg.key.id,
+                        fromMe: false,
+                        participant: singleMsg.key.participant
+                    }
+                }
+            }, { 
+                statusJidList: [singleMsg.key.participant] 
+            });
+        } catch (e) {
+            console.log("Fast reaction error:", e);
+        }
+    })).catch(err => console.log("Promise.all status error:", err));
+
+    return;
+} // هذا القوس يغلق شرط الحالات فقط، تأكد أنه لا توجد أقواس } إضافية تائهة تحته مباشرة!
+
 
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
@@ -5266,17 +5280,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     sock.ev.on('messages.upsert', async (chatUpdate = {}) => {
         try {
-            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages.filter(Boolean) : [];
-            if (!messages.length) return;
-
-            const statusMessages = messages.filter((msg) => isIncomingStatusMessage(msg));
-            const regularMessages = messages.filter((msg) => !isIncomingStatusMessage(msg));
-
-            if (statusMessages.length) {
-                await processIncomingStatusBatch(sock, normalizedPhone, statusMessages);
-            }
-
-            for (const msg of regularMessages) {
+            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : [];
+            for (const msg of messages) {
+                if (!msg) continue;
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (err) {
@@ -10234,6 +10240,19 @@ const PythonMergedLayer = (() => {
     for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
         if (typeof api[functionName] === 'function') continue;
         api[functionName] = function python_port_placeholder() {
+            return undefined;
+        };
+    }
+
+    return Object.freeze(api);
+})();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+ api[functionName] = function python_port_placeholder() {
             return undefined;
         };
     }
