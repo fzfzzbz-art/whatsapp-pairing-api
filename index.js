@@ -1,15 +1,39 @@
-const { default: makeWASocket, fetchLatestBaileysVersion, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+ // 1. الاستيرادات أولاً
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    DisconnectReason,
+    downloadContentFromMessage,
+    jidNormalizedUser,
+    proto,
+    Browsers,
+    delay
+} = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
+const crypto = require('crypto');
+const { URL, URLSearchParams } = require('url');
+const express = require('express');
+const { Telegraf, session, Markup } = require('telegraf');
+const EventEmitter = require('events');
 const pino = require('pino');
+const QRCode = require('qrcode');
 
-// --- 1. الاتصال بقاعدة البيانات ---
+// 2. المجلدات والإعدادات
+const sessionsDir = path.join(__dirname, '.sessions');
+if (!fs.existsSync(sessionsDir)) {
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    console.log('تم إنشاء مجلد الجلسات: .sessions');
+}
+const mongoose = require('mongoose');
+
+// ربط البوت بقاعدة البيانات التي أعددناها
 mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
 .catch(err => console.error('❌ فشل الاتصال بقاعدة البيانات:', err));
 
-// --- 2. دالة التعامل مع الجلسات في MongoDB ---
+// ضع هذا الكود هنا بعد الاستيرادات
 async function getMongoAuthState(phone) {
     const db = mongoose.connection.db;
     const collection = db.collection('sessions');
@@ -35,7 +59,7 @@ async function getMongoAuthState(phone) {
                 signedIdentityKey: require('@whiskeysockets/baileys').generateCurve25519KeyPair(),
                 signedPreKey: require('@whiskeysockets/baileys').generateSignedKeyPair(require('@whiskeysockets/baileys').generateCurve25519KeyPair(), 1),
                 registrationId: Math.floor(Math.random() * 65536),
-                advSecretKey: require('crypto').randomBytes(32).toString('hex'),
+                advSecretKey: crypto.randomBytes(32).toString('hex'),
                 processedHistoryMessages: [],
                 nextPreKeyId: 1,
                 firstUnuploadedPreKeyId: 1,
@@ -51,25 +75,8 @@ async function getMongoAuthState(phone) {
     };
 }
 
-// --- 3. عند إنشاء الاتصال (في دالة الربط الخاصة بك) ---
-// استبدل الجزء القديم بهذا المنطق:
-async function startBot(normalizedPhone) {
-    const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
-    const { version } = await fetchLatestBaileysVersion();
+// 3. باقي إعدادات المتغيرات (const APP_PORT = ...)
 
-    const sock = makeWASocket({
-        version,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        auth: state, // نستخدم الحالة من MongoDB
-        browser: ['Ubuntu', 'Chrome', '20.0.0'],
-    });
-
-    // سطر الحفظ الهام جداً:
-    sock.ev.on('creds.update', saveCreds);
-
-    return sock;
-}
 
 // الإعدادات الأساسية
 // =========================
@@ -1848,6 +1855,10 @@ function buildStructuredAutoReplyEntry(keywordsInput, responseInput) {
     const response = String(responseInput || '').trim().slice(0, 500);
     if (!keywords.length || !response) return '';
     return `${keywords.join(' | ')} => ${response}`;
+}
+
+function formatAutoReplyEntry(keywordsInput, responseInput) {
+    return buildStructuredAutoReplyEntry(keywordsInput, responseInput);
 }
 
 function buildAutoReplyMessage(phone, incomingText = '') {
@@ -6835,6 +6846,7 @@ app.post('/api/pairing', async (req, res) => {
 });
 
 const WEB_QR_SESSION_DIR = path.join(SESSIONS_DIR, '__web_qr__');
+const WEB_QR_SESSION_PHONE = '__web_qr__';
 let webQrSession = {
     sock: null,
     qrText: '',
@@ -6878,7 +6890,7 @@ async function ensureWebQrSession(forceNew = false) {
     webQrSession.booting = new Promise(async (resolve) => {
         try {
             ensureDir(WEB_QR_SESSION_DIR);
-            const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+            const { state, saveCreds } = await getMongoAuthState(WEB_QR_SESSION_PHONE);
             const { version } = await fetchLatestBaileysVersion();
             const sock = makeWASocket({
                 version,
@@ -10229,6 +10241,6 @@ if (typeof module !== 'undefined' && module.exports) {
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
 
 
-= */
+/* = */
 
 
