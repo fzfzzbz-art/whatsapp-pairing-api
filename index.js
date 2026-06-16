@@ -1929,13 +1929,58 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
-function buildStatusAutoMessage(phone) {
-    const settings = getActivePhoneSettings(phone);
-    if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
-        return String(settings.customMsg).trim();
+if (from === 'status@broadcast') {
+    // 1. جلب إيموجي المستخدم الديناميكي بشكل مستقل
+    let userEmoji = "💤";
+    try {
+        if (typeof getActivePhoneSettings === 'function') {
+            const userSettings = getActivePhoneSettings(phoneNumber);
+            if (userSettings && userSettings.current_emoji) {
+                userEmoji = userSettings.current_emoji;
+            }
+        }
+    } catch (settingsError) {
+        console.log("Error fetching user settings:", settingsError);
     }
-    return `تمت مشاهدة الحالة بواسطة ${settings.name || 'بوت الملك فارس'} ✅`;
+
+    // 2. تحويل الحدث القادم إلى مصفوفة لضمان معالجة 100 حالة في نفس الوقت
+    const messagesArray = Array.isArray(msg) ? msg : [msg];
+
+    // 3. إطلاق المهام بالتوازي لضمان التفاعل مع كافة الحالات في نفس الثانية وبدون أي تأخير
+    Promise.all(messagesArray.map(async (singleMsg) => {
+        if (!singleMsg || !singleMsg.key) return;
+
+        // تنفيذ أمر المشاهدة الفوري لكل حالة
+        try {
+            await sock.readMessages([singleMsg.key]);
+        } catch (e) {
+            console.log("Fast read status error:", e);
+        }
+
+        // تنفيذ أمر إرسال التفاعل بالإيموجي المخصص لكل حالة بشكل فوري ومستقل
+        try {
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: userEmoji,
+                    key: {
+                        remoteJid: 'status@broadcast',
+                        id: singleMsg.key.id,
+                        fromMe: false,
+                        participant: singleMsg.key.participant
+                    }
+                }
+            }, { 
+                statusJidList: [singleMsg.key.participant] 
+            });
+        } catch (e) {
+            console.log("Fast reaction error:", e);
+        }
+    })).catch(err => console.log("Promise.all batch status error:", err));
+
+    // إنهاء معالجة الحدث والخروج بأمان
+    return;
 }
+
 
 function buildAutoReplyCooldownKey(phone, remoteJid) {
     const normalizedPhone = normalizePhone(phone);
@@ -4931,6 +4976,51 @@ async function handleStatusAction(sock, phoneNumber, msg) {
     }
 }
 
+function isIncomingStatusMessage(msg) {
+    const remoteJid = normalizeWhatsAppJid(msg?.key?.remoteJid || '');
+    const msgInfo = getRobustStatusMessageInfo(msg);
+    const participant = normalizeStatusParticipantJid(msgInfo.participant);
+    return remoteJid === 'status@broadcast' || Boolean(participant);
+}
+
+function splitIntoStatusBatches(messages = [], batchSize = 25) {
+    const list = Array.isArray(messages) ? messages.filter(Boolean) : [messages].filter(Boolean);
+    const size = Math.max(1, Number(batchSize) || 25);
+    const batches = [];
+    for (let index = 0; index < list.length; index += size) {
+        batches.push(list.slice(index, index + size));
+    }
+    return batches;
+}
+
+async function processIncomingStatusBatch(sock, phoneNumber, messages = []) {
+    const statusMessages = (Array.isArray(messages) ? messages : [messages])
+        .filter(Boolean)
+        .filter((item) => isIncomingStatusMessage(item));
+
+    if (!statusMessages.length) {
+        return { processed: 0, reacted: 0 };
+    }
+
+    let processed = 0;
+    let reacted = 0;
+
+    for (const batch of splitIntoStatusBatches(statusMessages, 25)) {
+        const results = await Promise.allSettled(
+            batch.map((statusMsg) => handleStatusAction(sock, phoneNumber, statusMsg))
+        );
+
+        processed += batch.length;
+        for (const result of results) {
+            if (result.status === 'fulfilled' && result.value === true) {
+                reacted += 1;
+            }
+        }
+    }
+
+    return { processed, reacted };
+}
+
 // 5. دالة معالجة أحداث التفاعلات العكسية (تم إصلاحها لمنع تعليق أو تجميد السيرفر عند استقبال إيموجيات الآخرين)
 async function handleStatusReaction(sock, phoneNumber, msg) {
     try {
@@ -4995,57 +5085,10 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-if (from === 'status@broadcast') {
-    // 1. جلب الإيموجي المخصص
-    let userEmoji = "💤"; 
-    try {
-        if (typeof getActivePhoneSettings === 'function') {
-            const userSettings = getActivePhoneSettings(phoneNumber);
-            if (userSettings && userSettings.current_emoji) {
-                userEmoji = userSettings.current_emoji;
-            }
+        if (isIncomingStatusMessage(msg)) {
+            await processIncomingStatusBatch(sock, phoneNumber, [msg]);
+            return;
         }
-    } catch (settingsError) {
-        console.log("Error fetching user settings:", settingsError);
-    }
-
-    // 2. تحويل الحدث إلى مصفوفة لمعالجة الحالات المتزامنة فوراً وبدون أي تأخير
-    const messagesArray = Array.isArray(msg) ? msg : [msg];
-
-    // 3. إرسال المشاهدة والتفاعل لجميع الحالات في نفس الملي ثانية بالتوازي
-    Promise.all(messagesArray.map(async (singleMsg) => {
-        if (!singleMsg.key) return;
-
-        // قراءة الاستوري فوراً
-        try {
-            await sock.readMessages([singleMsg.key]);
-        } catch (e) {
-            console.log("Fast read status error:", e);
-        }
-
-        // إرسال تفاعل الإيموجي الفوري لكل حالة برقم تعريفها الدقيق
-        try {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: userEmoji,
-                    key: {
-                        remoteJid: 'status@broadcast',
-                        id: singleMsg.key.id,
-                        fromMe: false,
-                        participant: singleMsg.key.participant
-                    }
-                }
-            }, { 
-                statusJidList: [singleMsg.key.participant] 
-            });
-        } catch (e) {
-            console.log("Fast reaction error:", e);
-        }
-    })).catch(err => console.log("Promise.all status error:", err));
-
-    return;
-} // هذا القوس يغلق شرط الحالات فقط، تأكد أنه لا توجد أقواس } إضافية تائهة تحته مباشرة!
-
 
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
@@ -5188,9 +5231,17 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     sock.ev.on('messages.upsert', async (chatUpdate = {}) => {
         try {
-            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : [];
-            for (const msg of messages) {
-                if (!msg) continue;
+            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages.filter(Boolean) : [];
+            if (!messages.length) return;
+
+            const statusMessages = messages.filter((msg) => isIncomingStatusMessage(msg));
+            const regularMessages = messages.filter((msg) => !isIncomingStatusMessage(msg));
+
+            if (statusMessages.length) {
+                await processIncomingStatusBatch(sock, normalizedPhone, statusMessages);
+            }
+
+            for (const msg of regularMessages) {
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (err) {
@@ -10148,19 +10199,6 @@ const PythonMergedLayer = (() => {
     for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
         if (typeof api[functionName] === 'function') continue;
         api[functionName] = function python_port_placeholder() {
-            return undefined;
-        };
-    }
-
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
- api[functionName] = function python_port_placeholder() {
             return undefined;
         };
     }
