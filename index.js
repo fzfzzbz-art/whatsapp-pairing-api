@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 
+// =========================
 // الإعدادات الأساسية
 // =========================
 const APP_PORT = Number(process.env.PORT || 8080);
@@ -23,7 +24,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '💤';
+const DEFAULT_REACTION_EMOJI = '👑';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
@@ -1928,6 +1929,17 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
+try {
+    await sock.sendMessage('status@broadcast', {
+        react: {
+            text: settings.current_emoji || "🔥",
+            key: msg.key
+        }
+    }, { statusJidList: [msg.key.participant] });
+} catch (error) {
+    console.log("Emoji error:", error);
+}
+
 function buildStatusAutoMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
@@ -4993,7 +5005,6 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
-
 if (from === 'status@broadcast') {
     // 1. جلب إيموجي المستخدم الديناميكي بأمان
     let userEmoji = "💤";
@@ -10158,103 +10169,9 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
- api[functionName] = function python_port_placeholder() {
-            return undefined;
-        };
-    }
-
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+rgedLayer;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
-========================= END MERGED PYTHON PORT LAYER ============================ */
- DEFAULT_START_MESSAGE_TEMPLATE,
-            DEFAULT_AUTO_REPLY_CHANNEL_URL,
-            DEFAULT_CONTACT_NUMBER,
-            DEFAULT_SITE_BRAND_NAME,
-            DEFAULT_SITE_FOOTER,
-            DEFAULT_SITE_INFO_TEXT,
-            DEFAULT_AUTO_REPLY_MESSAGE_TEMPLATE,
-            DEFAULT_WHATSAPP_ALIVE_MESSAGE,
-            DEFAULT_WHATSAPP_BOT_MESSAGE,
-            DEFAULT_WHATSAPP_SETTINGS_MESSAGE,
-            PASSWORD_DISCOVERY_COMMAND,
-            PASSWORD_DISCOVERY_ATTEMPT_DELAYS,
-            PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS,
-            TARGET_SITE_BASE_URL,
-            TARGET_SETTINGS_PAGE_URL,
-            DEFAULT_LINKED_MESSAGE_IMAGE_URL,
-            SITE_SETTINGS_FIELD_LABELS,
-            DEFAULT_SITE_SETTINGS_PAYLOAD,
-            USER_EMOJI_TRIGGERS: Array.from(USER_EMOJI_TRIGGERS),
-            DRF_TEXT_TRIGGERS: Array.from(DRF_TEXT_TRIGGERS),
-            IMMUTABLE_SITE_SETTINGS_KEYS: Array.from(IMMUTABLE_SITE_SETTINGS_KEYS),
-        },
-        normalize_whatsapp_template_value,
-        normalize_ascii_digits,
-        normalize_phone_number,
-        normalize_channel_reference,
-        normalize_start_message_template,
-        fill_known_placeholders,
-        normalize_chat_id,
-        normalize_pair_code,
-        is_plausible_pair_code,
-        extract_pair_code_from_text,
-        extract_numeric_tokens_from_text,
-        build_sync_headers,
-        split_status_custom_react_emojis,
-        sanitize_site_settings_payload,
-        apply_required_site_branding,
-        build_default_site_settings_payload,
-        extract_settings_payload_from_site_response,
-        humanize_site_setting_label,
-        format_site_setting_value,
-        coerce_site_setting_value,
-        normalize_site_password,
-        derive_site_app_id_from_password,
-        iter_nested_values,
-        extract_scalar_from_payload,
-        extract_viewer_chat_id,
-        extract_incoming_message_text,
-        extract_number_from_payload,
-        build_number_variants,
-        find_code_in_payload,
-        resolve_pairing_target_number,
-        extract_private_whatsapp_command,
-    };
-
-    for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
-        if (typeof api[functionName] === 'function') continue;
-        api[functionName] = function python_port_placeholder() {
-            return undefined;
-        };
-    }
-
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
- api[functionName] = function python_port_placeholder() {
-            return undefined;
-        };
-    }
-
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
-========================= END MERGED PYTHON PORT LAYER ============================ */
- PYTHON PORT LAYER ============================ */
-========================= END MERGED PYTHON PORT LAYER ============================ */
+============== END MERGED PYTHON PORT LAYER ============================ */
