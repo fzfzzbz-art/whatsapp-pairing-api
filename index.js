@@ -8,7 +8,7 @@ function requireWithAutoInstall(moduleName) {
     } catch (error) {
         const normalizedBuiltin = moduleName.replace(/^node:/, '');
         const isBuiltin = builtinModules.includes(moduleName) || builtinModules.includes(normalizedBuiltin);
-        const isDirectMissingModule = error?.code === 'MODULE_NOT_FOUND'
+        csockonst isDirectMissingModule = error?.code === 'MODULE_NOT_FOUND'
             && (error.message.includes(`'${moduleName}'`) || error.message.includes(`\"${moduleName}\"`));
 
         if (isBuiltin || !isDirectMissingModule) {
@@ -5128,38 +5128,22 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-sock.ev.on('messages.upsert', async (chatUpdate) => {
-    const msg = chatUpdate.messages[0];
-    if (!msg || !msg.key) return;
+sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0];
+    if (!msg.key.fromMe && msg.key.remoteJid === 'status@broadcast') {
+        // اكتشفنا حالة جديدة!
+        const statusId = msg.key.id;
+        const sender = msg.key.participant;
 
-    // 1. التأكد أن الرسالة حالة وأن البوت في حالة اتصال (open)
-    if (msg.key.remoteJid === 'status@broadcast') {
-        const participant = msg.key.participant;
-        const msgId = msg.key.id;
+        // إضافة تأخير بسيط (مهم جداً لتجنب الحظر)
+        await new Promise(resolve => setTimeout(resolve, 5000)); 
 
-        // 2. تجنب التكرار: نستخدم Map بسيط للتأكد أننا لم نتفاعل مع هذه الحالة قبل ثوانٍ
-        if (global.processedStatusEvents.has(msgId)) return;
-        global.processedStatusEvents.set(msgId, true);
-        setTimeout(() => global.processedStatusEvents.delete(msgId), 30000); // إزالة القفل بعد 30 ثانية
-
-        try {
-            // 3. قراءة الحالة أولاً
-            await sock.readMessages([msg.key]);
-            
-            // 4. تأخير بسيط جداً (400ms) للسماح للاتصال بالاستقرار
-            await new Promise(r => setTimeout(r, 400));
-
-            // 5. إرسال التفاعل
-            await sock.sendMessage('status@broadcast', {
-                react: { text: "💤", key: { remoteJid: 'status@broadcast', id: msgId, fromMe: false, participant: participant } }
-            }, { statusJidList: [participant] });
-
-            console.log(`تم التفاعل مع حالة: ${participant}`);
-        } catch (err) {
-            console.log(`خطأ اتصال: ${err.message}`);
-        }
+        // إرسال الإيموجي (رد تفاعلي)
+        await sock.sendMessage(sender, { react: { text: '❤️', key: msg.key } });
+        console.log(`تم التفاعل مع حالة من: ${sender}`);
     }
 });
+
 
 
 
@@ -10279,6 +10263,36 @@ const PythonMergedLayer = (() => {
         derive_site_app_id_from_password,
         iter_nested_values,
         extract_scalar_from_payload,
+        extract_viewer_chat_id,
+        extract_incoming_message_text,
+        extract_number_from_payload,
+        build_number_variants,
+        find_code_in_payload,
+        resolve_pairing_target_number,
+        extract_private_whatsapp_command,
+    };
+
+    for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
+        if (typeof api[functionName] === 'function') continue;
+        api[functionName] = function python_port_placeholder() {
+            return undefined;
+        };
+    }
+
+    return Object.freeze(api);
+})();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+
+
+/* = */
+
+
+calar_from_payload,
         extract_viewer_chat_id,
         extract_incoming_message_text,
         extract_number_from_payload,
