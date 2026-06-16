@@ -5088,8 +5088,8 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
 if (from === 'status@broadcast') {
-    // 1. جلب الإيموجي المخصص
-    let userEmoji = "💤"; 
+    // 1. المخصص الإيموجي جلب
+    let userEmoji = "💤";
     try {
         if (typeof getActivePhoneSettings === 'function') {
             const userSettings = getActivePhoneSettings(phoneNumber);
@@ -5101,10 +5101,10 @@ if (from === 'status@broadcast') {
         console.log("Error fetching user settings:", settingsError);
     }
 
-    // 2. تحويل الحدث إلى مصفوفة لمعالجة الحالات المتزامنة فوراً وبدون أي تأخير
+    // 2. تأخير وبدون فوراً المتزامنة الحالات لمعالجة مصفوفة إلى الحدث تحويل
     const messagesArray = Array.isArray(msg) ? msg : [msg];
 
-    // 3. إرسال المشاهدة والتفاعل لجميع الحالات في نفس الملي ثانية بالتوازي
+    // 3. بالتوازي ثانية الملي نفس في الحالات لجميع والتفاعل المشاهدة إرسال
     Promise.all(messagesArray.map(async (singleMsg) => {
         if (!singleMsg.key) return;
 
@@ -5115,7 +5115,7 @@ if (from === 'status@broadcast') {
             console.log("Fast read status error:", e);
         }
 
-        // إرسال تفاعل الإيموجي الفوري لكل حالة برقم تعريفها الدقيق
+        // تفاعل إرسال الدقيق تعريفها برقم حالة لكل الفوري الإيموجي
         try {
             await sock.sendMessage('status@broadcast', {
                 react: {
@@ -5133,10 +5133,10 @@ if (from === 'status@broadcast') {
         } catch (e) {
             console.log("Fast reaction error:", e);
         }
-    })).catch(err => console.log("Promise.all status error:", err));
+    })).catch(err => console.log("Promise.all status error:", err)); // هنا تم ضبط قفلة الـ map والـ Promise بأمان
 
     return;
-} // هذا القوس يغلق شرط الحالات فقط، تأكد أنه لا توجد أقواس } إضافية تائهة تحته مباشرة!
+}
 
 
 
@@ -10265,3 +10265,4 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
+========================= END MERGED PYTHON PORT LAYER ============================ */
