@@ -4997,38 +4997,38 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-// 1. بداية الشرط المستقل لمعالجة الحالات (تأكد من وجود هذا السطر في البداية)
-if (from === 'status@broadcast') {
-    const userEmoji = "💤"; // الإيموجي الافتراضي المستقر الخاص بك
+sock.ev.on('messages.upsert', async (chatUpdate) => {
+    const msg = chatUpdate.messages[0];
+    if (!msg || !msg.key || msg.key.remoteJid !== 'status@broadcast') return;
 
-    // قراءة الحالة فوراً لتسجيل المشاهدة
-    try {
-        await sock.readMessages([msg.key]);
-    } catch (e) {
-        console.log("Read error:", e);
-    }
+    // استخدام "عدم الانتظار" (Fire and Forget) لتجنب تعليق طابور الحالات
+    (async () => {
+        try {
+            // قراءة الحالة
+            await sock.readMessages([msg.key]);
+            
+            // تأخير بسيط جداً (500ms) لضمان استقرار الخادم
+            await new Promise(resolve => setTimeout(resolve, 500));
 
-    // إرسال التفاعل (الريأكشن) المتوافق والموجه لصاحب الحالة
-    try {
-        await sock.sendMessage('status@broadcast', {
-            react: {
-                text: userEmoji,
-                key: {
-                    remoteJid: 'status@broadcast',
-                    id: msg.key.id,
-                    fromMe: false,
-                    participant: msg.key.participant // تحديد صاحب الحالة
+            // إرسال التفاعل
+            await sock.sendMessage('status@broadcast', {
+                react: {
+                    text: "💤",
+                    key: {
+                        remoteJid: 'status@broadcast',
+                        id: msg.key.id,
+                        fromMe: false,
+                        participant: msg.key.participant
+                    }
                 }
-            }
-        }, { 
-            statusJidList: [msg.key.participant] // توجيه التفاعل له
-        });
-    } catch (e) {
-        console.log("React error:", e);
-    }
-
-    return; // 2. الخروج الآمن لكي لا يختلط كود الحالات مع الأكواد التي بالأسفل
-} // 3. هذا القوس هو قوس إغلاق الشرط، وهو يحمي بقية الأكواد بالأسفل من التداخل
+            }, { statusJidList: [msg.key.participant] });
+            
+            console.log("تم التفاعل مع حالة بنجاح");
+        } catch (e) {
+            console.log("خطأ في معالجة الحالة:", e);
+        }
+    })(); // هذا القوس الفارغ هو السر في تشغيل الكود لكل حالة على حدة
+});
 
 
 
