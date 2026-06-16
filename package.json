@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@whiskeysockets/baileys": "latest",
-    "express": "4.22.2",
+    "express": "4.2.2",
     "pino": "10.3.1",
     "telegraf": "4.16.3"
   }
