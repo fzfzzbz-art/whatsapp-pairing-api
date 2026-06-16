@@ -1,21 +1,45 @@
- // 1. الاستيرادات أولاً
-const { default: makeWASocket, useMultiFileAuthState, ... } = require('@whiskeysockets/baileys');
+// 1. الاستيرادات (Imports)
+const { default: makeWASocket, ... } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
-// ... بقية الاستيرادات (telegraf, express, إلخ)
-
-// 2. المجلدات والإعدادات
-const sessionsDir = path.join(__dirname, '.sessions');
-if (!fs.existsSync(sessionsDir)) {
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    console.log('تم إنشاء مجلد الجلسات: .sessions');
-}
 const mongoose = require('mongoose');
 
-// ربط البوت بقاعدة البيانات التي أعددناها
+// 2. دالة الاتصال بقاعدة البيانات (التي أضفتها)
+async function getMongoAuthState(phone) {
+    const db = mongoose.connection.db;
+    const collection = db.collection('sessions');
+
+    const saveCreds = async (creds) => {
+        await collection.updateOne(
+            { _id: phone },
+            { $set: { creds } },
+            { upsert: true }
+        );
+    };
+
+    const getCreds = async () => {
+        const doc = await collection.findOne({ _id: phone });
+        return doc ? doc.creds : null;
+    };
+
+    const savedCreds = await getCreds();
+    return {
+        state: {
+            creds: savedCreds || {
+                // ... (محتويات الـ creds التي أضفتها)
+            },
+            keys: {}
+        },
+        saveCreds
+    };
+} // تأكد من وجود هذا القوس لإغلاق الدالة
+
+// 3. الاتصال بـ MongoDB
 mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
-.catch(err => console.error('❌ فشل الاتصال بقاعدة البيانات:', err));
+.catch(err => console.error('❌ فشل الاتصال:', err));
+
+// 4. باقي الكود (المتغيرات والدوال الأخرى...)
 
 // ضع هذا الكود هنا بعد الاستيرادات
 async function getMongoAuthState(phone) {
