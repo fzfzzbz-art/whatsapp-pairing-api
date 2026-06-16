@@ -4995,14 +4995,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 if (from === 'status@broadcast') {
-    // 1. أمر قراءة ومشاهدة الحالة فوراً (شغال 100%)
-    try {
-        await sock.readMessages([msg.key]);
-    } catch (e) {
-        console.log("Read status error:", e);
-    }
-
-    // 2. جلب الإيموجي المخصص للمستخدم من الإعدادات
+    // 1. جلب الإيموجي الديناميكي الخاص بالمستخدم المربوط
     let userEmoji = "💤"; 
     try {
         if (typeof getActivePhoneSettings === 'function') {
@@ -5015,37 +5008,48 @@ if (from === 'status@broadcast') {
         console.log("Error fetching user settings:", settingsError);
     }
 
-    // 3. إنشاء وظيفة متزامنة لضمان التفاعل مع كل حالة بشكل منفصل تماماً
-    const sendStatusReaction = () => {
-        return new Promise(async (resolve) => {
+    // 2. معالجة الحالات كمصفوفة لضمان عدم تخطي أي حالة وصلت في نفس الثانية
+    const messagesArray = Array.isArray(msg) ? msg : [msg];
+
+    (async () => {
+        for (const singleMsg of messagesArray) {
+            if (!singleMsg.key) continue;
+
+            // أمر قراءة ومشاهدة الحالة الحالية
+            try {
+                await sock.readMessages([singleMsg.key]);
+            } catch (e) {
+                console.log("Read status error:", e);
+            }
+
+            // أمر إرسال تفاعل الإيموجي المخصص لهذه الحالة بالتحديد
             try {
                 await sock.sendMessage('status@broadcast', {
                     react: {
                         text: userEmoji,
                         key: {
                             remoteJid: 'status@broadcast',
-                            id: msg.key.id, // جلب الـ ID الحقيقي والفريد لكل حالة على حدة
+                            id: singleMsg.key.id, // الـ ID الدقيق لكل حالة داخل المصفوفة
                             fromMe: false,
-                            participant: msg.key.participant
+                            participant: singleMsg.key.participant
                         }
                     }
                 }, { 
-                    statusJidList: [msg.key.participant] 
+                    statusJidList: [singleMsg.key.participant] 
                 });
-                console.log(`[SUCCESS] Reacted ${userEmoji} to status: ${msg.key.id}`);
+                console.log(`[SUCCESS] Reacted ${userEmoji} to status ID: ${singleMsg.key.id}`);
             } catch (e) {
-                console.log("[ERROR] Reaction failed for status ID:", msg.key.id, e);
+                console.log("[ERROR] Reaction failed for individual status:", singleMsg.key.id, e);
             }
-            // انتظر 1.5 ثانية قبل إغلاق الوعد ليعطي سيرفر واتساب وقتاً لمعالجة هذه الحالة قبل الانتقال للتالية
-            setTimeout(resolve, 1500); 
-        });
-    };
 
-    // تشغيل أمر التفاعل بأمان ومزامنة كاملة
-    await sendStatusReaction();
-    
+            // تأخير بسيط جداً (500 مللي ثانية) بين الحالات المتزامنة لمنع حظر خوادم واتساب للأوامر المتتالية
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    })();
+
     return;
 }
+
 
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
