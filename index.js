@@ -21,19 +21,14 @@ const { EventEmitter } = require('events');
 const APP_PORT = Number(process.env.PORT || 8080);
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
-const DEFAULT_REACTION_EMOJI = '❤️';
+if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
+// تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
+const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
+const DEFAULT_REACTION_EMOJI = '👑';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
-const BRAND_NAME = 'بوت الملك فارس';
-const BRAND_IMAGE_TEXT = 'بوت الملك فارس';
-const DEFAULT_BOT_LINK = 'https://t.me/Faresw_bot';
-const DEVELOPER_DISPLAY_NAME = '◥ ツفارس ツ ◤ ⁪⁬⁮⁮⁮ ⁪⁬⁮⁮⁮';
-const DEVELOPER_USERNAME = 'P_n_ij';
-const DEVELOPER_PROFILE_LINK = 'https://t.me/P_n_ij';
-const DEVELOPER_CHANNEL_NAME = 'تحديثات بوت الواتس';
-const DEVELOPER_CHANNEL_LINK = 'https://t.me/fz_z_Z';
-const DEVELOPER_WHATSAPP_NUMBER = '967784355543';
-const DEVELOPER_WHATSAPP_LINK = `https://wa.me/${DEVELOPER_WHATSAPP_NUMBER}`;
-const SETTINGS_IMAGE_URL = 'https://www.genspark.ai/api/files/s/CLggRDjS';
+const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
+const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
+const DEFAULT_BOT_LINK = String(process.env.PUBLIC_TELEGRAM_BOT_LINK || process.env.TELEGRAM_BOT_LINK || 'https://t.me/Swtory_Bot').trim() || 'https://t.me/Swtory_Bot';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v';
 const DAILY_GIFT_POINTS = 300;
 const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -41,14 +36,15 @@ const POINTS_PER_LIKE_PACKAGE = 30;
 const LIKES_PER_POINTS_PACKAGE = 500;
 const MAX_AUTO_REPLIES = 10;
 const MAX_GLOBAL_AUTO_REPLIES = 50;
-const MAX_WA_ABOUT_LENGTH = 139;
-const PROFILE_CUSTOM_MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
+const WEB_SETTINGS_SESSION_TTL_MS = Number(process.env.WEB_SETTINGS_SESSION_TTL_MS || 12 * 60 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = 'https://whatsapp-pairing-api-production.up.railway.app';
-const DEFAULT_PUBLIC_BASE_URL = process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL;
-const DEFAULT_SITE_INFO_TEXT = `📢 قناتنا: https://t.me/fz_z_Z
-💬 تواصل مع المطور: https://wa.me/967784355543`;
+const DEPLOYMENT_BASE_URL = String(process.env.PUBLIC_BASE_URL || process.env.WEB_PANEL_URL || process.env.APP_URL || process.env.DEFAULT_PUBLIC_BASE_URL || `http://localhost:${APP_PORT}`).trim().replace(/\/+$/, '');
+const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
+const DEFAULT_PAIRING_LINK = String(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
+const DEFAULT_CONTACTSAVE_LINK = String(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_LINK || `${DEPLOYMENT_BASE_URL}/contactsave`).trim().replace(/\/+$/, '');
+const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${WHATSAPP_CHANNEL_LINK}
+📞 رقم التواصل: 967784355543`;
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
     target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
@@ -75,10 +71,8 @@ const SITE_SETTINGS_FIELD_LABELS = {
     alwaysOnline: 'دائمًا أونلاين',
     autoStatusRead: 'مشاهدة الحالة تلقائيًا',
     autoStatusReact: 'التفاعل مع الحالة تلقائيًا',
-    statusReactionNotice: 'إظهار التفاعل لصاحب الرقم',
     keepDeletedStatus: 'حفظ الحالة عند حذفها',
     ghostMode: 'تفعيل الشبح',
-    autoPrivateReact: 'التفاعل التلقائي للخاص',
     autoRead: 'قراءة تلقائية',
     autoBlock: 'حظر تلقائي',
     autoReact: 'تفاعل تلقائي',
@@ -102,19 +96,7 @@ const SITE_SETTINGS_FIELD_LABELS = {
     gaCloseTime: 'وقت الإغلاق',
     gaOpenTime: 'وقت الفتح',
     customAutoReplies: 'الردود التلقائية المخصصة',
-    autoSave: 'الحفظ التلقائي',
-    language: 'اللغة',
-    antiViewOnce: 'منع العرض لمرة واحدة',
-    antiLinkList: 'الروابط المحظورة',
-    antiBadWords: 'الكلمات المحظورة',
-    antiMention: 'منع المنشن',
-    antiEdit: 'منع تعديل الرسائل',
-    antiAction: 'إجراء الحماية',
-    antiWarnCount: 'عدد التحذيرات',
-    autoReactScope: 'نطاق التفاعل التلقائي',
-    aiReplyScope: 'نطاق الرد الذكي',
-    aliveMsg: 'رسالة alive',
-    voiceFooter: 'رابط الفوتر الصوتي'
+    autoSave: 'الحفظ التلقائي'
 };
 const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     name: 'fares',
@@ -130,11 +112,9 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     alwaysOnline: 'off',
     autoStatusRead: 'on',
     autoStatusReact: 'on',
-    statusReactionNotice: 'on',
-    keepDeletedStatus: 'off',
+    keepDeletedStatus: 'on',
     ghostMode: 'off',
     autoRead: 'off',
-    autoPrivateReact: 'off',
     autoBlock: 'off',
     autoReact: 'off',
     autoVoice: 'off',
@@ -152,84 +132,19 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     gaTimezone: 'Asia/Colombo',
     gaCloseTime: '15:00',
     gaOpenTime: '05:00',
-    menu: SETTINGS_IMAGE_URL,
-    alive: SETTINGS_IMAGE_URL,
-    owner: SETTINGS_IMAGE_URL,
+    menu: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
+    alive: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
+    owner: 'https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg',
     statusCustomReact: '❤️',
     antiBug: 'off',
     antiBot: 'off',
-    antiBotAction: 'delete',
-    language: 'arabic',
-    antiViewOnce: 'off',
-    antiLinkList: 'wa.me,whatsapp.com',
-    antiBadWords: 'huththa,ponna',
-    antiMention: 'off',
-    antiEdit: 'inbox',
-    antiAction: 'wern',
-    antiWarnCount: '3',
-    autoReactScope: 'inbox',
-    aiReplyScope: 'inbox',
-    aliveMsg: '❖ *alive now*',
-    voiceFooter: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/AUD-20251229-WA0034.mp3'
+    antiBotAction: 'delete'
 };
 const DEFAULT_PHONE_SETTINGS = {
     ...DEFAULT_SITE_SETTINGS_PAYLOAD,
     customAutoReplies: '',
-    autoSave: 'off'
+    autoSave: 'on'
 };
-const IMPORTED_REDQUEEN_PHONE = '966597127141';
-const IMPORTED_REDQUEEN_PASSWORD = 'D4PRHM45';
-const IMPORTED_REDQUEEN_PHONE_SETTINGS = {
-    ...DEFAULT_PHONE_SETTINGS,
-    name: 'MONEY HEIST MD',
-    ownername: 'MONEY HEIST MD',
-    ownerNumber: IMPORTED_REDQUEEN_PHONE,
-    from: 'SRI LANKA',
-    age: '24',
-    prefix: '*',
-    footer2: 'MONEY HEIST MD',
-    description: 'Imported from Red Queen mini bot settings',
-    mode: 'public',
-    alwaysOnline: 'off',
-    antiCall: 'off',
-    antiDelete: 'inbox',
-    sendDeleteTo: 'owner',
-    antiLink: 'off',
-    antiBad: 'off',
-    antiBot: 'off',
-    autoStatusRead: 'on',
-    autoStatusReact: 'on',
-    statusReactionNotice: 'on',
-    autoPrivateReact: 'off',
-    keepDeletedStatus: 'off',
-    statusCustomReact: '❤️',
-    menu: SETTINGS_IMAGE_URL,
-    alive: SETTINGS_IMAGE_URL,
-    owner: SETTINGS_IMAGE_URL,
-    language: 'arabic',
-    antiViewOnce: 'off',
-    antiLinkList: 'wa.me,whatsapp.com',
-    antiBadWords: 'huththa,ponna',
-    antiMention: 'off',
-    antiEdit: 'inbox',
-    antiAction: 'wern',
-    antiWarnCount: '3',
-    autoReactScope: 'inbox',
-    aiReplyScope: 'inbox',
-    aliveMsg: '❖ *alive now money heist md*',
-    voiceFooter: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/AUD-20251229-WA0034.mp3'
-};
-
-function getImportedPhoneSettingsSeed(phone) {
-    return normalizePhone(phone) === IMPORTED_REDQUEEN_PHONE
-        ? JSON.parse(JSON.stringify(IMPORTED_REDQUEEN_PHONE_SETTINGS))
-        : null;
-}
-
-function getImportedPhoneSettingsPassword(phone) {
-    return normalizePhone(phone) === IMPORTED_REDQUEEN_PHONE ? IMPORTED_REDQUEEN_PASSWORD : '';
-}
-
 const PHONE_SETTINGS_SECTIONS = [
     {
         key: 'general',
@@ -239,7 +154,7 @@ const PHONE_SETTINGS_SECTIONS = [
     {
         key: 'automation',
         label: 'الحالة والخيارات التلقائية',
-        fields: ['autoStatusRead', 'autoStatusReact', 'statusReactionNotice', 'autoPrivateReact', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact']
+        fields: ['autoStatusRead', 'autoStatusReact', 'keepDeletedStatus', 'ghostMode', 'alwaysOnline', 'autoRecording', 'autoTyping', 'autoRead', 'statusMsgSend', 'statusMsgType', 'customMsg', 'statusCustomReact', 'autoSave']
     },
     {
         key: 'protection',
@@ -255,16 +170,11 @@ const PHONE_SETTINGS_SECTIONS = [
         key: 'group',
         label: 'الجروب والمتقدم',
         fields: ['gaGroupJid', 'gaTimezone', 'gaOpenTime', 'gaCloseTime']
-    },
-    {
-        key: 'redqueen',
-        label: 'إعدادات Red Queen',
-        fields: ['language', 'antiViewOnce', 'antiLinkList', 'antiBadWords', 'antiMention', 'antiEdit', 'antiAction', 'antiWarnCount', 'autoReactScope', 'aiReplyScope', 'aliveMsg', 'voiceFooter']
     }
 ];
 const PHONE_SETTINGS_TOGGLE_FIELDS = new Set([
     'antiBad', 'antiLink', 'autoRecording', 'autoTyping', 'alwaysOnline', 'autoStatusRead', 'autoStatusReact',
-    'statusReactionNotice', 'autoPrivateReact', 'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'antiMention'
+    'keepDeletedStatus', 'ghostMode', 'autoRead', 'autoBlock', 'autoVoice', 'antiCall', 'statusMsgSend', 'antiBug', 'antiBot', 'autoSave'
 ]);
 const PHONE_SETTINGS_SELECT_OPTIONS = {
     mode: [
@@ -291,38 +201,6 @@ const PHONE_SETTINGS_SELECT_OPTIONS = {
     antiBotAction: [
         { value: 'delete', label: 'حذف الرسائل' },
         { value: 'delete+kick', label: 'حذف + طرد' }
-    ],
-    language: [
-        { value: 'english', label: 'English' },
-        { value: 'sinhala', label: 'Sinhala' },
-        { value: 'arabic', label: 'العربية' }
-    ],
-    antiViewOnce: [
-        { value: 'off', label: 'إيقاف' },
-        { value: 'all', label: 'الكل' }
-    ],
-    antiEdit: [
-        { value: 'off', label: 'إيقاف' },
-        { value: 'inbox', label: 'الخاص' },
-        { value: 'group', label: 'المجموعات' },
-        { value: 'all', label: 'الكل' }
-    ],
-    antiAction: [
-        { value: 'delete', label: 'حذف' },
-        { value: 'wern', label: 'تحذير' },
-        { value: 'kick', label: 'طرد' }
-    ],
-    autoReactScope: [
-        { value: 'off', label: 'إيقاف' },
-        { value: 'all', label: 'الكل' },
-        { value: 'group', label: 'المجموعات' },
-        { value: 'inbox', label: 'الخاص' }
-    ],
-    aiReplyScope: [
-        { value: 'off', label: 'إيقاف' },
-        { value: 'all', label: 'الكل' },
-        { value: 'group', label: 'المجموعات' },
-        { value: 'inbox', label: 'الخاص' }
     ]
 };
 const PHONE_SETTINGS_EDIT_HINTS = {
@@ -343,20 +221,662 @@ const PHONE_SETTINGS_EDIT_HINTS = {
     gaGroupJid: 'أرسل معرف الجروب.',
     gaTimezone: 'أرسل المنطقة الزمنية مثل Asia/Aden أو Asia/Riyadh.',
     gaOpenTime: 'أرسل وقت الفتح بصيغة HH:MM',
-    gaCloseTime: 'أرسل وقت الإغلاق بصيغة HH:MM',
-    antiLinkList: 'أرسل الروابط أو الدومينات المحظورة مفصولة بفواصل.',
-    antiBadWords: 'أرسل الكلمات المحظورة مفصولة بفواصل أو أسطر.',
-    antiWarnCount: 'أرسل عدد التحذيرات قبل تنفيذ الإجراء.',
-    aliveMsg: 'أرسل رسالة alive الجديدة.',
-    voiceFooter: 'أرسل رابط الملف الصوتي المباشر (MP3) للفوتر.',
-    language: 'اختر اللغة من القائمة.',
-    antiViewOnce: 'اختر نمط منع العرض لمرة واحدة من القائمة.',
-    antiEdit: 'اختر نمط منع التعديل من القائمة.',
-    antiAction: 'اختر الإجراء المناسب من القائمة.',
-    autoReactScope: 'اختر نطاق التفاعل التلقائي من القائمة.',
-    aiReplyScope: 'اختر نطاق الرد الذكي من القائمة.'
+    gaCloseTime: 'أرسل وقت الإغلاق بصيغة HH:MM'
 };
-const SETTINGS_PAGE_HTML = Buffer.from('PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImVuIj4KPGhlYWQ+CiAgPG1ldGEgY2hhcnNldD0iVVRGLTgiIC8+CiAgPG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xLjAiIC8+CiAgPHRpdGxlPtio2YjYqiDYp9mE2YXZhNmDINmB2KfYsdizIOKAlCDZhNmI2K3YqSDYp9mE2KXYudiv2KfYr9in2Ko8L3RpdGxlPgogIDxsaW5rIHJlbD0icHJlY29ubmVjdCIgaHJlZj0iaHR0cHM6Ly9mb250cy5nb29nbGVhcGlzLmNvbSIgLz4KICA8bGluayByZWw9InByZWNvbm5lY3QiIGhyZWY9Imh0dHBzOi8vZm9udHMuZ3N0YXRpYy5jb20iIGNyb3Nzb3JpZ2luIC8+CiAgPGxpbmsgaHJlZj0iaHR0cHM6Ly9mb250cy5nb29nbGVhcGlzLmNvbS9jc3MyP2ZhbWlseT1TeW5lOndnaHRANDAwOzYwMDs3MDA7ODAwJmZhbWlseT1ETStTYW5zOndnaHRAMzAwOzQwMDs1MDAmZmFtaWx5PUpldEJyYWlucytNb25vOndnaHRANDAwOzYwMCZkaXNwbGF5PXN3YXAiIHJlbD0ic3R5bGVzaGVldCIgLz4KICA8c2NyaXB0IHNyYz0iaHR0cHM6Ly91bnBrZy5jb20vcmVhY3RAMTgvdW1kL3JlYWN0LnByb2R1Y3Rpb24ubWluLmpzIj48L3NjcmlwdD4KICA8c2NyaXB0IHNyYz0iaHR0cHM6Ly91bnBrZy5jb20vcmVhY3QtZG9tQDE4L3VtZC9yZWFjdC1kb20ucHJvZHVjdGlvbi5taW4uanMiPjwvc2NyaXB0PgogIDxzY3JpcHQgc3JjPSJodHRwczovL3VucGtnLmNvbS9AYmFiZWwvc3RhbmRhbG9uZS9iYWJlbC5taW4uanMiPjwvc2NyaXB0PgogIDxzY3JpcHQgc3JjPSJodHRwczovL2Nkbi50YWlsd2luZGNzcy5jb20iPjwvc2NyaXB0PgogIDxzdHlsZT4KICAgIDpyb290IHsKICAgICAgLS1iZzojMGQwZDEyOyAtLWJnMjojMTMxMzFjOyAtLWNhcmQ6cmdiYSgyNiwyNiwzOSwwLjk1KTsKICAgICAgLS1ib3JkZXI6cmdiYSgyNTUsMjU1LDI1NSwwLjA3KTsgLS1ib3JkZXItYWNjZW50OnJnYmEoMjEyLDE2MCw4NSwwLjM1KTsKICAgICAgLS1nb2xkOiNkNGEwNTU7IC0tZ29sZC1saWdodDojZjBjODgwOyAtLXJvc2U6I2U4Njk3YTsgLS1yb3NlLWxpZ2h0OiNmNWEwYWM7CiAgICAgIC0tdGV4dDojZjBlYWY1OyAtLW11dGVkOiM4YTg0OWE7IC0tZmFpbnQ6IzRhNDQ2MDsKICAgICAgLS1jOiMwMGQyZmY7IC0tYzI6IzNhN2JkNTsKICAgIH0KICAgICosICo6OmJlZm9yZSwgKjo6YWZ0ZXIgeyBib3gtc2l6aW5nOmJvcmRlci1ib3g7IG1hcmdpbjowOyBwYWRkaW5nOjA7IH0KICAgIGh0bWwgeyBzY3JvbGwtYmVoYXZpb3I6c21vb3RoOyB9CiAgICBib2R5IHsKICAgICAgYmFja2dyb3VuZDp2YXIoLS1iZyk7IGNvbG9yOnZhcigtLXRleHQpOwogICAgICBmb250LWZhbWlseTonRE0gU2Fucycsc2Fucy1zZXJpZjsKICAgICAgb3ZlcmZsb3cteDpoaWRkZW47IG1pbi1oZWlnaHQ6MTAwdmg7CiAgICB9CiAgICBib2R5OjpiZWZvcmUgewogICAgICBjb250ZW50OicnOyBwb3NpdGlvbjpmaXhlZDsgaW5zZXQ6MDsKICAgICAgYmFja2dyb3VuZDoKICAgICAgICByYWRpYWwtZ3JhZGllbnQoZWxsaXBzZSA2MCUgNDAlIGF0IDE1JSA1JSwgIHJnYmEoMCwyMTAsMjU1LDAuMDUpICAwJSwgdHJhbnNwYXJlbnQgNjAlKSwKICAgICAgICByYWRpYWwtZ3JhZGllbnQoZWxsaXBzZSA1MCUgMzUlIGF0IDg1JSA4NSUsIHJnYmEoMjEyLDE2MCw4NSwwLjA2KSAwJSwgdHJhbnNwYXJlbnQgNjAlKSwKICAgICAgICBsaW5lYXItZ3JhZGllbnQocmdiYSgwLDIxMCwyNTUsMC4wMTUpIDFweCwgdHJhbnNwYXJlbnQgMXB4KSwKICAgICAgICBsaW5lYXItZ3JhZGllbnQoOTBkZWcscmdiYSgwLDIxMCwyNTUsMC4wMTUpIDFweCwgdHJhbnNwYXJlbnQgMXB4KTsKICAgICAgYmFja2dyb3VuZC1zaXplOjEwMCUgMTAwJSwgMTAwJSAxMDAlLCA2MHB4IDYwcHgsIDYwcHggNjBweDsKICAgICAgcG9pbnRlci1ldmVudHM6bm9uZTsgei1pbmRleDowOwogICAgfQogICAgYm9keTo6YWZ0ZXIgewogICAgICBjb250ZW50OicnOyBwb3NpdGlvbjpmaXhlZDsgbGVmdDowOyB0b3A6MDsgd2lkdGg6MTAwJTsgaGVpZ2h0OjJweDsKICAgICAgYmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoOTBkZWcsIHRyYW5zcGFyZW50IDAlLCB2YXIoLS1nb2xkKSAzMCUsIHZhcigtLWMpIDUwJSwgdmFyKC0tZ29sZCkgNzAlLCB0cmFuc3BhcmVudCAxMDAlKTsKICAgICAgYm94LXNoYWRvdzowIDAgMTZweCAzcHggcmdiYSgyMTIsMTYwLDg1LDAuNSk7CiAgICAgIGFuaW1hdGlvbjpsYXNlciA4cyBlYXNlLWluLW91dCBpbmZpbml0ZTsKICAgICAgei1pbmRleDo5OTk4OyBwb2ludGVyLWV2ZW50czpub25lOwogICAgfQogICAgQGtleWZyYW1lcyBsYXNlciB7IDAlLDEwMCV7dG9wOi01JTtvcGFjaXR5OjB9IDUle29wYWNpdHk6MX0gOTUle29wYWNpdHk6MX0gNTAle3RvcDoxMDUlfSB9CgogICAgaDEsaDIsaDMgeyBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsgfQogICAgY29kZSwubW9ubyB7IGZvbnQtZmFtaWx5OidKZXRCcmFpbnMgTW9ubycsbW9ub3NwYWNlOyB9CgogICAgLmdsYXNzIHsKICAgICAgYmFja2dyb3VuZDp2YXIoLS1jYXJkKTsgYmFja2Ryb3AtZmlsdGVyOmJsdXIoMjBweCk7CiAgICAgIGJvcmRlcjoxcHggc29saWQgdmFyKC0tYm9yZGVyKTsgYm9yZGVyLXJhZGl1czoyNHB4OwogICAgICBwb3NpdGlvbjpyZWxhdGl2ZTsgb3ZlcmZsb3c6aGlkZGVuOwogICAgfQogICAgLmdsYXNzOjpiZWZvcmUgewogICAgICBjb250ZW50OicnOyBwb3NpdGlvbjphYnNvbHV0ZTsgaW5zZXQ6MDsKICAgICAgYmFja2dyb3VuZDpsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHJnYmEoMjU1LDI1NSwyNTUsMC4wMykgMCUsdHJhbnNwYXJlbnQgNjAlKTsKICAgICAgcG9pbnRlci1ldmVudHM6bm9uZTsgYm9yZGVyLXJhZGl1czppbmhlcml0OwogICAgfQogICAgLmdsYXNzOmhvdmVyIHsgYm9yZGVyLWNvbG9yOnZhcigtLWJvcmRlci1hY2NlbnQpOyB9CgogICAgLmlucCB7CiAgICAgIGJhY2tncm91bmQ6cmdiYSgxMywxMywxOCwwLjgpOwogICAgICBib3JkZXI6MXB4IHNvbGlkIHJnYmEoMjU1LDI1NSwyNTUsMC4wOSk7CiAgICAgIGJvcmRlci1yYWRpdXM6MTJweDsgcGFkZGluZzoxMXB4IDE0cHg7CiAgICAgIHdpZHRoOjEwMCU7IG91dGxpbmU6bm9uZTsgY29sb3I6dmFyKC0tdGV4dCk7CiAgICAgIGZvbnQtc2l6ZToxM3B4OyBmb250LWZhbWlseTonRE0gU2Fucycsc2Fucy1zZXJpZjsKICAgICAgdHJhbnNpdGlvbjpib3JkZXItY29sb3IgMC4yNXMsIGJveC1zaGFkb3cgMC4yNXM7CiAgICB9CiAgICAuaW5wOmZvY3VzIHsgYm9yZGVyLWNvbG9yOnZhcigtLWdvbGQpOyBib3gtc2hhZG93OjAgMCAwIDNweCByZ2JhKDIxMiwxNjAsODUsMC4xMik7IH0KICAgIC5pbnA6OnBsYWNlaG9sZGVyIHsgY29sb3I6dmFyKC0tZmFpbnQpOyB9CiAgICAuaW5wOmRpc2FibGVkIHsgb3BhY2l0eTowLjU7IGN1cnNvcjpub3QtYWxsb3dlZDsgfQogICAgc2VsZWN0LmlucCBvcHRpb24geyBiYWNrZ3JvdW5kOiMxMzEzMWM7IH0KICAgIC5pbnAtZXJyb3IgeyBib3JkZXItY29sb3I6I2VmNDQ0NCAhaW1wb3J0YW50OyB9CiAgICAuaW5wLWVycm9yOmZvY3VzIHsgYm94LXNoYWRvdzowIDAgMCAzcHggcmdiYSgyMzksNjgsNjgsMC4xMikgIWltcG9ydGFudDsgfQoKICAgIC50b2dnbGUtd3JhcCB7CiAgICAgIHdpZHRoOjUwcHg7IGhlaWdodDoyNnB4OyBib3JkZXItcmFkaXVzOjk5cHg7CiAgICAgIHBvc2l0aW9uOnJlbGF0aXZlOyBjdXJzb3I6cG9pbnRlcjsgdHJhbnNpdGlvbjpiYWNrZ3JvdW5kIDAuMzVzOyBmbGV4LXNocmluazowOwogICAgfQogICAgLnRvZ2dsZS13cmFwLm9uICB7IGJhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDkwZGVnLHZhcigtLWdvbGQpLCNiODg1M2EpOyBib3gtc2hhZG93OjAgMCAxMHB4IHJnYmEoMjEyLDE2MCw4NSwwLjQpOyB9CiAgICAudG9nZ2xlLXdyYXAub2ZmIHsgYmFja2dyb3VuZDpyZ2JhKDI1NSwyNTUsMjU1LDAuMDkpOyB9CiAgICAudG9nZ2xlLXRodW1iIHsKICAgICAgd2lkdGg6MjBweDsgaGVpZ2h0OjIwcHg7IGJhY2tncm91bmQ6d2hpdGU7IGJvcmRlci1yYWRpdXM6NTAlOwogICAgICBwb3NpdGlvbjphYnNvbHV0ZTsgdG9wOjNweDsgdHJhbnNpdGlvbjpsZWZ0IDAuMzVzIGN1YmljLWJlemllciguNCwwLC4yLDEpOwogICAgICBib3gtc2hhZG93OjAgMXB4IDRweCByZ2JhKDAsMCwwLDAuNCk7CiAgICB9CiAgICAudG9nZ2xlLXdyYXAub24gIC50b2dnbGUtdGh1bWIgeyBsZWZ0OjI3cHg7IH0KICAgIC50b2dnbGUtd3JhcC5vZmYgLnRvZ2dsZS10aHVtYiB7IGxlZnQ6M3B4OyB9CgogICAgLnN0cmlwZSB7IHBvc2l0aW9uOmFic29sdXRlOyB0b3A6MDsgbGVmdDowOyB3aWR0aDo0cHg7IGhlaWdodDoxMDAlOyBib3JkZXItcmFkaXVzOjI0cHggMCAwIDI0cHg7IH0KICAgIEBrZXlmcmFtZXMgZmFkZVVwIHsgZnJvbXtvcGFjaXR5OjA7dHJhbnNmb3JtOnRyYW5zbGF0ZVkoMjBweCl9IHRve29wYWNpdHk6MTt0cmFuc2Zvcm06dHJhbnNsYXRlWSgwKX0gfQogICAgLmZhZGUtdXAgeyBhbmltYXRpb246ZmFkZVVwIDAuNTVzIGVhc2Utb3V0IGZvcndhcmRzOyB9CiAgICAuZGVsYXktMSB7IGFuaW1hdGlvbi1kZWxheTowLjFzOyBvcGFjaXR5OjA7IH0KICAgIC5kZWxheS0yIHsgYW5pbWF0aW9uLWRlbGF5OjAuMnM7IG9wYWNpdHk6MDsgfQogICAgLmRlbGF5LTMgeyBhbmltYXRpb24tZGVsYXk6MC4zczsgb3BhY2l0eTowOyB9CiAgICAuZGVsYXktNCB7IGFuaW1hdGlvbi1kZWxheTowLjRzOyBvcGFjaXR5OjA7IH0KICAgIC5kZWxheS01IHsgYW5pbWF0aW9uLWRlbGF5OjAuNXM7IG9wYWNpdHk6MDsgfQoKICAgIC5sYW5nLW92ZXJsYXkgewogICAgICBwb3NpdGlvbjpmaXhlZDsgaW5zZXQ6MDsKICAgICAgYmFja2dyb3VuZDpyYWRpYWwtZ3JhZGllbnQoZWxsaXBzZSBhdCBjZW50ZXIsICMwYTEwMjAgMCUsIHZhcigtLWJnKSAxMDAlKTsKICAgICAgei1pbmRleDoxMDAwMDsgZGlzcGxheTpmbGV4OyBhbGlnbi1pdGVtczpjZW50ZXI7IGp1c3RpZnktY29udGVudDpjZW50ZXI7CiAgICB9CiAgICAubGFuZy1idG4gewogICAgICBwYWRkaW5nOjE0cHggMjBweDsgYm9yZGVyLXJhZGl1czoxNnB4OwogICAgICBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsgZm9udC13ZWlnaHQ6NzAwOyBmb250LXNpemU6MTVweDsKICAgICAgYm9yZGVyOjFweCBzb2xpZCB2YXIoLS1ib3JkZXIpOyBjdXJzb3I6cG9pbnRlcjsKICAgICAgdHJhbnNpdGlvbjp0cmFuc2Zvcm0gMC4ycywgYm94LXNoYWRvdyAwLjJzLCBib3JkZXItY29sb3IgMC4yczsKICAgICAgZGlzcGxheTpmbGV4OyBhbGlnbi1pdGVtczpjZW50ZXI7IGdhcDoxMnB4OwogICAgfQogICAgLmxhbmctYnRuOmhvdmVyIHsgdHJhbnNmb3JtOnRyYW5zbGF0ZVkoLTJweCk7IGJvcmRlci1jb2xvcjp2YXIoLS1ib3JkZXItYWNjZW50KTsgfQogICAgLmxhbmctYnRuOmFjdGl2ZSB7IHRyYW5zZm9ybTpzY2FsZSgwLjk2KTsgfQoKICAgIC5zcGluIHsKICAgICAgd2lkdGg6MTZweDsgaGVpZ2h0OjE2cHg7CiAgICAgIGJvcmRlcjoycHggc29saWQgdmFyKC0tZ29sZCk7IGJvcmRlci1ib3R0b20tY29sb3I6dHJhbnNwYXJlbnQ7CiAgICAgIGJvcmRlci1yYWRpdXM6NTAlOyBhbmltYXRpb246c3BpbkFuaW0gMC44cyBsaW5lYXIgaW5maW5pdGU7IGRpc3BsYXk6aW5saW5lLWJsb2NrOwogICAgfQogICAgQGtleWZyYW1lcyBzcGluQW5pbSB7IHRve3RyYW5zZm9ybTpyb3RhdGUoMzYwZGVnKX0gfQoKICAgIEBrZXlmcmFtZXMgdG9hc3RJbiB7CiAgICAgIGZyb217b3BhY2l0eTowO3RyYW5zZm9ybTp0cmFuc2xhdGVYKC01MCUpIHRyYW5zbGF0ZVkoLTIwcHgpIHNjYWxlKDAuOSl9CiAgICAgIHRvICB7b3BhY2l0eToxO3RyYW5zZm9ybTp0cmFuc2xhdGVYKC01MCUpIHRyYW5zbGF0ZVkoMCkgICAgIHNjYWxlKDEpfQogICAgfQogICAgLnRvYXN0LWFuaW0geyBhbmltYXRpb246dG9hc3RJbiAwLjM1cyBjdWJpYy1iZXppZXIoLjQsMCwuMiwxKSBmb3J3YXJkczsgfQoKICAgIC5zZWMtbGFiZWwgewogICAgICBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsgZm9udC13ZWlnaHQ6NzAwOyBmb250LXNpemU6MTFweDsKICAgICAgbGV0dGVyLXNwYWNpbmc6MC4xNWVtOyB0ZXh0LXRyYW5zZm9ybTp1cHBlcmNhc2U7CiAgICAgIGRpc3BsYXk6ZmxleDsgYWxpZ24taXRlbXM6Y2VudGVyOyBnYXA6OHB4OwogICAgfQogICAgLnRvZ2dsZS1yb3cgewogICAgICBkaXNwbGF5OmZsZXg7IGp1c3RpZnktY29udGVudDpzcGFjZS1iZXR3ZWVuOyBhbGlnbi1pdGVtczpjZW50ZXI7CiAgICAgIGJhY2tncm91bmQ6cmdiYSgyNTUsMjU1LDI1NSwwLjAzKTsgYm9yZGVyOjFweCBzb2xpZCByZ2JhKDI1NSwyNTUsMjU1LDAuMDUpOwogICAgICBwYWRkaW5nOjEycHggMTZweDsgYm9yZGVyLXJhZGl1czoxNHB4OyB0cmFuc2l0aW9uOmJhY2tncm91bmQgMC4ycywgYm9yZGVyLWNvbG9yIDAuMnM7CiAgICB9CiAgICAudG9nZ2xlLXJvdzpob3ZlciB7IGJhY2tncm91bmQ6cmdiYSgyNTUsMjU1LDI1NSwwLjA1KTsgYm9yZGVyLWNvbG9yOnZhcigtLWJvcmRlci1hY2NlbnQpOyB9CgogICAgLnJ0bCB7IGRpcmVjdGlvbjpydGw7IH0KCiAgICAuc2F2ZS1idG4gewogICAgICBiYWNrZ3JvdW5kOmxpbmVhci1ncmFkaWVudCgxMzVkZWcsdmFyKC0tZ29sZCkgMCUsI2I4ODUzYSAxMDAlKTsKICAgICAgYm9yZGVyLXJhZGl1czoyMHB4OyBmb250LWZhbWlseTonU3luZScsc2Fucy1zZXJpZjsKICAgICAgZm9udC13ZWlnaHQ6ODAwOyBmb250LXNpemU6MTVweDsgbGV0dGVyLXNwYWNpbmc6MC4wNWVtOwogICAgICBwYWRkaW5nOjE2cHggMzZweDsgYm9yZGVyOm5vbmU7IGN1cnNvcjpwb2ludGVyOyBjb2xvcjojMGQwZDBkOwogICAgICBkaXNwbGF5OmZsZXg7IGFsaWduLWl0ZW1zOmNlbnRlcjsgZ2FwOjEwcHg7CiAgICAgIGJveC1zaGFkb3c6MCA4cHggMzJweCByZ2JhKDIxMiwxNjAsODUsMC40KSwgMCAwIDAgMXB4IHJnYmEoMjU1LDI1NSwyNTUsMC4wOCk7CiAgICAgIHRyYW5zaXRpb246dHJhbnNmb3JtIDAuMnMsIGJveC1zaGFkb3cgMC4yczsKICAgIH0KICAgIC5zYXZlLWJ0bjpob3ZlciAgeyB0cmFuc2Zvcm06dHJhbnNsYXRlWSgtMnB4KTsgYm94LXNoYWRvdzowIDEycHggNDBweCByZ2JhKDIxMiwxNjAsODUsMC41NSk7IH0KICAgIC5zYXZlLWJ0bjphY3RpdmUgeyB0cmFuc2Zvcm06c2NhbGUoMC45Nyk7IH0KCiAgICAuaW1nLXNsb3QgewogICAgICB3aWR0aDoxMDAlOyBhc3BlY3QtcmF0aW86MTYvOTsgYm9yZGVyLXJhZGl1czoxNHB4OyBvdmVyZmxvdzpoaWRkZW47CiAgICAgIGJhY2tncm91bmQ6cmdiYSgwLDAsMCwwLjMpOyBib3JkZXI6MXB4IGRhc2hlZCByZ2JhKDI1NSwyNTUsMjU1LDAuMSk7CiAgICAgIGRpc3BsYXk6ZmxleDsgYWxpZ24taXRlbXM6Y2VudGVyOyBqdXN0aWZ5LWNvbnRlbnQ6Y2VudGVyOwogICAgfQogICAgLmltZy1zbG90IGltZyB7IHdpZHRoOjEwMCU7IGhlaWdodDoxMDAlOyBvYmplY3QtZml0OmNvdmVyOyB9CgogICAgLnVwbG9hZC1sYmwgewogICAgICBkaXNwbGF5OmZsZXg7IGFsaWduLWl0ZW1zOmNlbnRlcjsganVzdGlmeS1jb250ZW50OmNlbnRlcjsgZ2FwOjhweDsKICAgICAgcGFkZGluZzoxMHB4OyBiYWNrZ3JvdW5kOnJnYmEoMjU1LDI1NSwyNTUsMC4wNCk7CiAgICAgIGJvcmRlcjoxcHggc29saWQgcmdiYSgyNTUsMjU1LDI1NSwwLjA4KTsgYm9yZGVyLXJhZGl1czoxMnB4OyBjdXJzb3I6cG9pbnRlcjsKICAgICAgZm9udC1zaXplOjExcHg7IGZvbnQtd2VpZ2h0OjcwMDsgbGV0dGVyLXNwYWNpbmc6MC4xZW07IHRleHQtdHJhbnNmb3JtOnVwcGVyY2FzZTsKICAgICAgY29sb3I6Izk0YTNiODsgdHJhbnNpdGlvbjpiYWNrZ3JvdW5kIDAuMnMsIGJvcmRlci1jb2xvciAwLjJzLCBjb2xvciAwLjJzOwogICAgfQogICAgLnVwbG9hZC1sYmw6aG92ZXIgeyBiYWNrZ3JvdW5kOnJnYmEoMjEyLDE2MCw4NSwwLjEpOyBib3JkZXItY29sb3I6dmFyKC0tYm9yZGVyLWFjY2VudCk7IGNvbG9yOnZhcigtLWdvbGQpOyB9CgogICAgLmFwcC1iYWRnZSB7CiAgICAgIGJhY2tncm91bmQ6bGluZWFyLWdyYWRpZW50KDEzNWRlZyx2YXIoLS1nb2xkKSwjYjg4NTNhKTsKICAgICAgcGFkZGluZzo0cHggMTJweDsgYm9yZGVyLXJhZGl1czozMHB4OyBmb250LXNpemU6MTFweDsKICAgICAgZm9udC13ZWlnaHQ6NzAwOyBsZXR0ZXItc3BhY2luZzowLjA1ZW07IGNvbG9yOiMwZDBkMGQ7CiAgICAgIGRpc3BsYXk6aW5saW5lLWZsZXg7IGFsaWduLWl0ZW1zOmNlbnRlcjsgZ2FwOjZweDsKICAgICAgYm94LXNoYWRvdzowIDJweCA4cHggcmdiYSgyMTIsMTYwLDg1LDAuMzUpOwogICAgfQoKICAgIC52YWxpZGF0aW9uLWhpbnQgewogICAgICBmb250LXNpemU6MTBweDsgbWFyZ2luLXRvcDo0cHg7CiAgICAgIGRpc3BsYXk6ZmxleDsganVzdGlmeS1jb250ZW50OnNwYWNlLWJldHdlZW47CiAgICB9CiAgICAuZXJyb3ItdGV4dCAgeyBjb2xvcjojZWY0NDQ0OyB9CiAgICAuaGludC10ZXh0ICAgeyBjb2xvcjp2YXIoLS1mYWludCk7IH0KICAgIC5jb3VudGVyICAgICB7IGNvbG9yOnZhcigtLWZhaW50KTsgfQoKICAgIC8qIGVtb2ppIHBpY2tlciBzdHlsZXMgLSBPTkUgRU1PSkkgQVQgQSBUSU1FICovCiAgICAuZW1vamktZ3JpZCB7CiAgICAgIGRpc3BsYXk6IGZsZXg7CiAgICAgIGZsZXgtd3JhcDogd3JhcDsKICAgICAgZ2FwOiAxMHB4OwogICAgICBtYXJnaW4tdG9wOiAxMnB4OwogICAgICBwYWRkaW5nOiAxMHB4IDA7CiAgICB9CiAgICAuZW1vamktb3B0aW9uIHsKICAgICAgZm9udC1zaXplOiAyNnB4OwogICAgICBjdXJzb3I6IHBvaW50ZXI7CiAgICAgIHRyYW5zaXRpb246IHRyYW5zZm9ybSAwLjE1cyBlYXNlLCBmaWx0ZXIgMC4xczsKICAgICAgYmFja2dyb3VuZDogcmdiYSgyNTUsMjU1LDI1NSwwLjAzKTsKICAgICAgd2lkdGg6IDUwcHg7CiAgICAgIGhlaWdodDogNTBweDsKICAgICAgZGlzcGxheTogZmxleDsKICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjsKICAgICAganVzdGlmeS1jb250ZW50OiBjZW50ZXI7CiAgICAgIGJvcmRlci1yYWRpdXM6IDE4cHg7CiAgICAgIGJvcmRlcjogMXB4IHNvbGlkIHJnYmEoMjU1LDI1NSwyNTUsMC4wNik7CiAgICB9CiAgICAuZW1vamktb3B0aW9uOmhvdmVyIHsgdHJhbnNmb3JtOiBzY2FsZSgxLjEyKTsgYmFja2dyb3VuZDogcmdiYSgyMTIsMTYwLDg1LDAuMik7IGJvcmRlci1jb2xvcjogdmFyKC0tYm9yZGVyLWFjY2VudCk7IH0KICAgIC5lbW9qaS1yZW1vdmUgewogICAgICBiYWNrZ3JvdW5kOiByZ2JhKDIzOSw2OCw2OCwwLjEpOwogICAgICBmb250LXNpemU6IDE0cHg7CiAgICAgIGNvbG9yOiAjZjg3MTcxOwogICAgICB3aWR0aDogYXV0bzsKICAgICAgcGFkZGluZzogMCAxMnB4OwogICAgICBnYXA6IDZweDsKICAgICAgZm9udC1mYW1pbHk6IG1vbm9zcGFjZTsKICAgIH0KICAgIC5lbW9qaS1yZW1vdmU6aG92ZXIgeyBiYWNrZ3JvdW5kOiByZ2JhKDIzOSw2OCw2OCwwLjI1KTsgdHJhbnNmb3JtOiBzY2FsZSgxLjAyKTsgfQogICAgLmVtb2ppLWFkZC1idG4gewogICAgICBiYWNrZ3JvdW5kOiByZ2JhKDIxMiwxNjAsODUsMC4xNSk7CiAgICAgIGJvcmRlcjogMXB4IGRhc2hlZCB2YXIoLS1nb2xkKTsKICAgICAgZm9udC1zaXplOiAyMHB4OwogICAgICB3aWR0aDogNTBweDsKICAgICAgaGVpZ2h0OiA1MHB4OwogICAgICBkaXNwbGF5OiBmbGV4OwogICAgICBhbGlnbi1pdGVtczogY2VudGVyOwogICAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsKICAgICAgYm9yZGVyLXJhZGl1czogMThweDsKICAgICAgY3Vyc29yOiBwb2ludGVyOwogICAgICBmb250LXdlaWdodDogYm9sZDsKICAgICAgY29sb3I6IHZhcigtLWdvbGQpOwogICAgICB0cmFuc2l0aW9uOiAwLjJzOwogICAgfQogICAgLmVtb2ppLWFkZC1idG46aG92ZXIgeyBiYWNrZ3JvdW5kOiByZ2JhKDIxMiwxNjAsODUsMC4zKTsgdHJhbnNmb3JtOiBzY2FsZSgxLjAzKTsgfQogICAgLmlubGluZS1lbW9qaS1pbnB1dCB7CiAgICAgIGRpc3BsYXk6IGZsZXg7CiAgICAgIGdhcDogOHB4OwogICAgICBhbGlnbi1pdGVtczogY2VudGVyOwogICAgICBtYXJnaW4tdG9wOiAxMHB4OwogICAgfQogIDwvc3R5bGU+CjwvaGVhZD4KPGJvZHk+CjxkaXYgaWQ9InJvb3QiPjwvZGl2Pgo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgc3R5bGU9ImRpc3BsYXk6bm9uZSI+CiAgPHN5bWJvbCBpZD0iaWMtdXNlciIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cGF0aCBkPSJNMjAgMjF2LTJhNCA0IDAgMCAwLTQtNEg4YTQgNCAwIDAgMC00IDR2MiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iNyIgcj0iNCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLWxvY2siIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHJlY3QgeD0iMyIgeT0iMTEiIHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgcng9IjIiLz48cGF0aCBkPSJNNyAxMVY3YTUgNSAwIDAgMSAxMCAwdjQiLz48L3N5bWJvbD4KICA8c3ltYm9sIGlkPSJpYy1jcHUiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMiIvPjxyZWN0IHg9IjkiIHk9IjkiIHdpZHRoPSI2IiBoZWlnaHQ9IjYiLz48bGluZSB4MT0iOSIgeTE9IjEiIHgyPSI5IiB5Mj0iNCIvPjxsaW5lIHgxPSIxNSIgeTE9IjEiIHgyPSIxNSIgeTI9IjQiLz48bGluZSB4MT0iOSIgeTE9IjIwIiB4Mj0iOSIgeTI9IjIzIi8+PGxpbmUgeDE9IjE1IiB5MT0iMjAiIHgyPSIxNSIgeTI9IjIzIi8+PGxpbmUgeDE9IjIwIiB5MT0iOSIgeDI9IjIzIiB5Mj0iOSIvPjxsaW5lIHgxPSIyMCIgeTE9IjE0IiB4Mj0iMjMiIHkyPSIxNCIvPjxsaW5lIHgxPSIxIiB5MT0iOSIgeDI9IjQiIHkyPSI5Ii8+PGxpbmUgeDE9IjEiIHkxPSIxNCIgeDI9IjQiIHkyPSIxNCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXphcCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cG9seWdvbiBwb2ludHM9IjEzIDIgMyAxNCAxMiAxNCAxMSAyMiAyMSAxMCAxMiAxMCAxMyAyIi8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtaW1hZ2UiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByeD0iMiIvPjxjaXJjbGUgY3g9IjguNSIgY3k9IjguNSIgcj0iMS41Ii8+PHBvbHlsaW5lIHBvaW50cz0iMjEgMTUgMTYgMTAgNSAyMSIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXBob25lLW9mZiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cGF0aCBkPSJNMTAuNjggMTMuMzFhMTYgMTYgMCAwIDAgMy40MSAyLjZsMS4yNy0xLjI3YTIgMiAwIDAgMSAyLjExLS40NWMxLjEyLjQ1IDIuMy43OCAzLjUzLjk4YTIgMiAwIDAgMSAxLjY3IDEuOTh2My4wNWEyIDIgMCAwIDEtMi4xOCAyQTE5Ljc5IDE5Ljc5IDAgMCAxIDIuMTUgNS41IDIgMiAwIDAgMSA0LjEyIDMuMzJoMy4wNWEyIDIgMCAwIDEgMiAxLjY3Yy4yIDEuMjMuNTMgMi40MS45OCAzLjUzYTIgMiAwIDAgMS0uNDUgMi4xMUw4LjQzIDExLjlhMTYgMTYgMCAwIDAgMi42MSAzLjQxIi8+PGxpbmUgeDE9IjIzIiB5MT0iMSIgeDI9IjEiIHkyPSIyMyIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXRyYXNoLTIiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBvbHlsaW5lIHBvaW50cz0iMyA2IDUgNiAyMSA2Ii8+PHBhdGggZD0iTTE5IDZsLTEgMTRhMiAyIDAgMCAxLTIgMkg4YTIgMiAwIDAgMS0yLTJMNSA2Ii8+PHBhdGggZD0iTTEwIDExdjYiLz48cGF0aCBkPSJNMTQgMTF2NiIvPjxwYXRoIGQ9Ik05IDZWNGExIDEgMCAwIDEgMS0xaDRhMSAxIDAgMCAxIDEgMXYyIi8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtY2xvY2siIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiLz48cG9seWxpbmUgcG9pbnRzPSIxMiA2IDEyIDEyIDE2IDE0Ii8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtc2F2ZSIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIj48cGF0aCBkPSJNMTkgMjFINWEyIDIgMCAwIDEtMi0yVjVhMiAyIDAgMCAxIDItMmgxMWw1IDV2MTFhMiAyIDAgMCAxLTIgMnoiLz48cG9seWxpbmUgcG9pbnRzPSIxNyAyMSAxNyAxMyA3IDEzIDcgMjEiLz48cG9seWxpbmUgcG9pbnRzPSI3IDMgNyA4IDE1IDgiLz48L3N5bWJvbD4KICA8c3ltYm9sIGlkPSJpYy1pbmZvIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PGxpbmUgeDE9IjEyIiB5MT0iMTYiIHgyPSIxMiIgeTI9IjEyIi8+PGxpbmUgeDE9IjEyIiB5MT0iOCIgeDI9IjEyLjAxIiB5Mj0iOCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLWxvZy1vdXQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTkgMjFINWEyIDIgMCAwIDEtMi0yVjVhMiAyIDAgMCAxIDItMmg0Ii8+PHBvbHlsaW5lIHBvaW50cz0iMTYgMTcgMjEgMTIgMTYgNyIvPjxsaW5lIHgxPSIyMSIgeTE9IjEyIiB4Mj0iOSIgeTI9IjEyIi8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtdXBsb2FkIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxwb2x5bGluZSBwb2ludHM9IjE2IDE2IDEyIDEyIDggMTYiLz48bGluZSB4MT0iMTIiIHkxPSIxMiIgeDI9IjEyIiB5Mj0iMjEiLz48cGF0aCBkPSJNMjAuMzkgMTguMzlBNSA1IDAgMCAwIDE4IDloLTEuMjZBOCA4IDAgMSAwIDMgMTYuMyIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLW1lc3NhZ2UiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTIxIDE1YTIgMiAwIDAgMS0yIDJIN2wtNCA0VjVhMiAyIDAgMCAxIDItMmgxNGEyIDIgMCAwIDEgMiAyeiIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLWdsb2JlIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PGxpbmUgeDE9IjIiIHkxPSIxMiIgeDI9IjIyIiB5Mj0iMTIiLz48cGF0aCBkPSJNMTIgMmExNS4zIDE1LjMgMCAwIDEgNCAxMCAxNS4zIDE1LjMgMCAwIDEtNCAxMCAxNS4zIDE1LjMgMCAwIDEtNC0xMCAxNS4zIDE1LjMgMCAwIDEgNC0xMHoiLz48L3N5bWJvbD4KICA8c3ltYm9sIGlkPSJpYy1zbWFydHBob25lIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxyZWN0IHg9IjUiIHk9IjIiIHdpZHRoPSIxNCIgaGVpZ2h0PSIyMCIgcng9IjIiIHJ5PSIyIi8+PGxpbmUgeDE9IjEyIiB5MT0iMTgiIHgyPSIxMi4wMSIgeTI9IjE4Ii8+PC9zeW1ib2w+CiAgPHN5bWJvbCBpZD0iaWMtYnVnIiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Im04IDIgMS44OCAxLjg4Ii8+PHBhdGggZD0iTTE0LjEyIDMuODggMTYgMiIvPjxwYXRoIGQ9Ik05IDcuMTN2LTFhMy4wMDMgMy4wMDMgMCAxIDEgNiAwdjEiLz48cGF0aCBkPSJNMTIgMjBjLTMuMyAwLTYtMi43LTYtNnYtM2E0IDQgMCAwIDEgNC00aDRhNCA0IDAgMCAxIDQgNHYzYzAgMy4zLTIuNyA2LTYgNnoiLz48cGF0aCBkPSJNMTIgMjB2LTkiLz48cGF0aCBkPSJNNi41MyA5QzQuNiA4LjggMyA3LjEgMyA1Ii8+PHBhdGggZD0iTTYgMTNIMiIvPjxwYXRoIGQ9Ik0zIDIxYzAtMi4xIDEuNy0zLjkgMy44LTQiLz48cGF0aCBkPSJNMjAuOTcgNWMwIDIuMS0xLjYgMy44LTMuNSA0Ii8+PHBhdGggZD0iTTIyIDEzaC00Ii8+PHBhdGggZD0iTTE3LjIgMTdjMi4xLjEgMy44IDEuOSAzLjggNCIvPjwvc3ltYm9sPgogIDxzeW1ib2wgaWQ9ImljLXJvYm90IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiPjxyZWN0IHg9IjMiIHk9IjExIiB3aWR0aD0iMTgiIGhlaWdodD0iMTEiIHJ4PSIyIi8+PHBhdGggZD0iTTcgMTFWN2E1IDUgMCAwIDEgMTAgMHY0Ii8+PGNpcmNsZSBjeD0iMTIiIGN5PSI4IiByPSIxIi8+PGNpcmNsZSBjeD0iOCIgY3k9IjE1IiByPSIxIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNSIgcj0iMSIvPjwvc3ltYm9sPgo8L3N2Zz4KPHNjcmlwdCB0eXBlPSJ0ZXh0L2JhYmVsIj4KY29uc3QgeyB1c2VTdGF0ZSwgdXNlRWZmZWN0LCB1c2VDYWxsYmFjaywgdXNlUmVmIH0gPSBSZWFjdDsKY29uc3QgQVBJID0geyBsb2dpbjogJy9hcGkvbG9naW4nLCBzYXZlU2V0dDogJy9hcGkvc2V0dGluZ3Mvc2F2ZScsIGxvYWRTZXR0OiAnL2FwaS9zZXR0aW5ncy9sb2FkJywgdXBsb2FkOiAnL2FwaS9pbWFnZS91cGxvYWQnIH07CmNvbnN0IEJSQU5EX1BBTkVMX05BTUUgPSAn2KjZiNiqINin2YTZhdmE2YMg2YHYp9ix2LMnOwpjb25zdCBERUZBVUxUX0JSQU5EX0lNQUdFID0gKCgpID0+IHsKICBjb25zdCBzdmcgPSBgCjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIHZpZXdCb3g9IjAgMCAxMjgwIDcyMCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwZDBkMTIiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSI1NSUiIHN0b3AtY29sb3I9IiMxYTEyMjQiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMmYxYzEwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJhY2NlbnQiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iI2YwYzg4MCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNkNGEwNTUiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgZmlsbD0idXJsKCNiZykiIHJ4PSI0MCIvPgogIDxjaXJjbGUgY3g9IjE4MCIgY3k9IjExMCIgcj0iMTcwIiBmaWxsPSJyZ2JhKDIxMiwxNjAsODUsMC4xNCkiLz4KICA8Y2lyY2xlIGN4PSIxMTIwIiBjeT0iNjIwIiByPSIyMTAiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz4KICA8cmVjdCB4PSI3MCIgeT0iNzAiIHdpZHRoPSIxMTQwIiBoZWlnaHQ9IjU4MCIgcng9IjM0IiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDQpIiBzdHJva2U9InJnYmEoMjQwLDIwMCwxMjgsMC4zMikiIHN0cm9rZS13aWR0aD0iMyIvPgogIDx0ZXh0IHg9IjY0MCIgeT0iMzAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9Ijg2IiBmb250LWZhbWlseT0iQXJpYWwsIFRhaG9tYSwgc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0idXJsKCNhY2NlbnQpIj7YqNmI2Kog2KfZhNmF2YTZgyDZgdin2LHYszwvdGV4dD4KICA8dGV4dCB4PSI2NDAiIHk9IjM5MiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIzNiIgZm9udC1mYW1pbHk9IkFyaWFsLCBUYWhvbWEsIHNhbnMtc2VyaWYiIGZpbGw9IiNmNGU3Y2YiPldoYXRzQXBwIFNldHRpbmdzIFBhbmVsPC90ZXh0PgogIDx0ZXh0IHg9IjY0MCIgeT0iNDU0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjI4IiBmb250LWZhbWlseT0iQXJpYWwsIFRhaG9tYSwgc2Fucy1zZXJpZiIgZmlsbD0iI2Q5YzJhMiI+2KjZiNiqINin2YTZhdmE2YMg2YHYp9ix2LMgdmlzdWFsIGJhbm5lcjwvdGV4dD4KPC9zdmc+YC50cmltKCk7CiAgcmV0dXJuIGBkYXRhOmltYWdlL3N2Zyt4bWw7Y2hhcnNldD1VVEYtOCwke2VuY29kZVVSSUNvbXBvbmVudChzdmcpfWA7Cn0pKCk7CmFzeW5jIGZ1bmN0aW9uIGFwaVBvc3QoZW5kcG9pbnQsIHBheWxvYWRPYmopIHsKICBjb25zdCByZXMgPSBhd2FpdCBmZXRjaChlbmRwb2ludCwgeyBtZXRob2Q6ICdQT1NUJywgaGVhZGVyczogeyAnQ29udGVudC1UeXBlJzogJ2FwcGxpY2F0aW9uL2pzb24nIH0sIGJvZHk6IEpTT04uc3RyaW5naWZ5KHBheWxvYWRPYmopIH0pOwogIGlmICghcmVzLm9rKSB7IGNvbnN0IGVyciA9IGF3YWl0IHJlcy5qc29uKCkuY2F0Y2goKCkgPT4gKHt9KSk7IHRocm93IG5ldyBFcnJvcihlcnIuZXJyb3IgfHwgZXJyLm1lc3NhZ2UgfHwgYEhUVFAgJHtyZXMuc3RhdHVzfWApOyB9CiAgcmV0dXJuIHJlcy5qc29uKCk7Cn0KYXN5bmMgZnVuY3Rpb24gYXBpR2V0KGVuZHBvaW50LCBwYXlsb2FkT2JqKSB7IGNvbnN0IHFzID0gbmV3IFVSTFNlYXJjaFBhcmFtcyhwYXlsb2FkT2JqKS50b1N0cmluZygpOyBjb25zdCByZXMgPSBhd2FpdCBmZXRjaChgJHtlbmRwb2ludH0/JHtxc31gKTsgaWYgKCFyZXMub2spIHsgY29uc3QgZXJyID0gYXdhaXQgcmVzLmpzb24oKS5jYXRjaCgoKSA9PiAoe30pKTsgdGhyb3cgbmV3IEVycm9yKGVyci5lcnJvciB8fCBlcnIubWVzc2FnZSB8fCBgSFRUUCAke3Jlcy5zdGF0dXN9YCk7IH0gcmV0dXJuIHJlcy5qc29uKCk7IH0KY29uc3QgVCA9IHsKICBlbjogeyBzZWw6J1NlbGVjdCBMYW5ndWFnZScsIGxvZ2luOidBZG1pbiBMb2dpbicsIG51bTonT3duZXIgTnVtYmVyJywgcGFzczonUGFzc3dvcmQnLCBhdXRoOidTaWduIEluJywgcHdIOiJGb3Jnb3QgcGFzc3dvcmQ/IFR5cGUgJy5zZXR0aW5ncyciLCBzYXZlOidTYXZlIFNldHRpbmdzJywgbm90aWNlOifimqEgU2V0dGluZ3MgdGFrZSB+MyBtaW51dGVzIHRvIGFjdGl2YXRlLicsIGJhc2ljOidCYXNpYyBJbmZvJywgc3lzOidTeXN0ZW0gQXV0b21hdGlvbicsIGdyb3VwOidHcm91cCBBdXRvbWF0aW9uJywgbG9nb3M6J0xvZ29zJywgc3RhdHVzOidTdGF0dXMgTWVzc2FnZScsIGNhbGxzOidDYWxsIENvbnRyb2wnLCBkZWxldGU6J0FudGktRGVsZXRlJywgb2s6J1NldHRpbmdzIFNhdmVkISDinIUnLCBsb2dvdXQ6J0xvZ291dCcsIHVwbG9hZGluZzonVXBsb2FkaW5n4oCmJywgZ2FsbGVyeTonVXBsb2FkIEltYWdlJywgYXBwSWQ6J0FQUCBJRCcsIGRldGVjdGVkOidEZXRlY3RlZCcsIG51bWJlcnNPbmx5OidOdW1iZXJzIG9ubHknLCBtYXhDaGFyczonTWF4aW11bSAxNSBjaGFyYWN0ZXJzJywgYWdlSGludDonTWF4IDIgZGlnaXRzJywgYWdlRXJyb3I6JzEtOTknLCBwcmVmaXhIaW50OidTeW1ib2xzIG9ubHknLCBwcmVmaXhFcnJvcjonT25seSBzeW1ib2xzIGFsbG93ZWQnLCBjaGFyczonY2hhcmFjdGVycycsIGVtb2ppVGl0bGU6J1N0YXR1cyBSZWFjdGlvbiBFbW9qaXMgKG1heCAxMCknLCBlbW9qaVBsYWNlaG9sZGVyOidUeXBlIE9ORSBlbW9qaScsIGFudGlCdWc6J0FudGkgQnVnJywgYW50aUJvdDonQW50aSBCb3QnLCBhY3Rpb25EZWxldGU6J0RlbGV0ZScsIGFjdGlvbktpY2s6J0RlbGV0ZStLaWNrJyB9LAogIHNpOiB7IHNlbDon4La34LeP4LeC4LeP4LeAJywgbG9naW46J+C2h+C2qeC3iuC2uOC3kuC2seC3iiDgtrTgt5Lgt4Dgt5Lgt4Pgt5TgtrgnLCBudW06J093bmVyIOC2heC2guC2muC2uicsIHBhc3M6J+C2uOC3lOC2u+C2tOC2r+C2uicsIGF1dGg6J+C2tOC3kuC3gOC3kuC3g+C3meC2seC3iuC2sScsIHB3SDoi4La44LeU4La74La04Lav4La6IOC2heC2uOC2reC2muC2rz8iLCBzYXZlOifgt4Pgt5Tgtrvgtprgt5LgtrHgt4rgtrEnLCBub3RpY2U6J+KaoSDgt4Dgt5LgtrHgt4/gtqngt5IgM+C2muC3iiDgtpzgtq3gt4Dgt5ouJywgYmFzaWM6J+C2uOC3luC2veC3kuC2micsIHN5czon4LeD4LeK4LeA4La64LaC4Laa4LeK4oCN4La74LeT4La6JywgZ3JvdXA6J+C3g+C2uOC3luC3hCcsIGxvZ29zOifgtr3gt53gtpzgt50nLCBzdGF0dXM6J+C3g+C3iuC2p+C3muC2p+C3g+C3iicsIGNhbGxzOifgtofgtrjgtq3gt5Tgtrjgt4onLCBkZWxldGU6J+C2qeC3kuC2veC3k+C2p+C3iicsIG9rOifgt4Pgt5Tgtrvgt5Dgtprgt5Tgtqvgt48hIOKchScsIGxvZ291dDon4La04LeS4Lan4LeA4LeZ4Lax4LeK4LaxJywgdXBsb2FkaW5nOifgtovgtqngt5Tgtpzgtq0g4Laa4La74La44LeS4Lax4LeK4oCmJywgZ2FsbGVyeTon4Lah4LeP4La64LeP4La74LeW4La0JywgYXBwSWQ6J+C2uuC3meC2r+C3lOC2uOC3iiDgtoXgtoLgtprgtronLCBkZXRlY3RlZDon4LeE4La44LeU4LeA4LeS4La6JywgbnVtYmVyc09ubHk6J+C2ieC2veC2muC3iuC2muC2uOC3iiDgtrTgtrjgtqvgtrrgt5InLCBtYXhDaGFyczon4LaF4Laa4LeU4La74LeUIDE1JywgYWdlSGludDon4LaF4LaC4LaaIDInLCBhZ2VFcnJvcjonMS05OScsIHByZWZpeEhpbnQ6J+C3g+C2guC2muC3muC2rSDgtrTgtrjgtqvgtrrgt5InLCBwcmVmaXhFcnJvcjon4LeD4LaC4Laa4Lea4LatIOC2tOC2uOC2q+C2muC3iicsIGNoYXJzOifgtoXgtprgt5Tgtrvgt5QnLCBlbW9qaVRpdGxlOifgt4Pgt4rgtqfgt5rgtqfgt4Pgt4og4LaJ4La44Led4Lai4LeSICjgtovgtrTgtrvgt5LgtrggMTApJywgZW1vamlQbGFjZWhvbGRlcjon4LaR4LaaIOC2ieC2uOC3neC2ouC3kuC2uuC2muC3iicsIGFudGlCdWc6J+C2h+C2seC3iuC2p+C3kiDgtrbgtpzgt4onLCBhbnRpQm90OifgtofgtrHgt4rgtqfgt5Ig4La24Lec4Lan4LeKJywgYWN0aW9uRGVsZXRlOifgtrjgtprgtrHgt4rgtrEnLCBhY3Rpb25LaWNrOifgtrjgtprgt48g4Laa4La04Lax4LeK4LaxJyB9LAogIHRhOiB7IHNlbDon4K6u4K+K4K604K6/JywgbG9naW46J+CuqOCuv+CusOCvjeCuteCuvuCulSDgrongrrPgr43grqjgr4HgrrTgr4jgrrXgr4EnLCBudW06J+CuieCusOCuv+CuruCviOCur+CuvuCus+CusOCvjSDgro7grqPgr40nLCBwYXNzOifgrpXgrp/grrXgr4Hgrprgr43grprgr4rgrrLgr40nLCBhdXRoOifgrongrrPgr43grqjgr4HgrrTgr4jgrpUnLCBwd0g6IuCuleCun+CuteCvgeCumuCvjeCumuCviuCusuCvjSDgrq7grrHgrqjgr43grqTgrr7grrLgr40gLnNldHRpbmdzIiwgc2F2ZTon4K6a4K+H4K6u4K6/4K6V4K+N4K6V4K614K+B4K6u4K+NJywgbm90aWNlOifimqEgMyDgrqjgrr/grq7grr/grp/grpngr43grpXgrrPgrr/grrLgr40g4K6a4K+G4K6v4K6y4K+N4K6q4K6f4K+B4K6u4K+NLicsIGJhc2ljOifgroXgrp/grr/grqrgr43grqrgrp/gr4gnLCBzeXM6J+CupOCuvuCuqeCuv+Cur+CumeCvjeCuleCuvycsIGdyb3VwOifgrpXgr4HgrrTgr4EnLCBsb2dvczon4K6y4K+L4K6V4K+L4K6V4K+N4K6V4K6z4K+NJywgc3RhdHVzOifgrqjgrr/grrLgr4gg4K6a4K+G4K6v4K+N4K6k4K6/JywgY2FsbHM6J+CuheCutOCviOCuquCvjeCuquCvgScsIGRlbGV0ZTon4K6o4K+A4K6V4K+N4K6V4K6y4K+NJywgb2s6J+CumuCvh+CuruCuv+CuleCvjeCuleCuquCvjeCuquCun+CvjeCun+CupOCvgSEg4pyFJywgbG9nb3V0OifgrrXgr4bgrrPgrr/grq/gr4fgrrHgr4EnLCB1cGxvYWRpbmc6J+CuquCupOCuv+CuteCvh+CuseCvjeCuseCvgeCuleCuv+CuseCupOCvgeKApicsIGdhbGxlcnk6J+CuquCun+CuruCvjScsIGFwcElkOifgrqrgrq/grqngr43grqrgrr7grp/gr43grp/gr4Eg4K6Q4K6f4K6/JywgZGV0ZWN0ZWQ6J+CuleCuo+CvjeCun+CvgeCuquCuv+Cun+Cuv+CuleCvjeCuleCuquCvjeCuquCun+CvjeCun+CupOCvgScsIG51bWJlcnNPbmx5Oifgro7grqPgr43grpXgrrPgr40g4K6u4K6f4K+N4K6f4K+B4K6u4K+NJywgbWF4Q2hhcnM6JzE1IOCujuCutOCvgeCupOCvjeCupOCvgeCuleCvjeCuleCus+CvjScsIGFnZUhpbnQ6JzIg4K6H4K6y4K6V4K+N4K6V4K6Z4K+N4K6V4K6z4K+NJywgYWdlRXJyb3I6JzEtOTknLCBwcmVmaXhIaW50OifgrpXgr4HgrrHgrr/grq/gr4Dgrp/gr4HgrpXgrrPgr40g4K6u4K6f4K+N4K6f4K+B4K6u4K+NJywgcHJlZml4RXJyb3I6J+CuleCvgeCuseCuv+Cur+CvgOCun+CvgeCuleCus+CvjSDgrq7grp/gr43grp/gr4Hgrq7gr40nLCBjaGFyczon4K6O4K604K+B4K6k4K+N4K6k4K+B4K6V4K+N4K6V4K6z4K+NJywgZW1vamlUaXRsZTon4K644K+N4K6f4K+H4K6f4K+N4K6f4K644K+NIOCujuCuruCvi+CunOCuv+CuleCus+CvjSAo4K6F4K6k4K6/4K6V4K6q4K6f4K+N4K6a4K6u4K+NIDEwKScsIGVtb2ppUGxhY2Vob2xkZXI6J+CukuCusOCvgSDgro7grq7gr4vgrpzgrr8nLCBhbnRpQnVnOifgrobgrqngr43grp/grr8g4K6q4K6V4K+NJywgYW50aUJvdDon4K6G4K6p4K+N4K6f4K6/IOCuquCvi+Cun+CvjScsIGFjdGlvbkRlbGV0ZTon4K6o4K+A4K6V4K+N4K6V4K+BJywgYWN0aW9uS2ljazon4K6o4K+A4K6V4K+N4K6V4K+BK+CuieCupOCviCcgfSwKICBhcjogeyBzZWw6J9in2K7YqtixINin2YTZhNi62KknLCBsb2dpbjon2K/YrtmI2YQg2KfZhNmF2LTYsdmBJywgbnVtOifYsdmC2YUg2KfZhNmF2KfZhNmDJywgcGFzczon2YPZhNmF2Kkg2KfZhNmF2LHZiNixJywgYXV0aDon2KrYs9is2YrZhCDYp9mE2K/YrtmI2YQnLCBwd0g6ItmG2LPZitiqINmD2YTZhdipINin2YTZhdix2YjYsdifIiwgc2F2ZTon2K3Zgdi4INin2YTYpdi52K/Yp9iv2KfYqicsIG5vdGljZTon4pqhIDMg2K/Zgtin2KbZgiDZhNmE2KrZgdi52YrZhC4nLCBiYXNpYzon2KfZhNmF2LnZhNmI2YXYp9iqJywgc3lzOifYp9mE2KPYqtmF2KrYqScsIGdyb3VwOifZhdis2YXZiNi52KknLCBsb2dvczon2KfZhNi02LnYp9ix2KfYqicsIHN0YXR1czon2LHYs9in2YTYqSDYp9mE2K3Yp9mE2KknLCBjYWxsczon2KfZhNmF2YPYp9mE2YXYp9iqJywgZGVsZXRlOifYrdmF2KfZitipINin2YTYrdiw2YEnLCBvazon2KrZhSDYp9mE2K3Zgdi4ISDinIUnLCBsb2dvdXQ6J9iu2LHZiNisJywgdXBsb2FkaW5nOifYrNin2LHZiiDYp9mE2LHZgdi54oCmJywgZ2FsbGVyeTon2LHZgdi5INi12YjYsdipJywgYXBwSWQ6J9mF2LnYsdmBINin2YTYqti32KjZitmCJywgZGV0ZWN0ZWQ6J9iq2YUg2KfZg9iq2LTYp9mB2YcnLCBudW1iZXJzT25seTon2KPYsdmC2KfZhSDZgdmC2LcnLCBtYXhDaGFyczonMTUg2K3YsdmB2YvYpycsIGFnZUhpbnQ6J9ix2YLZhdin2YYnLCBhZ2VFcnJvcjonMS05OScsIHByZWZpeEhpbnQ6J9ix2YXZiNiyINmB2YLYtycsIHByZWZpeEVycm9yOifYsdmF2YjYsiDZgdmC2LcnLCBjaGFyczon2K3YsdmI2YEnLCBlbW9qaVRpdGxlOifYsdmF2YjYsiDYqti52KjZitix2YrYqSDZhNmE2K3Yp9mE2KkgKDEwINmD2K3YryDYo9mC2LXZiSknLCBlbW9qaVBsYWNlaG9sZGVyOifYo9iv2K7ZhCDYpdmK2YXZiNis2Yog2YjYp9it2K8nLCBhbnRpQnVnOifZhdmD2KfZgdit2Kkg2KfZhNio2YInLCBhbnRpQm90OifZhdmD2KfZgdit2Kkg2KfZhNio2YjYqicsIGFjdGlvbkRlbGV0ZTon2K3YsNmBJywgYWN0aW9uS2ljazon2K3YsNmBK9i32LHYrycgfQp9Owpjb25zdCBJY29uID0gKHsgaWQsIHNpemU9MTYsIGNsYXNzTmFtZT0nJyB9KSA9PiAoPHN2ZyB3aWR0aD17c2l6ZX0gaGVpZ2h0PXtzaXplfSBjbGFzc05hbWU9e2NsYXNzTmFtZX0+PHVzZSBocmVmPXtgI2ljLSR7aWR9YH0gLz48L3N2Zz4pOwpjb25zdCBUb2dnbGUgPSAoeyB2YWx1ZSwgb25DaGFuZ2UgfSkgPT4geyBjb25zdCBvbiA9IHZhbHVlID09PSAnb24nOyByZXR1cm4gKDxkaXYgb25DbGljaz17KCkgPT4gb25DaGFuZ2Uob24gPyAnb2ZmJyA6ICdvbicpfSBjbGFzc05hbWU9e2B0b2dnbGUtd3JhcCAke29uID8gJ29uJyA6ICdvZmYnfWB9IHJvbGU9InN3aXRjaCI+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS10aHVtYiIgLz48L2Rpdj4pOyB9Owpjb25zdCBDYXJkID0gKHsgY2hpbGRyZW4sIHN0cmlwZSwgc2hhZG93LCBkZWxheT0nJyB9KSA9PiAoPGRpdiBjbGFzc05hbWU9e2BnbGFzcyBmYWRlLXVwICR7ZGVsYXl9YH0gc3R5bGU9e3sgcGFkZGluZzonMjhweCAyOHB4IDI0cHgnIH19PjxkaXYgY2xhc3NOYW1lPSJzdHJpcGUiIHN0eWxlPXt7IGJhY2tncm91bmQ6c3RyaXBlLCBib3hTaGFkb3c6YDAgMCAxNnB4ICR7c2hhZG93fWAgfX0gLz57Y2hpbGRyZW59PC9kaXY+KTsKY29uc3QgU2VjdGlvblRpdGxlID0gKHsgaWNvbiwgY29sb3IsIGxhYmVsIH0pID0+ICg8ZGl2IGNsYXNzTmFtZT0ic2VjLWxhYmVsIiBzdHlsZT17eyBjb2xvciB9fT48SWNvbiBpZD17aWNvbn0gc2l6ZT17MTV9IC8+e2xhYmVsfTwvZGl2Pik7CmNvbnN0IEZpZWxkID0gKHsgbGFiZWwsIGNoaWxkcmVuIH0pID0+ICg8ZGl2PjxwIHN0eWxlPXt7IGZvbnRTaXplOjExLCBjb2xvcjondmFyKC0tZmFpbnQpJywgbWFyZ2luQm90dG9tOjYsIHRleHRUcmFuc2Zvcm06J3VwcGVyY2FzZScgfX0+e2xhYmVsfTwvcD57Y2hpbGRyZW59PC9kaXY+KTsKCmZ1bmN0aW9uIEFwcCgpIHsKICBjb25zdCBbbGFuZywgc2V0TGFuZ10gPSB1c2VTdGF0ZShudWxsKTsgY29uc3QgW2lzQXV0aCwgc2V0SXNBdXRoXSA9IHVzZVN0YXRlKGZhbHNlKTsgY29uc3QgW293bmVyTnVtLCBzZXRPd25lck51bV0gPSB1c2VTdGF0ZSgnJyk7IGNvbnN0IFtwYXNzd29yZCwgc2V0UGFzc3dvcmRdID0gdXNlU3RhdGUoJycpOwogIGNvbnN0IFtsb2FkaW5nLCBzZXRMb2FkaW5nXSA9IHVzZVN0YXRlKGZhbHNlKTsgY29uc3QgW3RvYXN0LCBzZXRUb2FzdF0gPSB1c2VTdGF0ZSgnJyk7IGNvbnN0IFt1cGxvYWRpbmcsIHNldFVwbG9hZGluZ10gPSB1c2VTdGF0ZShudWxsKTsKICBjb25zdCBbYXBwSWQsIHNldEFwcElkXSA9IHVzZVN0YXRlKCcnKTsgY29uc3QgW2Vycm9ycywgc2V0RXJyb3JzXSA9IHVzZVN0YXRlKHsgbmFtZTonJywgZnJvbTonJywgYWdlOicnLCBwcmVmaXg6JycsIGZvb3RlcjI6JycgfSk7CiAgY29uc3Qgb3duZXJOdW1SZWYgPSB1c2VSZWYoJycpOyBjb25zdCBhcHBJZFJlZiA9IHVzZVJlZignJyk7CiAgCiAgLy8gRml4OiBFeHRyYWN0IGFwcElkIGZyb20gcGFzc3dvcmQgRVhBQ1RMWSBsaWtlIGJhY2tlbmQgZG9lcwogIC8vIEJhY2tlbmQ6IHBhc3Muc2xpY2UoLTEpIGZvciA2IGNoYXJzLCBwYXNzLnNsaWNlKC0yKSBmb3IgNyBjaGFycwogIGNvbnN0IGV4dHJhY3RBcHBJZEZyb21QYXNzID0gdXNlQ2FsbGJhY2soKHBhc3NTdHIpID0+IHsKICAgIGlmICghcGFzc1N0cikgcmV0dXJuICcnOwogICAgaWYgKHBhc3NTdHIubGVuZ3RoID09PSA2KSByZXR1cm4gcGFzc1N0ci5zbGljZSgtMSk7ICAvLyBsYXN0IDEgY2hhcgogICAgaWYgKHBhc3NTdHIubGVuZ3RoID09PSA3KSByZXR1cm4gcGFzc1N0ci5zbGljZSgtMik7IC8vIGxhc3QgMiBjaGFycwogICAgcmV0dXJuICcnOwogIH0sIFtdKTsKICAKICBjb25zdCBbcywgc2V0U10gPSB1c2VTdGF0ZSh7CiAgICBuYW1lOkJSQU5EX1BBTkVMX05BTUUsIGZyb206J1NyaSBMYW5rYScsIGFnZTonMjQnLCBwcmVmaXg6Jy4nLCBmb290ZXIyOkJSQU5EX1BBTkVMX05BTUUsCiAgICBvd25lck51bWJlcjonJywgb3duZXJuYW1lOicnLCBkZXNjcmlwdGlvbjonJywgY3VzdG9tQXV0b1JlcGxpZXM6JycsIGF1dG9TYXZlOidvbicsCiAgICBtb2RlOidwdWJsaWMnLCBhbnRpQmFkOidvZmYnLCBhbnRpTGluazonb2ZmJywgYXV0b1JlY29yZGluZzonb2ZmJywgYXV0b1R5cGluZzonb2ZmJywKICAgIGFsd2F5c09ubGluZTonb2ZmJywga2VlcERlbGV0ZWRTdGF0dXM6J29uJywgZ2hvc3RNb2RlOidvZmYnLCBhdXRvU3RhdHVzUmVhZDonb24nLCBhdXRvU3RhdHVzUmVhY3Q6J29uJywgYXV0b1JlYWQ6J29mZicsCiAgICBhdXRvQmxvY2s6J29mZicsIGF1dG9SZWFjdDonb2ZmJywgYXV0b1ZvaWNlOidvZmYnLCBhbnRpRGVsZXRlOidvZmYnLCBzZW5kRGVsZXRlVG86J293bmVyJywKICAgIGFudGlDYWxsOidvZmYnLCBleGNsdWRlQ2FsbE51bWJlcnM6JycsIHN0YXR1c01zZ1NlbmQ6J29mZicsIHN0YXR1c01zZ1R5cGU6J2RlZmF1bHQnLCBjdXN0b21Nc2c6JycsCiAgICBnYUdyb3VwSmlkOicnLCBnYVRpbWV6b25lOidBc2lhL0NvbG9tYm8nLCBnYUNsb3NlVGltZTonMTU6MDAnLCBnYU9wZW5UaW1lOicwNTowMCcsCiAgICBtZW51OkRFRkFVTFRfQlJBTkRfSU1BR0UsIGFsaXZlOkRFRkFVTFRfQlJBTkRfSU1BR0UsIG93bmVyOkRFRkFVTFRfQlJBTkRfSU1BR0UsCiAgICBzdGF0dXNDdXN0b21SZWFjdDogJycsCiAgICBhbnRpQnVnOiAnb2ZmJywKICAgIGFudGlCb3Q6ICdvZmYnLAogICAgYW50aUJvdEFjdGlvbjogJ2RlbGV0ZScsCiAgICBsYW5ndWFnZTogJ2FyYWJpYycsCiAgICBhbnRpVmlld09uY2U6ICdvZmYnLAogICAgYW50aUxpbmtMaXN0OiAnd2EubWUsd2hhdHNhcHAuY29tJywKICAgIGFudGlCYWRXb3JkczogJ2h1dGh0aGEscG9ubmEnLAogICAgYW50aU1lbnRpb246ICdvZmYnLAogICAgYW50aUVkaXQ6ICdpbmJveCcsCiAgICBhbnRpQWN0aW9uOiAnd2VybicsCiAgICBhbnRpV2FybkNvdW50OiAnMycsCiAgICBhdXRvUmVhY3RTY29wZTogJ2luYm94JywKICAgIGFpUmVwbHlTY29wZTogJ2luYm94JywKICAgIGFsaXZlTXNnOiAn4p2WICphbGl2ZSBub3cgbW9uZXkgaGVpc3QgbWQqJywKICAgIHZvaWNlRm9vdGVyOiAnaHR0cHM6Ly9naXRodWIuY29tL21vbmV0aGVpc3RtZC9XRUJfREFUQUJBU0UvcmF3L21haW4vQVVELTIwMjUxMjI5LVdBMDAzNC5tcDMnCiAgfSk7CiAgCiAgY29uc3QgdHggPSBUW2xhbmcgfHwgJ2VuJ107IGNvbnN0IHVwZCA9IHVzZUNhbGxiYWNrKChrLCB2KSA9PiBzZXRTKHAgPT4gKHsgLi4ucCwgW2tdOiB2IH0pKSwgW10pOwogIGNvbnN0IHNob3dUb2FzdCA9IHVzZUNhbGxiYWNrKChtc2cpID0+IHsgc2V0VG9hc3QobXNnKTsgc2V0VGltZW91dCgoKSA9PiBzZXRUb2FzdCgnJyksIDMwMDApOyB9LCBbXSk7CiAgCiAgLy8gVXBkYXRlIGFwcElkIHdoZW4gcGFzc3dvcmQgY2hhbmdlcyAtIHVzaW5nIGNvcnJlY3QgZXh0cmFjdGlvbiBsb2dpYwogIHVzZUVmZmVjdCgoKSA9PiB7CiAgICBpZiAoIWlzQXV0aCkgewogICAgICBjb25zdCBleHRyYWN0ZWRJZCA9IGV4dHJhY3RBcHBJZEZyb21QYXNzKHBhc3N3b3JkKTsKICAgICAgc2V0QXBwSWQoZXh0cmFjdGVkSWQpOwogICAgfQogIH0sIFtwYXNzd29yZCwgZXh0cmFjdEFwcElkRnJvbVBhc3MsIGlzQXV0aF0pOwogIAogIHVzZUVmZmVjdCgoKSA9PiB7IG93bmVyTnVtUmVmLmN1cnJlbnQgPSBvd25lck51bTsgfSwgW293bmVyTnVtXSk7IAogIHVzZUVmZmVjdCgoKSA9PiB7IGFwcElkUmVmLmN1cnJlbnQgPSBhcHBJZDsgfSwgW2FwcElkXSk7CiAgCiAgY29uc3QgdmFsaWRhdG9ycyA9IHsgbmFtZTogdiA9PiB7IGNvbnN0IHQgPSB2LnNsaWNlKDAsMTUpOyBzZXRFcnJvcnMocD0+KHsuLi5wLG5hbWU6IHQubGVuZ3RoPT09MTU/dHgubWF4Q2hhcnM6Jyd9KSk7IHJldHVybiB0OyB9LCBmcm9tOiB2ID0+IHsgY29uc3QgdCA9IHYuc2xpY2UoMCwxNSk7IHNldEVycm9ycyhwPT4oey4uLnAsZnJvbTogdC5sZW5ndGg9PT0xNT90eC5tYXhDaGFyczonJ30pKTsgcmV0dXJuIHQ7IH0sIGZvb3RlcjI6diA9PiB7IGNvbnN0IHQgPSB2LnNsaWNlKDAsMTUpOyBzZXRFcnJvcnMocD0+KHsuLi5wLGZvb3RlcjI6dC5sZW5ndGg9PT0xNT90eC5tYXhDaGFyczonJ30pKTsgcmV0dXJuIHQ7IH0sIGFnZTogdiA9PiB7IGNvbnN0IG4gPSB2LnJlcGxhY2UoL1teMC05XS9nLCcnKS5zbGljZSgwLDIpOyBjb25zdCBlcnIgPSBuICYmIChwYXJzZUludChuKTwxfHxwYXJzZUludChuKT45OSkgPyB0eC5hZ2VFcnJvciA6ICcnOyBzZXRFcnJvcnMocD0+KHsuLi5wLGFnZTplcnJ9KSk7IHJldHVybiBuOyB9LCBwcmVmaXg6IHYgPT4geyBjb25zdCBvayA9IC9eWy4hQCMkJV4mKigpXC1fK1tcXXt9Oyc6IlxcfCwuPD4vP35dKiQvLnRlc3Qodik7IHNldEVycm9ycyhwPT4oey4uLnAscHJlZml4Om9rPycnOnR4LnByZWZpeEVycm9yfSkpOyByZXR1cm4gb2sgPyB2IDogdi5zbGljZSgwLC0xKTsgfSB9OwogIGNvbnN0IGhhbmRsZUlucHV0ID0gKGZpZWxkLCB2YWx1ZSkgPT4gdXBkKGZpZWxkLCB2YWxpZGF0b3JzW2ZpZWxkXSA/IHZhbGlkYXRvcnNbZmllbGRdKHZhbHVlKSA6IHZhbHVlKTsKICAKICBjb25zdCBoYW5kbGVMb2dpbiA9IHVzZUNhbGxiYWNrKGFzeW5jIChlKSA9PiB7IAogICAgZS5wcmV2ZW50RGVmYXVsdCgpOyBzZXRMb2FkaW5nKHRydWUpOyAKICAgIHRyeSB7IAogICAgICBjb25zdCByID0gYXdhaXQgYXBpUG9zdChBUEkubG9naW4sIHsgbnVtOiBvd25lck51bSwgcGFzczogcGFzc3dvcmQgfSk7IAogICAgICBpZiAoIXIuc3VjY2VzcykgdGhyb3cgbmV3IEVycm9yKHIubWVzc2FnZSB8fCAn4puUIFdyb25nIFVzZXIgTnVtYmVyIE9yIFBhc3N3b3JkJyk7IAogICAgICBjb25zdCByZXNvbHZlZEFwcElkID0gci5hcHAgfHwgZXh0cmFjdEFwcElkRnJvbVBhc3MocGFzc3dvcmQpIHx8ICdkZWZhdWx0JzsKICAgICAgc2V0QXBwSWQocmVzb2x2ZWRBcHBJZCk7CiAgICAgIHNldElzQXV0aCh0cnVlKTsgCiAgICAgIHNob3dUb2FzdCgnTG9naW4gc3VjY2Vzc2Z1bCEnKTsgCiAgICAgIHRyeSB7IAogICAgICAgIGNvbnN0IGxyID0gYXdhaXQgYXBpR2V0KEFQSS5sb2FkU2V0dCwgeyBudW06IG93bmVyTnVtLCBhcHA6IHJlc29sdmVkQXBwSWQgfSk7IAogICAgICAgIGlmIChsci5zdWNjZXNzICYmIGxyLnNldHRpbmdzKSB7IAogICAgICAgICAgc2V0QXBwSWQobHIuYXBwIHx8IHJlc29sdmVkQXBwSWQpOwogICAgICAgICAgc2V0UyhwcmV2ID0+IHsgY29uc3QgbmV4dCA9IHsgLi4ucHJldiB9OyBPYmplY3Qua2V5cyhwcmV2KS5mb3JFYWNoKGsgPT4geyBpZiAobHIuc2V0dGluZ3Nba10gIT09IHVuZGVmaW5lZCkgbmV4dFtrXSA9IGxyLnNldHRpbmdzW2tdOyB9KTsgcmV0dXJuIG5leHQ7IH0pOyAKICAgICAgICB9IAogICAgICB9IGNhdGNoIChsb2FkRXJyKSB7IGNvbnNvbGUud2Fybihsb2FkRXJyKTsgfSAKICAgIH0gY2F0Y2ggKGVycikgeyBhbGVydChlcnIubWVzc2FnZSB8fCAnTG9naW4gZmFpbGVkJyk7IH0gCiAgICBmaW5hbGx5IHsgc2V0TG9hZGluZyhmYWxzZSk7IH0gCiAgfSwgW293bmVyTnVtLCBwYXNzd29yZCwgc2hvd1RvYXN0LCBleHRyYWN0QXBwSWRGcm9tUGFzc10pOwogIAogIGNvbnN0IGhhbmRsZVNhdmUgPSB1c2VDYWxsYmFjayhhc3luYyAoZSkgPT4geyAKICAgIGUucHJldmVudERlZmF1bHQoKTsgc2V0TG9hZGluZyh0cnVlKTsgCiAgICB0cnkgeyAKICAgICAgY29uc3QgcmVzb2x2ZWRBcHBJZCA9IGFwcElkUmVmLmN1cnJlbnQgfHwgYXBwSWQgfHwgZXh0cmFjdEFwcElkRnJvbVBhc3MocGFzc3dvcmQpIHx8ICdkZWZhdWx0JzsKICAgICAgY29uc3QgciA9IGF3YWl0IGFwaVBvc3QoQVBJLnNhdmVTZXR0LCB7IC4uLnMsIGF1dG9SZWFjdDonb2ZmJywgbnVtOiBvd25lck51bVJlZi5jdXJyZW50LCBhcHA6IHJlc29sdmVkQXBwSWQgfSk7IAogICAgICBpZiAoIXIuc3VjY2VzcykgdGhyb3cgbmV3IEVycm9yKHIuZXJyb3IgfHwgJ1NhdmUgZmFpbGVkJyk7IAogICAgICBzZXRBcHBJZChyLmFwcCB8fCByZXNvbHZlZEFwcElkKTsKICAgICAgaWYgKHIuc2V0dGluZ3MpIHsKICAgICAgICBzZXRTKHByZXYgPT4gKHsgLi4ucHJldiwgLi4uci5zZXR0aW5ncyB9KSk7CiAgICAgIH0KICAgICAgc2hvd1RvYXN0KHR4Lm9rKTsgCiAgICB9IGNhdGNoIChlcnIpIHsgYWxlcnQoZXJyLm1lc3NhZ2UgfHwgJ1NhdmUgZmFpbGVkJyk7IH0gCiAgICBmaW5hbGx5IHsgc2V0TG9hZGluZyhmYWxzZSk7IH0gCiAgfSwgW3MsIHR4Lm9rLCBzaG93VG9hc3RdKTsKICAKICBjb25zdCBoYW5kbGVVcGxvYWQgPSB1c2VDYWxsYmFjaygoZSwgZmllbGRLZXkpID0+IHsgY29uc3QgZmlsZSA9IGUudGFyZ2V0LmZpbGVzWzBdOyBpZiAoIWZpbGUpIHJldHVybjsgc2V0VXBsb2FkaW5nKGZpZWxkS2V5KTsgY29uc3QgcmVhZGVyID0gbmV3IEZpbGVSZWFkZXIoKTsgcmVhZGVyLm9ubG9hZCA9IGFzeW5jICgpID0+IHsgdHJ5IHsgY29uc3QgciA9IGF3YWl0IGFwaVBvc3QoQVBJLnVwbG9hZCwgeyBpbWFnZTogcmVhZGVyLnJlc3VsdC5zcGxpdCgnLCcpWzFdLCBmaWVsZEtleSwgbnVtOiBvd25lck51bVJlZi5jdXJyZW50LCBhcHA6IGFwcElkUmVmLmN1cnJlbnQgfHwgYXBwSWQgfHwgJ2RlZmF1bHQnIH0pOyBpZiAoIXIuc3VjY2VzcykgdGhyb3cgbmV3IEVycm9yKHIuZXJyb3IgfHwgJ1VwbG9hZCBmYWlsZWQnKTsgdXBkKHIuZmllbGRLZXksIHIudXJsKTsgc2hvd1RvYXN0KCdJbWFnZSB1cGxvYWRlZCEnKTsgfSBjYXRjaCAoZXJyKSB7IGFsZXJ0KCdVcGxvYWQgZXJyb3I6ICcgKyBlcnIubWVzc2FnZSk7IH0gZmluYWxseSB7IHNldFVwbG9hZGluZyhudWxsKTsgfSB9OyByZWFkZXIucmVhZEFzRGF0YVVSTChmaWxlKTsgfSwgW3VwZCwgc2hvd1RvYXN0LCBhcHBJZF0pOwoKICAvLyBFTU9KSSBMT0dJQyAtIE9ORSBFTU9KSSBBVCBBIFRJTUUgKOC3g+C3kuC2guC3hOC2veC3meC2seC3ijog4LaR4LaaIOC2keC2miDgtongtrjgt53gtqLgt5Lgtrrgtprgt4og4La04La44Lar4La64LeSKQogIGNvbnN0IGVtb2ppTGlzdCA9IEFycmF5LmZyb20obmV3IFNldCgocy5zdGF0dXNDdXN0b21SZWFjdCB8fCAnJykuc3BsaXQoJywnKS5tYXAoZSA9PiBlLnRyaW0oKSkuZmlsdGVyKGUgPT4gZS5sZW5ndGggPiAwICYmICFlLmluY2x1ZGVzKCcgJykpKSkuc2xpY2UoMCwxMCk7CiAgCiAgY29uc3QgYWRkRW1vamkgPSAobmV3RW1vamkpID0+IHsgCiAgICBpZiAoIW5ld0Vtb2ppKSByZXR1cm47IAogICAgY29uc3QgdHJpbW1lZCA9IG5ld0Vtb2ppLnRyaW0oKTsKICAgIGlmICh0cmltbWVkLmxlbmd0aCA9PT0gMCkgcmV0dXJuOwogICAgaWYgKHRyaW1tZWQuaW5jbHVkZXMoJyAnKSkgewogICAgICBzaG93VG9hc3Q/LignRW50ZXIgb25lIGVtb2ppIG9ubHknKSB8fCBhbGVydCgnUGxlYXNlIGVudGVyIE9ORSBlbW9qaSBvbmx5IScpOwogICAgICByZXR1cm47CiAgICB9CiAgICBsZXQgY3VycmVudCA9IFsuLi5lbW9qaUxpc3RdOwogICAgaWYgKGN1cnJlbnQuaW5jbHVkZXModHJpbW1lZCkpIHJldHVybjsKICAgIGNvbnN0IG5leHQgPSBbLi4uY3VycmVudCwgdHJpbW1lZF0uc2xpY2UoMCwxMCk7CiAgICB1cGQoJ3N0YXR1c0N1c3RvbVJlYWN0JywgbmV4dC5qb2luKCcsJykpOwogIH07CiAgCiAgY29uc3QgcmVtb3ZlRW1vamkgPSAoaWR4KSA9PiB7IAogICAgY29uc3QgbmV4dCA9IFsuLi5lbW9qaUxpc3RdOyAKICAgIG5leHQuc3BsaWNlKGlkeCwxKTsgCiAgICB1cGQoJ3N0YXR1c0N1c3RvbVJlYWN0JywgbmV4dC5qb2luKCcsJykpOyAKICB9OwogIAogIGNvbnN0IGhhbmRsZUVtb2ppS2V5RG93biA9IChlKSA9PiB7IAogICAgaWYgKGUua2V5ID09PSAnRW50ZXInKSB7IAogICAgICBlLnByZXZlbnREZWZhdWx0KCk7IAogICAgICBjb25zdCBpbnAgPSBlLnRhcmdldDsgCiAgICAgIGxldCByYXcgPSBpbnAudmFsdWUudHJpbSgpOyAKICAgICAgaWYgKHJhdykgeyAKICAgICAgICBhZGRFbW9qaShyYXcpOyAKICAgICAgICBpbnAudmFsdWUgPSAnJzsgCiAgICAgIH0gCiAgICB9IAogIH07CgogIGNvbnN0IGF1dG9SZXBseUNvdW50ID0gU3RyaW5nKHMuY3VzdG9tQXV0b1JlcGxpZXMgfHwgJycpLnNwbGl0KC9ccj9cbi8pLm1hcChsaW5lID0+IGxpbmUudHJpbSgpKS5maWx0ZXIoQm9vbGVhbikubGVuZ3RoOwogIGNvbnN0IHByaXZhdGVBbnRpRGVsZXRlRW5hYmxlZCA9IHMuYW50aURlbGV0ZSA9PT0gJ2luYm94JyAmJiBzLnNlbmREZWxldGVUbyA9PT0gJ293bmVyJzsKCiAgaWYgKCFsYW5nKSByZXR1cm4gKDxkaXYgY2xhc3NOYW1lPSJsYW5nLW92ZXJsYXkiPjxkaXYgc3R5bGU9e3t0ZXh0QWxpZ246J2NlbnRlcicsIG1heFdpZHRoOjM2MH19PjxkaXYgc3R5bGU9e3t3aWR0aDo3MixoZWlnaHQ6NzIsYm9yZGVyUmFkaXVzOjIwLGJhY2tncm91bmQ6J2xpbmVhci1ncmFkaWVudCgxMzVkZWcscmdiYSgyMTIsMTYwLDg1LDAuMTUpLHJnYmEoNTgsMTIzLDIxMywwLjE1KSknLGJvcmRlcjonMXB4IHNvbGlkIHZhcigtLWJvcmRlci1hY2NlbnQpJyxtYXJnaW46JzAgYXV0byAyMHB4JyxkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGp1c3RpZnlDb250ZW50OidjZW50ZXInfX0+PEljb24gaWQ9ImNwdSIgc2l6ZT17MzJ9IHN0eWxlPXt7Y29sb3I6J3ZhcigtLWdvbGQpJ319IC8+PC9kaXY+PGgxIHN0eWxlPXt7Zm9udFdlaWdodDo4MDAsZm9udFNpemU6MjJ9fT57QlJBTkRfUEFORUxfTkFNRX08L2gxPjxwIGNsYXNzTmFtZT0ibW9ubyIgc3R5bGU9e3tmb250U2l6ZToxMSxjb2xvcjondmFyKC0tZmFpbnQpJ319PkFETUlOIFBBTkVMPC9wPjxkaXYgc3R5bGU9e3tkaXNwbGF5OidncmlkJyxnYXA6MTIsbWFyZ2luVG9wOjI0fX0+e1snZW4nLCdzaScsJ3RhJywnYXInXS5tYXAoYyA9PiAoPGJ1dHRvbiBrZXk9e2N9IG9uQ2xpY2s9eygpPT5zZXRMYW5nKGMpfSBjbGFzc05hbWU9ImxhbmctYnRuIiBzdHlsZT17e2p1c3RpZnlDb250ZW50OidmbGV4LXN0YXJ0J319PjxzcGFuIHN0eWxlPXt7Zm9udFNpemU6MjJ9fT57Yz09PSdlbic/J/Cfh6zwn4enJzpjPT09J3NpJz8n8J+HsfCfh7AnOmM9PT0ndGEnPyfwn4eu8J+Hsyc6J/Cfh7jwn4emJ308L3NwYW4+PHNwYW4+e2M9PT0nZW4nPydFbmdsaXNoJzpjPT09J3NpJz8n4LeD4LeS4LaC4LeE4La9JzpjPT09J3RhJz8n4K6k4K6u4K6/4K604K+NJzon2KfZhNi52LHYqNmK2KknfTwvc3Bhbj48L2J1dHRvbj4pKX08L2Rpdj48L2Rpdj48L2Rpdj4pOwogIGNvbnN0IGlzUnRsID0gbGFuZyA9PT0gJ2FyJzsKICAKICBpZiAoIWlzQXV0aCkgcmV0dXJuICg8ZGl2IGNsYXNzTmFtZT17aXNSdGw/J3J0bCc6Jyd9IHN0eWxlPXt7ZGlzcGxheTonZmxleCcsYWxpZ25JdGVtczonY2VudGVyJyxqdXN0aWZ5Q29udGVudDonY2VudGVyJyxtaW5IZWlnaHQ6JzEwMHZoJyxwYWRkaW5nOjI0fX0+PGRpdiBjbGFzc05hbWU9ImdsYXNzIiBzdHlsZT17e3dpZHRoOicxMDAlJyxtYXhXaWR0aDo0NDAscGFkZGluZzonNDhweCA0MHB4J319PjxkaXYgc3R5bGU9e3t0ZXh0QWxpZ246J2NlbnRlcicsbWFyZ2luQm90dG9tOjM2fX0+PGRpdiBzdHlsZT17e3dpZHRoOjU2LGhlaWdodDo1Nixib3JkZXJSYWRpdXM6MTYsYmFja2dyb3VuZDonbGluZWFyLWdyYWRpZW50KDEzNWRlZyxyZ2JhKDIxMiwxNjAsODUsMC4xNSkscmdiYSg1OCwxMjMsMjEzLDAuMTUpKScsYm9yZGVyOicxcHggc29saWQgdmFyKC0tYm9yZGVyLWFjY2VudCknLGRpc3BsYXk6J2lubGluZS1mbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGp1c3RpZnlDb250ZW50OidjZW50ZXInLG1hcmdpbkJvdHRvbToxNn19PjxJY29uIGlkPSJjcHUiIHNpemU9ezI0fSBzdHlsZT17e2NvbG9yOid2YXIoLS1nb2xkKSd9fSAvPjwvZGl2PjxoMSBzdHlsZT17e2ZvbnRXZWlnaHQ6ODAwLGZvbnRTaXplOjIwLGNvbG9yOid2YXIoLS1nb2xkKSd9fT57dHgubG9naW59PC9oMT48L2Rpdj48Zm9ybSBvblN1Ym1pdD17aGFuZGxlTG9naW59IGF1dG9Db21wbGV0ZT0ib2ZmIj48ZGl2IHN0eWxlPXt7cG9zaXRpb246J3JlbGF0aXZlJyxtYXJnaW5Cb3R0b206MTZ9fT48c3BhbiBzdHlsZT17e3Bvc2l0aW9uOidhYnNvbHV0ZScsbGVmdDoxMyx0b3A6JzUwJScsdHJhbnNmb3JtOid0cmFuc2xhdGVZKC01MCUpJyxjb2xvcjondmFyKC0tZmFpbnQpJ319PjxJY29uIGlkPSJ1c2VyIiBzaXplPXsxNX0gLz48L3NwYW4+PGlucHV0IGNsYXNzTmFtZT0iaW5wIiBzdHlsZT17e3BhZGRpbmdMZWZ0OjM4fX0gcGxhY2Vob2xkZXI9e3R4Lm51bX0gdmFsdWU9e293bmVyTnVtfSBvbkNoYW5nZT17ZT0+c2V0T3duZXJOdW0oZS50YXJnZXQudmFsdWUucmVwbGFjZSgvW14wLTldL2csJycpKX0gcmVxdWlyZWQgYXV0b0NvbXBsZXRlPSJvZmYiIG5hbWU9Im5vbmUtdXNlciIgLz48L2Rpdj48ZGl2IHN0eWxlPXt7cG9zaXRpb246J3JlbGF0aXZlJyxtYXJnaW5Cb3R0b206MTZ9fT48c3BhbiBzdHlsZT17e3Bvc2l0aW9uOidhYnNvbHV0ZScsbGVmdDoxMyx0b3A6JzUwJScsdHJhbnNmb3JtOid0cmFuc2xhdGVZKC01MCUpJyxjb2xvcjondmFyKC0tZmFpbnQpJ319PjxJY29uIGlkPSJsb2NrIiBzaXplPXsxNX0gLz48L3NwYW4+PGlucHV0IGNsYXNzTmFtZT0iaW5wIiBzdHlsZT17e3BhZGRpbmdMZWZ0OjM4fX0gdHlwZT0icGFzc3dvcmQiIHBsYWNlaG9sZGVyPXt0eC5wYXNzfSB2YWx1ZT17cGFzc3dvcmR9IG9uQ2hhbmdlPXtlPT5zZXRQYXNzd29yZChlLnRhcmdldC52YWx1ZSl9IHJlcXVpcmVkIGF1dG9Db21wbGV0ZT0ibmV3LXBhc3N3b3JkIiBuYW1lPSJub25lLXBhc3MiIC8+PC9kaXY+e2FwcElkICYmICg8ZGl2IHN0eWxlPXt7YmFja2dyb3VuZDoncmdiYSgyMTIsMTYwLDg1LDAuMDcpJyxib3JkZXI6JzFweCBzb2xpZCB2YXIoLS1ib3JkZXItYWNjZW50KScsYm9yZGVyUmFkaXVzOjE0LHBhZGRpbmc6JzEycHggMTZweCcsbWFyZ2luQm90dG9tOjE2fX0+PGRpdiBjbGFzc05hbWU9ImFwcC1iYWRnZSI+PEljb24gaWQ9InNtYXJ0cGhvbmUiIHNpemU9ezEzfSAvPjxzcGFuPnt0eC5hcHBJZH08L3NwYW4+PC9kaXY+PHNwYW4gc3R5bGU9e3tjb2xvcjondmFyKC0tZ29sZCknLGZvbnRXZWlnaHQ6J2JvbGQnLGZvbnRTaXplOjE4LG1hcmdpbkxlZnQ6MTJ9fT57YXBwSWR9PC9zcGFuPjxzcGFuIHN0eWxlPXt7Y29sb3I6J3ZhcigtLW11dGVkKScsZm9udFNpemU6MTEsbWFyZ2luTGVmdDo4fX0+e3R4LmRldGVjdGVkfTwvc3Bhbj48L2Rpdj4pfTxidXR0b24gdHlwZT0ic3VibWl0IiBkaXNhYmxlZD17bG9hZGluZ30gc3R5bGU9e3tiYWNrZ3JvdW5kOmxvYWRpbmc/J3JnYmEoMjEyLDE2MCw4NSwwLjIpJzonbGluZWFyLWdyYWRpZW50KDEzNWRlZyx2YXIoLS1nb2xkKSwjYjg4NTNhKScsY29sb3I6bG9hZGluZz8ndmFyKC0tbXV0ZWQpJzonIzBkMGQwZCcsYm9yZGVyOidub25lJyxib3JkZXJSYWRpdXM6MTQscGFkZGluZzonMTRweCcsZm9udFdlaWdodDo3MDAsd2lkdGg6JzEwMCUnLGRpc3BsYXk6J2ZsZXgnLGFsaWduSXRlbXM6J2NlbnRlcicsanVzdGlmeUNvbnRlbnQ6J2NlbnRlcicsZ2FwOjh9fT57bG9hZGluZz88PjxzcGFuIGNsYXNzTmFtZT0ic3BpbiIgLz5Mb2dnaW5nLi4uPC8+OnR4LmF1dGh9PC9idXR0b24+PC9mb3JtPjxidXR0b24gb25DbGljaz17KCk9PnNldExhbmcobnVsbCl9IHN0eWxlPXt7bWFyZ2luVG9wOjE2LGJhY2tncm91bmQ6J25vbmUnLGJvcmRlcjonbm9uZScsY29sb3I6J3ZhcigtLWZhaW50KScsZm9udFNpemU6MTIsY3Vyc29yOidwb2ludGVyJ319PuKGkCB7dHguc2VsfTwvYnV0dG9uPjwvZGl2PjwvZGl2Pik7CgogIHJldHVybiAoPGRpdiBjbGFzc05hbWU9e2lzUnRsPydydGwnOicnfT48ZGl2IHN0eWxlPXt7cG9zaXRpb246J3JlbGF0aXZlJyx6SW5kZXg6MX19Pnt0b2FzdCAmJiAoPGRpdiBjbGFzc05hbWU9InRvYXN0LWFuaW0iIHN0eWxlPXt7cG9zaXRpb246J2ZpeGVkJyx0b3A6MjQsbGVmdDonNTAlJyx0cmFuc2Zvcm06J3RyYW5zbGF0ZVgoLTUwJSknLHpJbmRleDoxMDAwMCxiYWNrZ3JvdW5kOidsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHZhcigtLWdvbGQpLCNiODg1M2EpJyxjb2xvcjonIzBkMGQwZCcscGFkZGluZzonMTRweCAzMnB4Jyxib3JkZXJSYWRpdXM6MTYsZm9udFdlaWdodDo3MDB9fT57dG9hc3R9PC9kaXY+KX08ZGl2IHN0eWxlPXt7bWF4V2lkdGg6OTYwLG1hcmdpbjonMCBhdXRvJyxwYWRkaW5nOiczMnB4IDIwcHggMTIwcHgnfX0+PGhlYWRlciBjbGFzc05hbWU9ImdsYXNzIGZhZGUtdXAiIHN0eWxlPXt7ZGlzcGxheTonZmxleCcsanVzdGlmeUNvbnRlbnQ6J3NwYWNlLWJldHdlZW4nLGFsaWduSXRlbXM6J2NlbnRlcicscGFkZGluZzonMjBweCAyOHB4JyxtYXJnaW5Cb3R0b206MjR9fT48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZmxleCcsYWxpZ25JdGVtczonY2VudGVyJyxnYXA6MTZ9fT48ZGl2IHN0eWxlPXt7d2lkdGg6NDQsaGVpZ2h0OjQ0LGJvcmRlclJhZGl1czoxMyxiYWNrZ3JvdW5kOidsaW5lYXItZ3JhZGllbnQoMTM1ZGVnLHZhcigtLWdvbGQpLCNiODg1M2EpJyxkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGp1c3RpZnlDb250ZW50OidjZW50ZXInfX0+PEljb24gaWQ9ImNwdSIgc2l6ZT17MjB9IHN0eWxlPXt7Y29sb3I6JyMwZDBkMGQnfX0gLz48L2Rpdj48ZGl2PjxoMSBzdHlsZT17e2ZvbnRXZWlnaHQ6ODAwLGZvbnRTaXplOjE2fX0+e0JSQU5EX1BBTkVMX05BTUV9PC9oMT48cCBjbGFzc05hbWU9Im1vbm8iIHN0eWxlPXt7Zm9udFNpemU6MTEsY29sb3I6J3ZhcigtLWZhaW50KSd9fT57b3duZXJOdW19PC9wPjwvZGl2PjwvZGl2PjxidXR0b24gb25DbGljaz17KCk9PntzZXRJc0F1dGgoZmFsc2UpO3NldE93bmVyTnVtKCcnKTtzZXRQYXNzd29yZCgnJyk7fX0gc3R5bGU9e3tiYWNrZ3JvdW5kOidyZ2JhKDIzOSw2OCw2OCwwLjA4KScsY29sb3I6JyNlZjQ0NDQnLGJvcmRlcjonMXB4IHNvbGlkIHJnYmEoMjM5LDY4LDY4LDAuMiknLGJvcmRlclJhZGl1czoxMixwYWRkaW5nOic5cHggMThweCcsY3Vyc29yOidwb2ludGVyJyxkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGdhcDo4fX0+PEljb24gaWQ9ImxvZy1vdXQiIHNpemU9ezEzfSAvPnt0eC5sb2dvdXR9PC9idXR0b24+PC9oZWFkZXI+PGRpdiBjbGFzc05hbWU9ImZhZGUtdXAgZGVsYXktMSIgc3R5bGU9e3ttYXJnaW5Cb3R0b206MjQscGFkZGluZzonMTRweCAyMHB4JyxiYWNrZ3JvdW5kOidyZ2JhKDIxMiwxNjAsODUsMC4wNyknLGJvcmRlcjonMXB4IHNvbGlkIHZhcigtLWJvcmRlci1hY2NlbnQpJyxib3JkZXJSYWRpdXM6MTYsY29sb3I6J3ZhcigtLWdvbGQpJyxmb250U2l6ZToxMyxkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGdhcDoxMn19PjxJY29uIGlkPSJpbmZvIiBzaXplPXsxNn0gLz57dHgubm90aWNlfTwvZGl2PnthcHBJZCAmJiAoPGRpdiBjbGFzc05hbWU9ImZhZGUtdXAgZGVsYXktMSIgc3R5bGU9e3ttYXJnaW5Cb3R0b206MjQsYmFja2dyb3VuZDoncmdiYSgyMTIsMTYwLDg1LDAuMDcpJyxib3JkZXJSYWRpdXM6MTYscGFkZGluZzonMTZweCAyNHB4JyxkaXNwbGF5OidmbGV4JyxhbGlnbkl0ZW1zOidjZW50ZXInLGdhcDoxNn19PjxkaXYgY2xhc3NOYW1lPSJhcHAtYmFkZ2UiPjxJY29uIGlkPSJzbWFydHBob25lIiBzaXplPXsxNH0gLz48c3Bhbj57dHguYXBwSWR9PC9zcGFuPjwvZGl2PjxzcGFuIHN0eWxlPXt7Zm9udFNpemU6MjQsZm9udFdlaWdodDonYm9sZCcsY29sb3I6J3ZhcigtLWdvbGQpJ319PnthcHBJZH08L3NwYW4+PHNwYW4gc3R5bGU9e3tjb2xvcjondmFyKC0tbXV0ZWQpJyxmb250U2l6ZToxMn19Pnt0eC5kZXRlY3RlZH08L3NwYW4+PC9kaXY+KX08Zm9ybSBpZD0ic2V0dGluZ3NGb3JtIiBvblN1Ym1pdD17aGFuZGxlU2F2ZX0+PGRpdiBzdHlsZT17e2Rpc3BsYXk6J2ZsZXgnLGZsZXhEaXJlY3Rpb246J2NvbHVtbicsZ2FwOjIwfX0+PENhcmQgc3RyaXBlPSIjM2I4MmY2IiBzaGFkb3c9InJnYmEoNTksMTMwLDI0NiwwLjI1KSIgZGVsYXk9ImRlbGF5LTIiPjxTZWN0aW9uVGl0bGUgaWNvbj0idXNlciIgY29sb3I9IiM2MGE1ZmEiIGxhYmVsPXt0eC5iYXNpY30gLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczoncmVwZWF0KGF1dG8tZmlsbCxtaW5tYXgoMTYwcHgsMWZyKSknLGdhcDoxNCxtYXJnaW5Ub3A6MjB9fT48RmllbGQgbGFiZWw9IkxpbmtlZCBOdW1iZXIiPjxpbnB1dCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e293bmVyTnVtfSBkaXNhYmxlZCAvPjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJCb3QgTmFtZSI+PGlucHV0IGNsYXNzTmFtZT17YGlucCAke2Vycm9ycy5uYW1lPydpbnAtZXJyb3InOicnfWB9IHBsYWNlaG9sZGVyPXtCUkFORF9QQU5FTF9OQU1FfSB2YWx1ZT17cy5uYW1lfSBvbkNoYW5nZT17ZT0+aGFuZGxlSW5wdXQoJ25hbWUnLGUudGFyZ2V0LnZhbHVlKX0gbWF4TGVuZ3RoPXsxNX0gLz48ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9e2Vycm9ycy5uYW1lPydlcnJvci10ZXh0JzonaGludC10ZXh0J30+e2Vycm9ycy5uYW1lfHwnJ308L3NwYW4+PHNwYW4gY2xhc3NOYW1lPSJjb3VudGVyIj57cy5uYW1lLmxlbmd0aH0vMTU8L3NwYW4+PC9kaXY+PC9GaWVsZD48RmllbGQgbGFiZWw9IkxvY2F0aW9uIj48aW5wdXQgY2xhc3NOYW1lPXtgaW5wICR7ZXJyb3JzLmZyb20/J2lucC1lcnJvcic6Jyd9YH0gdmFsdWU9e3MuZnJvbX0gb25DaGFuZ2U9e2U9PmhhbmRsZUlucHV0KCdmcm9tJyxlLnRhcmdldC52YWx1ZSl9IG1heExlbmd0aD17MTV9IC8+PGRpdiBjbGFzc05hbWU9InZhbGlkYXRpb24taGludCI+PHNwYW4gY2xhc3NOYW1lPXtlcnJvcnMuZnJvbT8nZXJyb3ItdGV4dCc6J2hpbnQtdGV4dCd9PntlcnJvcnMuZnJvbXx8Jyd9PC9zcGFuPjxzcGFuIGNsYXNzTmFtZT0iY291bnRlciI+e3MuZnJvbS5sZW5ndGh9LzE1PC9zcGFuPjwvZGl2PjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJBZ2UiPjxpbnB1dCBjbGFzc05hbWU9e2BpbnAgJHtlcnJvcnMuYWdlPydpbnAtZXJyb3InOicnfWB9IHBsYWNlaG9sZGVyPSIyNCIgdmFsdWU9e3MuYWdlfSBvbkNoYW5nZT17ZT0+aGFuZGxlSW5wdXQoJ2FnZScsZS50YXJnZXQudmFsdWUpfSBtYXhMZW5ndGg9ezJ9IC8+PGRpdiBjbGFzc05hbWU9InZhbGlkYXRpb24taGludCI+PHNwYW4gY2xhc3NOYW1lPXtlcnJvcnMuYWdlPydlcnJvci10ZXh0JzonaGludC10ZXh0J30+e2Vycm9ycy5hZ2V8fHR4LmFnZUhpbnR9PC9zcGFuPjwvZGl2PjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJQcmVmaXgiPjxpbnB1dCBjbGFzc05hbWU9e2BpbnAgJHtlcnJvcnMucHJlZml4PydpbnAtZXJyb3InOicnfWB9IHN0eWxlPXt7Zm9udEZhbWlseTonbW9ub3NwYWNlJ319IHZhbHVlPXtzLnByZWZpeH0gb25DaGFuZ2U9e2U9PmhhbmRsZUlucHV0KCdwcmVmaXgnLGUudGFyZ2V0LnZhbHVlKX0gbWF4TGVuZ3RoPXsyfSAvPjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiPjxzcGFuIGNsYXNzTmFtZT17ZXJyb3JzLnByZWZpeD8nZXJyb3ItdGV4dCc6J2hpbnQtdGV4dCd9PntlcnJvcnMucHJlZml4fHx0eC5wcmVmaXhIaW50fTwvc3Bhbj48L2Rpdj48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iRm9vdGVyIj48aW5wdXQgY2xhc3NOYW1lPXtgaW5wICR7ZXJyb3JzLmZvb3RlcjI/J2lucC1lcnJvcic6Jyd9YH0gdmFsdWU9e3MuZm9vdGVyMn0gb25DaGFuZ2U9e2U9PmhhbmRsZUlucHV0KCdmb290ZXIyJyxlLnRhcmdldC52YWx1ZSl9IG1heExlbmd0aD17MTV9IC8+PGRpdiBjbGFzc05hbWU9InZhbGlkYXRpb24taGludCI+PHNwYW4gY2xhc3NOYW1lPXtlcnJvcnMuZm9vdGVyMj8nZXJyb3ItdGV4dCc6J2hpbnQtdGV4dCd9PntlcnJvcnMuZm9vdGVyMnx8Jyd9PC9zcGFuPjxzcGFuIGNsYXNzTmFtZT0iY291bnRlciI+e3MuZm9vdGVyMi5sZW5ndGh9LzE1PC9zcGFuPjwvZGl2PjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJNb2RlIj48c2VsZWN0IGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5tb2RlfSBvbkNoYW5nZT17ZT0+dXBkKCdtb2RlJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9InB1YmxpYyI+UHVibGljPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0icHJpdmF0ZSI+UHJpdmF0ZTwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImluYm94Ij5JbmJveCBPbmx5PC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iZ3JvdXAiPkdyb3VwIE9ubHk8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJhZG1pbiI+QWRtaW4gT25seTwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+PC9kaXY+PC9DYXJkPjxDYXJkIHN0cmlwZT0iIzE0YjhhNiIgc2hhZG93PSJyZ2JhKDIwLDE4NCwxNjYsMC4yMikiIGRlbGF5PSJkZWxheS0yIj48U2VjdGlvblRpdGxlIGljb249Imdsb2JlIiBjb2xvcj0iIzVlZWFkNCIgbGFiZWw9Ik93bmVyICYgUHVibGljIFByb2ZpbGUiIC8+PGRpdiBzdHlsZT17e2Rpc3BsYXk6J2dyaWQnLGdyaWRUZW1wbGF0ZUNvbHVtbnM6J3JlcGVhdChhdXRvLWZpbGwsbWlubWF4KDIwMHB4LDFmcikpJyxnYXA6MTQsbWFyZ2luVG9wOjIwfX0+PEZpZWxkIGxhYmVsPSJDb250YWN0IE51bWJlciI+PGlucHV0IGNsYXNzTmFtZT0iaW5wIG1vbm8iIHZhbHVlPXtzLm93bmVyTnVtYmVyfSBvbkNoYW5nZT17ZT0+dXBkKCdvd25lck51bWJlcicsZS50YXJnZXQudmFsdWUucmVwbGFjZSgvW14wLTldL2csJycpKX0gcGxhY2Vob2xkZXI9Ijk2NzdYWFhYWFhYIiAvPjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJPd25lciBOYW1lIj48aW5wdXQgY2xhc3NOYW1lPSJpbnAiIHZhbHVlPXtzLm93bmVybmFtZX0gb25DaGFuZ2U9e2U9PnVwZCgnb3duZXJuYW1lJyxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPSJPd25lciBuYW1lIiBtYXhMZW5ndGg9ezQwfSAvPjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJEZXNjcmlwdGlvbiIgc3R5bGU9e3tncmlkQ29sdW1uOicxLy0xJ319Pjx0ZXh0YXJlYSBjbGFzc05hbWU9ImlucCIgcm93cz17NH0gdmFsdWU9e3MuZGVzY3JpcHRpb259IG9uQ2hhbmdlPXtlPT51cGQoJ2Rlc2NyaXB0aW9uJyxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPSJQdWJsaWMgZGVzY3JpcHRpb24gLyBhYm91dCB0aGlzIG51bWJlciIgLz48L0ZpZWxkPjwvZGl2PjwvQ2FyZD4KICAgIDxDYXJkIHN0cmlwZT0iI2E4NTVmNyIgc2hhZG93PSJyZ2JhKDE2OCw4NSwyNDcsMC4yKSIgZGVsYXk9ImRlbGF5LTMiPjxTZWN0aW9uVGl0bGUgaWNvbj0iemFwIiBjb2xvcj0iI2MwODRmYyIgbGFiZWw9e3R4LnN5c30gLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczoncmVwZWF0KGF1dG8tZmlsbCxtaW5tYXgoMjEwcHgsMWZyKSknLGdhcDoxMCxtYXJnaW5Ub3A6MjB9fT57W3tsOidBbnRpIEJhZCBXb3JkJyxrOidhbnRpQmFkJ30se2w6J0FudGkgTGluaycsazonYW50aUxpbmsnfSx7bDonQWx3YXlzIE9ubGluZScsazonYWx3YXlzT25saW5lJ30se2w6J0F1dG8gVHlwaW5nJyxrOidhdXRvVHlwaW5nJ30se2w6J0tlZXAgRGVsZXRlZCBTdGF0dXMnLGs6J2tlZXBEZWxldGVkU3RhdHVzJ30se2w6J0dob3N0IE1vZGUgKDEgVGljayBPbmx5KScsazonZ2hvc3RNb2RlJ30se2w6J1N0YXR1cyBTZWVuJyxrOidhdXRvU3RhdHVzUmVhZCd9LHtsOidBdXRvIFJlYWQnLGs6J2F1dG9SZWFkJ30se2w6J1N0YXR1cyAvIFN0b3J5IFJlYWN0JyxrOidhdXRvU3RhdHVzUmVhY3QnfSx7bDonQXV0byBWb2ljZScsazonYXV0b1ZvaWNlJ30se2w6J0F1dG8gQmxvY2snLGs6J2F1dG9CbG9jayd9LHtsOidBdXRvIFJlY29yZGluZycsazonYXV0b1JlY29yZGluZyd9LHtsOidBdXRvIFNhdmUgQ29udGFjdHMnLGs6J2F1dG9TYXZlJ31dLm1hcCgoe2wsa30pPT4oPGRpdiBrZXk9e2t9IGNsYXNzTmFtZT0idG9nZ2xlLXJvdyI+PHNwYW4gc3R5bGU9e3tmb250U2l6ZToxMyxjb2xvcjonI2NiZDVlMSd9fT57bH08L3NwYW4+PFRvZ2dsZSB2YWx1ZT17c1trXX0gb25DaGFuZ2U9e3Y9PnVwZChrLHYpfSAvPjwvZGl2PikpfTwvZGl2PjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiIHN0eWxlPXt7bWFyZ2luVG9wOjEyfX0+PHNwYW4gY2xhc3NOYW1lPSJoaW50LXRleHQiPkdob3N0IG1vZGUga2VlcHMgY2hhdHMgb24gb25lIHRpY2sgb25seSBhbmQgbm8gbG9uZ2VyIGRpc2FibGVzIGRlbGV0ZWQgc3RvcnkgYmFja3VwLjwvc3Bhbj48L2Rpdj48L0NhcmQ+CiAgICA8Q2FyZCBzdHJpcGU9IiMwNmI2ZDQiIHNoYWRvdz0icmdiYSg2LDE4MiwyMTIsMC4yKSIgZGVsYXk9ImRlbGF5LTMiPjxTZWN0aW9uVGl0bGUgaWNvbj0ibWVzc2FnZSIgY29sb3I9IiMyMmQzZWUiIGxhYmVsPXt0eC5zdGF0dXN9IC8+PGRpdiBzdHlsZT17e2Rpc3BsYXk6J2dyaWQnLGdyaWRUZW1wbGF0ZUNvbHVtbnM6J3JlcGVhdChhdXRvLWZpbGwsbWlubWF4KDIwMHB4LDFmcikpJyxnYXA6MTQsbWFyZ2luVG9wOjIwfX0+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciPjxzcGFuPlN0YXR1cyBNZXNzYWdlIFNlbmQ8L3NwYW4+PFRvZ2dsZSB2YWx1ZT17cy5zdGF0dXNNc2dTZW5kfSBvbkNoYW5nZT17dj0+dXBkKCdzdGF0dXNNc2dTZW5kJyx2KX0gLz48L2Rpdj57cy5zdGF0dXNNc2dTZW5kID09PSAnb24nICYmICg8PjxGaWVsZCBsYWJlbD0iTWVzc2FnZSBUeXBlIj48c2VsZWN0IGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5zdGF0dXNNc2dUeXBlfSBvbkNoYW5nZT17ZT0+dXBkKCdzdGF0dXNNc2dUeXBlJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9ImRlZmF1bHQiPkRlZmF1bHQ8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJjdXN0b20iPkN1c3RvbTwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+e3Muc3RhdHVzTXNnVHlwZSA9PT0gJ2N1c3RvbScgJiYgKDxGaWVsZCBsYWJlbD0iQ3VzdG9tIE1lc3NhZ2UiIHN0eWxlPXt7Z3JpZENvbHVtbjonMS8tMSd9fT48dGV4dGFyZWEgY2xhc3NOYW1lPSJpbnAiIHJvd3M9ezN9IHZhbHVlPXtzLmN1c3RvbU1zZ30gb25DaGFuZ2U9e2U9PnVwZCgnY3VzdG9tTXNnJyxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPSJDdXN0b23igKYiIC8+PC9GaWVsZD4pfTwvPil9PC9kaXY+PGRpdiBjbGFzc05hbWU9InZhbGlkYXRpb24taGludCIgc3R5bGU9e3ttYXJnaW5Ub3A6MTB9fT48c3BhbiBjbGFzc05hbWU9ImhpbnQtdGV4dCI+Q2hhbmdlcyBzYXZlZCBoZXJlIG9yIGZyb20gdGhlIGJvdCBhcmUgYXBwbGllZCB0byB0aGUgbGlua2VkIG51bWJlciDZhdio2KfYtNix2KkuPC9zcGFuPjwvZGl2PjxDYXJkIHN0cmlwZT0iIzhiNWNmNiIgc2hhZG93PSJyZ2JhKDEzOSw5MiwyNDYsMC4yNCkiIGRlbGF5PSJkZWxheS0zIj48U2VjdGlvblRpdGxlIGljb249Im1lc3NhZ2UiIGNvbG9yPSIjYzRiNWZkIiBsYWJlbD0iQXV0byBSZXBseSAmIENvbnRhY3QgU2F2ZSIgLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczoncmVwZWF0KGF1dG8tZmlsbCxtaW5tYXgoMjIwcHgsMWZyKSknLGdhcDoxNCxtYXJnaW5Ub3A6MjB9fT48ZGl2IGNsYXNzTmFtZT0idG9nZ2xlLXJvdyI+PHNwYW4+QXV0byBTYXZlIENvbnRhY3RzPC9zcGFuPjxUb2dnbGUgdmFsdWU9e3MuYXV0b1NhdmV9IG9uQ2hhbmdlPXt2PT51cGQoJ2F1dG9TYXZlJyx2KX0gLz48L2Rpdj48RmllbGQgbGFiZWw9IkN1c3RvbSBBdXRvIFJlcGxpZXMiIHN0eWxlPXt7Z3JpZENvbHVtbjonMS8tMSd9fT48dGV4dGFyZWEgY2xhc3NOYW1lPSJpbnAgbW9ubyIgcm93cz17OX0gdmFsdWU9e3MuY3VzdG9tQXV0b1JlcGxpZXN9IG9uQ2hhbmdlPXtlPT51cGQoJ2N1c3RvbUF1dG9SZXBsaWVzJyxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPXsiaGVsbG8gPT4gSGkgdGhlcmVcbnByaWNlIHwgY29zdCA9PiBUaGUgcHJpY2UgaXMgLi4uXG5UaGFua3MgZm9yIG1lc3NhZ2luZyB1cyJ9IC8+PC9GaWVsZD48ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50IiBzdHlsZT17e2dyaWRDb2x1bW46JzEvLTEnfX0+PHNwYW4gY2xhc3NOYW1lPSJoaW50LXRleHQiPlVzZSBvbmUgcmVwbHkgcGVyIGxpbmUuIEZvcm1hdDoga2V5d29yZCA9PiByZXBseS4gTXVsdGlwbGUga2V5d29yZHM6IGhlbGxvIHwgaGkgPT4gd2VsY29tZS4gUGxhaW4gbGluZXMgd29yayBhcyByYW5kb20gZmFsbGJhY2sgcmVwbGllcy48L3NwYW4+PHNwYW4gY2xhc3NOYW1lPSJjb3VudGVyIj57YXV0b1JlcGx5Q291bnR9LzIwPC9zcGFuPjwvZGl2PjwvZGl2PjwvQ2FyZD4KICAgIHsvKiBFbW9qaSBQaWNrZXIgLSBPTkUgRU1PSkkgQVQgQSBUSU1FIChFbnRlciBrZXkgb25seSwgbm8gY29tbWEgc2VwYXJhdGlvbikgKi99CiAgICA8ZGl2IHN0eWxlPXt7bWFyZ2luVG9wOjE2fX0+PHAgc3R5bGU9e3tmb250U2l6ZToxMSxjb2xvcjondmFyKC0tZ29sZCknLG1hcmdpbkJvdHRvbTo2LGxldHRlclNwYWNpbmc6JzAuMDhlbSd9fT57dHguZW1vamlUaXRsZX08L3A+PGRpdiBjbGFzc05hbWU9ImVtb2ppLWdyaWQiPntlbW9qaUxpc3QubWFwKChlbSxpZHgpPT4oPGRpdiBrZXk9e2lkeH0gY2xhc3NOYW1lPSJlbW9qaS1vcHRpb24iIG9uQ2xpY2s9eygpPT5yZW1vdmVFbW9qaShpZHgpfSB0aXRsZT0iUmVtb3ZlIj57ZW19PHNwYW4gc3R5bGU9e3tmb250U2l6ZToxMCxtYXJnaW5MZWZ0OjQsb3BhY2l0eTowLjd9fT7inJU8L3NwYW4+PC9kaXY+KSl9e2Vtb2ppTGlzdC5sZW5ndGg8MTAgJiYgKDxkaXYgY2xhc3NOYW1lPSJpbmxpbmUtZW1vamktaW5wdXQiIHN0eWxlPXt7d2lkdGg6JzEwMCUnfX0+PGlucHV0IHR5cGU9InRleHQiIGNsYXNzTmFtZT0iaW5wIiBzdHlsZT17e2ZsZXg6MX19IHBsYWNlaG9sZGVyPXt0eC5lbW9qaVBsYWNlaG9sZGVyICsgIiAoUHJlc3MgRW50ZXIpIn0gb25LZXlEb3duPXtoYW5kbGVFbW9qaUtleURvd259IGlkPSJlbW9qaVF1aWNrSW5wdXQiIC8+PGJ1dHRvbiB0eXBlPSJidXR0b24iIGNsYXNzTmFtZT0iZW1vamktYWRkLWJ0biIgb25DbGljaz17KCk9Pntjb25zdCBpbnA9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2Vtb2ppUXVpY2tJbnB1dCcpOyBpZihpbnAudmFsdWUudHJpbSgpKXsgYWRkRW1vamkoaW5wLnZhbHVlLnRyaW0oKSk7IGlucC52YWx1ZT0nJzt9IH19Pis8L2J1dHRvbj48L2Rpdj4pfTxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiPjxzcGFuIGNsYXNzTmFtZT0iaGludC10ZXh0Ij5NYXggMTAgZW1vamlzIHwgVHlwZSBPTkUgZW1vamkgdGhlbiBwcmVzcyBFbnRlcjwvc3Bhbj48c3BhbiBjbGFzc05hbWU9ImNvdW50ZXIiPntlbW9qaUxpc3QubGVuZ3RofS8xMDwvc3Bhbj48L2Rpdj48L2Rpdj48L2Rpdj48L0NhcmQ+CiAgICA8Q2FyZCBzdHJpcGU9IiNmNTllMGIiIHNoYWRvdz0icmdiYSgyNDUsMTU4LDExLDAuMikiIGRlbGF5PSJkZWxheS00Ij48U2VjdGlvblRpdGxlIGljb249ImltYWdlIiBjb2xvcj0iI2ZiYmYyNCIgbGFiZWw9e3R4LmxvZ29zfSAvPjxkaXYgc3R5bGU9e3tkaXNwbGF5OidncmlkJyxncmlkVGVtcGxhdGVDb2x1bW5zOidyZXBlYXQoYXV0by1maWxsLG1pbm1heCgyMDBweCwxZnIpKScsZ2FwOjE2LG1hcmdpblRvcDoyMH19Pntbe2tleTonbWVudScsbGFiZWw6J01lbnUgTG9nbyd9LHtrZXk6J2FsaXZlJyxsYWJlbDonQWxpdmUgTG9nbyd9LHtrZXk6J293bmVyJyxsYWJlbDonT3duZXIgTG9nbyd9XS5tYXAoKHtrZXksbGFiZWx9KSA9PiAoPGRpdiBrZXk9e2tleX0gc3R5bGU9e3twYWRkaW5nOjE2LGJhY2tncm91bmQ6J3JnYmEoMjU1LDI1NSwyNTUsMC4wMiknLGJvcmRlclJhZGl1czoxOH19PjxwIHN0eWxlPXt7Zm9udFNpemU6MTEsY29sb3I6J3ZhcigtLW11dGVkKSd9fT57bGFiZWx9PC9wPjxkaXYgY2xhc3NOYW1lPSJpbWctc2xvdCI+e3Nba2V5XT88aW1nIHNyYz17c1trZXldfSBhbHQ9e2xhYmVsfSAvPjo8SWNvbiBpZD0iaW1hZ2UiIHNpemU9ezI4fSBzdHlsZT17e2NvbG9yOid2YXIoLS1mYWludCknfX0gLz59PC9kaXY+PGlucHV0IGNsYXNzTmFtZT0iaW5wIG1vbm8iIHN0eWxlPXt7Zm9udFNpemU6MTF9fSB2YWx1ZT17c1trZXldfSBvbkNoYW5nZT17ZT0+dXBkKGtleSxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPSJodHRwczovL+KApiIgLz48bGFiZWwgY2xhc3NOYW1lPSJ1cGxvYWQtbGJsIj57dXBsb2FkaW5nPT09a2V5Pzw+PHNwYW4gY2xhc3NOYW1lPSJzcGluIi8+e3R4LnVwbG9hZGluZ308Lz46PD48SWNvbiBpZD0idXBsb2FkIiBzaXplPXsxM30vPnt0eC5nYWxsZXJ5fTwvPn08aW5wdXQgdHlwZT0iZmlsZSIgYWNjZXB0PSJpbWFnZS8qIiBoaWRkZW4gb25DaGFuZ2U9e2U9PmhhbmRsZVVwbG9hZChlLGtleSl9IGRpc2FibGVkPXt1cGxvYWRpbmchPT1udWxsfSAvPjwvbGFiZWw+PC9kaXY+KSl9PC9kaXY+PC9DYXJkPgogICAgPGRpdiBzdHlsZT17e2Rpc3BsYXk6J2dyaWQnLGdyaWRUZW1wbGF0ZUNvbHVtbnM6JzFmciAxZnInLGdhcDoyMH19PjxDYXJkIHN0cmlwZT0iI2VmNDQ0NCIgc2hhZG93PSJyZ2JhKDIzOSw2OCw2OCwwLjIpIj48U2VjdGlvblRpdGxlIGljb249InBob25lLW9mZiIgY29sb3I9IiNmODcxNzEiIGxhYmVsPXt0eC5jYWxsc30gLz48ZGl2IHN0eWxlPXt7bWFyZ2luVG9wOjIwfX0+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciPjxzcGFuPkFudGkgQ2FsbDwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmFudGlDYWxsfSBvbkNoYW5nZT17dj0+dXBkKCdhbnRpQ2FsbCcsdil9IC8+PC9kaXY+e3MuYW50aUNhbGw9PT0nb24nJiYoPEZpZWxkIGxhYmVsPSJFeGNsdWRlZCBOdW1iZXJzIj48aW5wdXQgY2xhc3NOYW1lPSJpbnAgbW9ubyIgdmFsdWU9e3MuZXhjbHVkZUNhbGxOdW1iZXJzfSBvbkNoYW5nZT17ZT0+dXBkKCdleGNsdWRlQ2FsbE51bWJlcnMnLGUudGFyZ2V0LnZhbHVlKX0gLz48L0ZpZWxkPil9PC9kaXY+PC9DYXJkPgogICAgPENhcmQgc3RyaXBlPSIjZjk3MzE2IiBzaGFkb3c9InJnYmEoMjQ5LDExNSwyMiwwLjIpIj48U2VjdGlvblRpdGxlIGljb249InRyYXNoLTIiIGNvbG9yPSIjZmI5MjNjIiBsYWJlbD17dHguZGVsZXRlfSAvPjxkaXY+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciIHN0eWxlPXt7bWFyZ2luQm90dG9tOjE0fX0+PHNwYW4+UHJpdmF0ZSBkZWxldGVkIG1lc3NhZ2VzIOKGkiBvd25lcjwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtwcml2YXRlQW50aURlbGV0ZUVuYWJsZWQgPyAnb24nIDogJ29mZid9IG9uQ2hhbmdlPXt2PT57IGlmKHY9PT0nb24nKXsgdXBkKCdhbnRpRGVsZXRlJywnaW5ib3gnKTsgdXBkKCdzZW5kRGVsZXRlVG8nLCdvd25lcicpOyB9IGVsc2UgaWYocHJpdmF0ZUFudGlEZWxldGVFbmFibGVkKXsgdXBkKCdhbnRpRGVsZXRlJywnb2ZmJyk7IHVwZCgnc2VuZERlbGV0ZVRvJywnb3duZXInKTsgfSB9fSAvPjwvZGl2PjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiIHN0eWxlPXt7bWFyZ2luQm90dG9tOjE0fX0+PHNwYW4gY2xhc3NOYW1lPSJoaW50LXRleHQiPldoZW4gZW5hYmxlZCwgYW55IGRlbGV0ZWQgcHJpdmF0ZSBtZXNzYWdlIGlzIGZvcndhcmRlZCB0byB0aGUgb3duZXIgbnVtYmVyIHdpdGggdGhlIHNlbmRlciBudW1iZXIgdW5kZXIgaXQuPC9zcGFuPjwvZGl2PjxGaWVsZCBsYWJlbD0iQW50aS1EZWxldGUgTW9kZSI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYW50aURlbGV0ZX0gb25DaGFuZ2U9e2U9PnVwZCgnYW50aURlbGV0ZScsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJvZmYiPk9mZjwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImluYm94Ij5JbmJveDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9Imdyb3VwIj5Hcm91cDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImFsbCI+QWxsPC9vcHRpb24+PC9zZWxlY3Q+PC9GaWVsZD57cy5hbnRpRGVsZXRlIT09J29mZicmJig8RmllbGQgbGFiZWw9IlNlbmQgVG8iPjxzZWxlY3QgY2xhc3NOYW1lPSJpbnAiIHZhbHVlPXtzLnNlbmREZWxldGVUb30gb25DaGFuZ2U9e2U9PnVwZCgnc2VuZERlbGV0ZVRvJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9Im93bmVyIj5Pd25lcjwvb3B0aW9uPjxvcHRpb24gdmFsdWU9InNhbWUiPlNhbWUgQ2hhdDwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+KX08L2Rpdj48L0NhcmQ+PC9kaXY+CiAgICA8ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczonMWZyIDFmcicsZ2FwOjIwfX0+PENhcmQgc3RyaXBlPSIjYTg1NWY3IiBzaGFkb3c9InJnYmEoMTY4LDg1LDI0NywwLjIpIj48U2VjdGlvblRpdGxlIGljb249ImJ1ZyIgY29sb3I9IiNjMDg0ZmMiIGxhYmVsPXt0eC5hbnRpQnVnfSAvPjxkaXYgc3R5bGU9e3ttYXJnaW5Ub3A6MTR9fT48ZGl2IGNsYXNzTmFtZT0idG9nZ2xlLXJvdyI+PHNwYW4+QW50aSBCdWcgUHJvdGVjdGlvbjwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmFudGlCdWd9IG9uQ2hhbmdlPXt2PT51cGQoJ2FudGlCdWcnLHYpfSAvPjwvZGl2PjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiIHN0eWxlPXt7bWFyZ2luVG9wOjh9fT48c3BhbiBjbGFzc05hbWU9ImhpbnQtdGV4dCI+QmxvY2tzIGtub3duIGJ1ZyBleHBsb2l0czwvc3Bhbj48L2Rpdj48L2Rpdj48L0NhcmQ+CiAgICA8Q2FyZCBzdHJpcGU9IiNlYzQ4OTkiIHNoYWRvdz0icmdiYSgyMzYsNzIsMTUzLDAuMikiPjxTZWN0aW9uVGl0bGUgaWNvbj0icm9ib3QiIGNvbG9yPSIjZjQ3MmI2IiBsYWJlbD17dHguYW50aUJvdH0gLz48ZGl2IHN0eWxlPXt7bWFyZ2luVG9wOjE0fX0+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciPjxzcGFuPkFudGkgQm90IEZpbHRlcjwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmFudGlCb3R9IG9uQ2hhbmdlPXt2PT51cGQoJ2FudGlCb3QnLHYpfSAvPjwvZGl2PntzLmFudGlCb3QgPT09ICdvbicgJiYgKDxGaWVsZCBsYWJlbD0iQWN0aW9uIG9uIEJvdCI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYW50aUJvdEFjdGlvbn0gb25DaGFuZ2U9e2U9PnVwZCgnYW50aUJvdEFjdGlvbicsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJkZWxldGUiPnt0eC5hY3Rpb25EZWxldGV9PC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iZGVsZXRlK2tpY2siPnt0eC5hY3Rpb25LaWNrfTwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+KX08ZGl2IGNsYXNzTmFtZT0idmFsaWRhdGlvbi1oaW50Ij48c3BhbiBjbGFzc05hbWU9ImhpbnQtdGV4dCI+QXV0byBkZXRlY3QgJiB7cy5hbnRpQm90QWN0aW9uPT09J2RlbGV0ZSc/J0RlbGV0ZSBtZXNzYWdlJzonRGVsZXRlICsgS2ljayB1c2VyJ308L3NwYW4+PC9kaXY+PC9kaXY+PC9DYXJkPjwvZGl2PgogICAgPENhcmQgc3RyaXBlPSIjMTRiOGE2IiBzaGFkb3c9InJnYmEoMjAsMTg0LDE2NiwwLjIyKSIgZGVsYXk9ImRlbGF5LTQiPjxTZWN0aW9uVGl0bGUgaWNvbj0iY3B1IiBjb2xvcj0iIzVlZWFkNCIgbGFiZWw9IlJlZCBRdWVlbiBJbXBvcnRlZCBTZXR0aW5ncyIgLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczoncmVwZWF0KGF1dG8tZmlsbCxtaW5tYXgoMjIwcHgsMWZyKSknLGdhcDoxNCxtYXJnaW5Ub3A6MjB9fT48RmllbGQgbGFiZWw9Ikxhbmd1YWdlIj48c2VsZWN0IGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5sYW5ndWFnZX0gb25DaGFuZ2U9e2U9PnVwZCgnbGFuZ3VhZ2UnLGUudGFyZ2V0LnZhbHVlKX0+PG9wdGlvbiB2YWx1ZT0iZW5nbGlzaCI+RW5nbGlzaDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9InNpbmhhbGEiPlNpbmhhbGE8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJhcmFiaWMiPkFyYWJpYzwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJBbnRpIFZpZXcgT25jZSI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYW50aVZpZXdPbmNlfSBvbkNoYW5nZT17ZT0+dXBkKCdhbnRpVmlld09uY2UnLGUudGFyZ2V0LnZhbHVlKX0+PG9wdGlvbiB2YWx1ZT0ib2ZmIj5PZmY8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJhbGwiPkFsbDwvb3B0aW9uPjwvc2VsZWN0PjwvRmllbGQ+PGRpdiBjbGFzc05hbWU9InRvZ2dsZS1yb3ciPjxzcGFuPkFudGkgTWVudGlvbjwvc3Bhbj48VG9nZ2xlIHZhbHVlPXtzLmFudGlNZW50aW9ufSBvbkNoYW5nZT17dj0+dXBkKCdhbnRpTWVudGlvbicsdil9IC8+PC9kaXY+PEZpZWxkIGxhYmVsPSJBbnRpIEVkaXQiPjxzZWxlY3QgY2xhc3NOYW1lPSJpbnAiIHZhbHVlPXtzLmFudGlFZGl0fSBvbkNoYW5nZT17ZT0+dXBkKCdhbnRpRWRpdCcsZS50YXJnZXQudmFsdWUpfT48b3B0aW9uIHZhbHVlPSJvZmYiPk9mZjwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImluYm94Ij5JbmJveDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9Imdyb3VwIj5Hcm91cDwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImFsbCI+QWxsPC9vcHRpb24+PC9zZWxlY3Q+PC9GaWVsZD48RmllbGQgbGFiZWw9IkFudGkgQWN0aW9uIj48c2VsZWN0IGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5hbnRpQWN0aW9ufSBvbkNoYW5nZT17ZT0+dXBkKCdhbnRpQWN0aW9uJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9ImRlbGV0ZSI+RGVsZXRlPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0id2VybiI+V2Fybjwvb3B0aW9uPjxvcHRpb24gdmFsdWU9ImtpY2siPktpY2s8L29wdGlvbj48L3NlbGVjdD48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iV2FybiBDb3VudCI+PGlucHV0IHR5cGU9Im51bWJlciIgbWluPSIxIiBtYXg9IjIwIiBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYW50aVdhcm5Db3VudH0gb25DaGFuZ2U9e2U9PnVwZCgnYW50aVdhcm5Db3VudCcsZS50YXJnZXQudmFsdWUucmVwbGFjZSgvW14wLTldL2csJycpKX0gLz48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iQXV0byBSZWFjdCBTY29wZSI+PHNlbGVjdCBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuYXV0b1JlYWN0U2NvcGV9IG9uQ2hhbmdlPXtlPT51cGQoJ2F1dG9SZWFjdFNjb3BlJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9Im9mZiI+T2ZmPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iYWxsIj5BbGw8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJncm91cCI+R3JvdXA8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJpbmJveCI+SW5ib3g8L29wdGlvbj48L3NlbGVjdD48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iQUkgUmVwbHkgU2NvcGUiPjxzZWxlY3QgY2xhc3NOYW1lPSJpbnAiIHZhbHVlPXtzLmFpUmVwbHlTY29wZX0gb25DaGFuZ2U9e2U9PnVwZCgnYWlSZXBseVNjb3BlJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9Im9mZiI+T2ZmPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iYWxsIj5BbGw8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJncm91cCI+R3JvdXA8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJpbmJveCI+SW5ib3g8L29wdGlvbj48L3NlbGVjdD48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iQmxvY2tlZCBMaW5rcyIgc3R5bGU9e3tncmlkQ29sdW1uOicxLy0xJ319PjxpbnB1dCBjbGFzc05hbWU9ImlucCBtb25vIiB2YWx1ZT17cy5hbnRpTGlua0xpc3R9IG9uQ2hhbmdlPXtlPT51cGQoJ2FudGlMaW5rTGlzdCcsZS50YXJnZXQudmFsdWUpfSBwbGFjZWhvbGRlcj0id2EubWUsd2hhdHNhcHAuY29tIiAvPjwvRmllbGQ+PEZpZWxkIGxhYmVsPSJCbG9ja2VkIFdvcmRzIiBzdHlsZT17e2dyaWRDb2x1bW46JzEvLTEnfX0+PHRleHRhcmVhIGNsYXNzTmFtZT0iaW5wIG1vbm8iIHJvd3M9ezN9IHZhbHVlPXtzLmFudGlCYWRXb3Jkc30gb25DaGFuZ2U9e2U9PnVwZCgnYW50aUJhZFdvcmRzJyxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPSJ3b3JkMSx3b3JkMiIgLz48L0ZpZWxkPjxGaWVsZCBsYWJlbD0iQWxpdmUgTWVzc2FnZSIgc3R5bGU9e3tncmlkQ29sdW1uOicxLy0xJ319Pjx0ZXh0YXJlYSBjbGFzc05hbWU9ImlucCIgcm93cz17M30gdmFsdWU9e3MuYWxpdmVNc2d9IG9uQ2hhbmdlPXtlPT51cGQoJ2FsaXZlTXNnJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD48RmllbGQgbGFiZWw9IlZvaWNlIEZvb3RlciBVUkwiIHN0eWxlPXt7Z3JpZENvbHVtbjonMS8tMSd9fT48aW5wdXQgY2xhc3NOYW1lPSJpbnAgbW9ubyIgdmFsdWU9e3Mudm9pY2VGb290ZXJ9IG9uQ2hhbmdlPXtlPT51cGQoJ3ZvaWNlRm9vdGVyJyxlLnRhcmdldC52YWx1ZSl9IHBsYWNlaG9sZGVyPSJodHRwczovLy4uLm1wMyIgLz48L0ZpZWxkPjwvZGl2PjxkaXYgY2xhc3NOYW1lPSJ2YWxpZGF0aW9uLWhpbnQiIHN0eWxlPXt7bWFyZ2luVG9wOjEwfX0+PHNwYW4gY2xhc3NOYW1lPSJoaW50LXRleHQiPkltcG9ydGVkIGZpZWxkcyBmcm9tIFJlZCBRdWVlbiBhcmUgc2F2ZWQgd2l0aCB0aGUgbGlua2VkIG51bWJlciBhbmQgZXhwb3NlZCBpbiB0aGlzIHdlYiBzZXR0aW5ncyBwYWdlLjwvc3Bhbj48L2Rpdj48L0NhcmQ+CiAgICA8Q2FyZCBzdHJpcGU9IiMyMmM1NWUiIHNoYWRvdz0icmdiYSgzNCwxOTcsOTQsMC4yKSI+PFNlY3Rpb25UaXRsZSBpY29uPSJjbG9jayIgY29sb3I9IiM0YWRlODAiIGxhYmVsPXt0eC5ncm91cH0gLz48ZGl2IHN0eWxlPXt7ZGlzcGxheTonZ3JpZCcsZ3JpZFRlbXBsYXRlQ29sdW1uczonMWZyIDFmcicsZ2FwOjE0LG1hcmdpblRvcDoyMH19PjxGaWVsZCBsYWJlbD0iR3JvdXAgSklEIiBzdHlsZT17e2dyaWRDb2x1bW46JzEvLTEnfX0+PGlucHV0IGNsYXNzTmFtZT0iaW5wIG1vbm8iIHBsYWNlaG9sZGVyPSIxMjAzNjN4eHh4eHh4eEBnLnVzIiB2YWx1ZT17cy5nYUdyb3VwSmlkfSBvbkNoYW5nZT17ZT0+dXBkKCdnYUdyb3VwSmlkJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD48RmllbGQgbGFiZWw9IlRpbWV6b25lIj48c2VsZWN0IGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5nYVRpbWV6b25lfSBvbkNoYW5nZT17ZT0+dXBkKCdnYVRpbWV6b25lJyxlLnRhcmdldC52YWx1ZSl9PjxvcHRpb24gdmFsdWU9IkFzaWEvQ29sb21ibyI+U3JpIExhbmthIChVVEMrNTozMCk8L29wdGlvbj48b3B0aW9uIHZhbHVlPSJBc2lhL0tvbGthdGEiPkluZGlhPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iQXNpYS9EdWJhaSI+VUFFPC9vcHRpb24+PG9wdGlvbiB2YWx1ZT0iQXNpYS9SaXlhZGgiPlNhdWRpIEFyYWJpYTwvb3B0aW9uPjxvcHRpb24gdmFsdWU9IlVUQyI+VVRDPC9vcHRpb24+PC9zZWxlY3Q+PC9GaWVsZD48RmllbGQgbGFiZWw9IkNsb3NlIFRpbWUiPjxpbnB1dCB0eXBlPSJ0aW1lIiBjbGFzc05hbWU9ImlucCIgdmFsdWU9e3MuZ2FDbG9zZVRpbWV9IG9uQ2hhbmdlPXtlPT51cGQoJ2dhQ2xvc2VUaW1lJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD48RmllbGQgbGFiZWw9Ik9wZW4gVGltZSI+PGlucHV0IHR5cGU9InRpbWUiIGNsYXNzTmFtZT0iaW5wIiB2YWx1ZT17cy5nYU9wZW5UaW1lfSBvbkNoYW5nZT17ZT0+dXBkKCdnYU9wZW5UaW1lJyxlLnRhcmdldC52YWx1ZSl9IC8+PC9GaWVsZD48L2Rpdj48L0NhcmQ+CiAgICA8L2Rpdj48L2Zvcm0+PC9kaXY+PGRpdiBzdHlsZT17e3Bvc2l0aW9uOidmaXhlZCcsYm90dG9tOjI4LHJpZ2h0OjI4LHpJbmRleDo5OTk5fX0+PGJ1dHRvbiBmb3JtPSJzZXR0aW5nc0Zvcm0iIHR5cGU9InN1Ym1pdCIgZGlzYWJsZWQ9e2xvYWRpbmd9IGNsYXNzTmFtZT0ic2F2ZS1idG4iIHN0eWxlPXtsb2FkaW5nP3tvcGFjaXR5OjAuNjV9Ont9fT57bG9hZGluZz88PjxzcGFuIGNsYXNzTmFtZT0ic3BpbiIvPlNhdmluZ+KApjwvPjo8PjxJY29uIGlkPSJzYXZlIiBzaXplPXsxOH0vPnt0eC5zYXZlfTwvPn08L2J1dHRvbj48L2Rpdj48L2Rpdj48L2Rpdj4pOwp9CmNvbnN0IHJvb3QgPSBSZWFjdERPTS5jcmVhdGVSb290KGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdyb290JykpOwpyb290LnJlbmRlcig8QXBwIC8+KTsKPC9zY3JpcHQ+CjwvYm9keT4KPC9odG1sPg==', 'base64').toString('utf8');
+
+const SETTINGS_PAGE_HTML = buildSettingsPageHTML();
+
+function buildSettingsPageHTML() {
+    const labels = JSON.stringify(SITE_SETTINGS_FIELD_LABELS, null, 0);
+    const defaults = JSON.stringify(DEFAULT_PHONE_SETTINGS, null, 0);
+    const sections = JSON.stringify(PHONE_SETTINGS_SECTIONS, null, 0);
+    const toggleFields = JSON.stringify(Array.from(PHONE_SETTINGS_TOGGLE_FIELDS), null, 0);
+    const selectOptions = JSON.stringify(PHONE_SETTINGS_SELECT_OPTIONS, null, 0);
+    return `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>إعدادات ${BRAND_NAME}</title>
+  <style>
+    :root {
+      --bg:#0b0d12;
+      --panel:#131722;
+      --panel-2:#171c29;
+      --line:rgba(255,255,255,.08);
+      --gold:#d4a055;
+      --text:#f5f2eb;
+      --muted:#b8b2c7;
+      --ok:#25d366;
+      --danger:#ef4444;
+      --input:#0f1320;
+      --shadow:0 18px 45px rgba(0,0,0,.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Tahoma, Arial, sans-serif;
+      background: linear-gradient(180deg, #090b11 0%, #111522 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    .hero, .card, .section, .field { border: 1px solid var(--line); }
+    .hero, .card, .section {
+      background: rgba(19,23,34,.96);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: 26px; margin-bottom: 20px; }
+    .hero h1 { margin: 0 0 10px; font-size: 30px; }
+    .hero p { margin: 0; color: var(--muted); line-height: 1.9; }
+    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
+    .card { padding: 20px; }
+    .sidebar-title, .content-title { margin: 0 0 12px; font-size: 20px; }
+    .muted { color: var(--muted); }
+    .login-box { display: grid; gap: 12px; }
+    .inp, .txt, .sel {
+      width: 100%;
+      background: var(--input);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 14px;
+      padding: 12px 14px;
+      outline: none;
+      font-size: 14px;
+    }
+    .txt { min-height: 110px; resize: vertical; }
+    .inp:focus, .txt:focus, .sel:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(212,160,85,.12);
+    }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      border: none;
+      border-radius: 14px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform .15s ease, opacity .15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:disabled { opacity: .65; cursor: wait; transform: none; }
+    .btn-primary { background: linear-gradient(135deg, #f0c880, var(--gold)); color: #111; }
+    .btn-ghost { background: rgba(255,255,255,.04); color: var(--text); border: 1px solid var(--line); }
+    .status-box {
+      margin-top: 12px;
+      min-height: 44px;
+      border-radius: 14px;
+      padding: 12px 14px;
+      line-height: 1.8;
+      background: rgba(255,255,255,.03);
+      border: 1px dashed rgba(255,255,255,.08);
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: rgba(212,160,85,.14);
+      color: #f5d199;
+      border: 1px solid rgba(212,160,85,.26);
+      margin-bottom: 14px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+    .section { padding: 18px; margin-bottom: 18px; }
+    .section h3 { margin: 0 0 6px; font-size: 18px; }
+    .section p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+    .field {
+      background: rgba(255,255,255,.025);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .field.full { grid-column: 1 / -1; }
+    .label { font-size: 13px; font-weight: bold; margin-bottom: 8px; display: block; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(255,255,255,.03);
+      border-radius: 14px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.05);
+    }
+    .toggle-chip {
+      min-width: 72px;
+      text-align: center;
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid transparent;
+    }
+    .toggle-chip.on { background: rgba(37,211,102,.14); color: #87f3b0; border-color: rgba(37,211,102,.32); }
+    .toggle-chip.off { background: rgba(239,68,68,.10); color: #ff9e9e; border-color: rgba(239,68,68,.22); }
+    .preview {
+      margin-top: 10px;
+      width: 100%;
+      aspect-ratio: 16/9;
+      border-radius: 14px;
+      border: 1px dashed rgba(255,255,255,.08);
+      background: #0c101a;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .upload-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .hidden { display: none !important; }
+    .footer-actions {
+      position: sticky;
+      bottom: 14px;
+      z-index: 5;
+      display: flex;
+      justify-content: center;
+      margin-top: 24px;
+    }
+    .save-bar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      background: rgba(19,23,34,.95);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: var(--shadow);
+    }
+    .panel-note {
+      margin-top: 8px;
+      color: #d9d4e5;
+      line-height: 1.8;
+      font-size: 13px;
+    }
+    body.panel-mode .wrap { max-width: 1380px; }
+    body.panel-mode .grid { grid-template-columns: 1fr; }
+    body.panel-mode #loginCard { display: none !important; }
+    body.panel-mode .hero { margin-bottom: 24px; }
+    body.panel-mode .content-title { font-size: 24px; }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+      .fields { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>إعدادات ${BRAND_NAME}</h1>
+      <p id="heroText">سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، وبعد النجاح سيتم فتح واجهة كاملة خاصة بهذا الرقم لتعديل جميع الإعدادات ثم حفظها وتطبيقها مباشرة.</p>
+    </section>
+
+    <div class="grid">
+      <aside class="card" id="loginCard">
+        <div class="badge">⚙️ تسجيل دخول الإعدادات</div>
+        <h2 class="sidebar-title">الدخول</h2>
+        <p class="muted" style="margin-top:0;margin-bottom:16px;line-height:1.8;">اكتب الرقم المربوط وكلمة السر، وبعدها سيتم تحويلك تلقائياً إلى واجهة إعدادات الرقم نفسه.</p>
+        <div class="login-box">
+          <input id="loginNum" class="inp" placeholder="رقم الواتساب مع مفتاح الدولة" />
+          <input id="loginPass" class="inp" placeholder="كلمة السر" type="password" />
+          <input id="loginApp" class="inp hidden" value="default" />
+          <div class="btn-row">
+            <button id="loginBtn" class="btn btn-primary" type="button">تسجيل الدخول</button>
+            <button id="logoutBtn" class="btn btn-ghost hidden" type="button">تسجيل الخروج</button>
+          </div>
+        </div>
+        <div class="panel-note">بعد تسجيل الدخول سيتم حفظ جلسة الويب لهذا الرقم وفتح صفحة الإعدادات الكاملة مباشرة.</div>
+        <div id="statusBox" class="status-box">جاهز لتسجيل الدخول.</div>
+      </aside>
+
+      <main class="card" id="panelCard">
+        <div class="topbar">
+          <div>
+            <div class="badge">🧩 لوحة الإعدادات</div>
+            <h2 class="content-title">الإعدادات</h2>
+            <div id="sessionMeta" class="muted">لم يتم تسجيل الدخول بعد.</div>
+          </div>
+          <div class="btn-row">
+            <button id="reloadBtn" class="btn btn-ghost hidden" type="button">إعادة تحميل</button>
+            <button id="logoutTopBtn" class="btn btn-ghost hidden" type="button">تسجيل الخروج</button>
+          </div>
+        </div>
+        <div id="formRoot"></div>
+        <div class="footer-actions hidden" id="footerActions">
+          <div class="save-bar">
+            <button id="saveBtn" class="btn btn-primary" type="button">حفظ الإعدادات</button>
+            <button id="scrollTopBtn" class="btn btn-ghost" type="button">الرجوع للأعلى</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const API = {
+    login: '/api/login',
+    load: '/api/settings/load',
+    save: '/api/settings/save',
+    upload: '/api/image/upload'
+  };
+  const FIELD_LABELS = ${labels};
+  const DEFAULTS = ${defaults};
+  const SECTIONS = ${sections};
+  const TOGGLES = new Set(${toggleFields});
+  const SELECTS = ${selectOptions};
+  const LONG_FIELDS = new Set(['description', 'customMsg', 'excludeCallNumbers', 'customAutoReplies']);
+  const IMAGE_FIELDS = new Set(['menu', 'alive', 'owner']);
+
+  const state = {
+    loggedIn: false,
+    num: '',
+    pass: '',
+    app: 'default',
+    sessionToken: '',
+    settings: { ...DEFAULTS },
+    saving: false,
+    loading: false
+  };
+
+  const el = {
+    loginNum: document.getElementById('loginNum'),
+    loginPass: document.getElementById('loginPass'),
+    loginApp: document.getElementById('loginApp'),
+    loginBtn: document.getElementById('loginBtn'),
+    logoutBtn: document.getElementById('logoutBtn'),
+    logoutTopBtn: document.getElementById('logoutTopBtn'),
+    reloadBtn: document.getElementById('reloadBtn'),
+    saveBtn: document.getElementById('saveBtn'),
+    formRoot: document.getElementById('formRoot'),
+    statusBox: document.getElementById('statusBox'),
+    sessionMeta: document.getElementById('sessionMeta'),
+    footerActions: document.getElementById('footerActions'),
+    scrollTopBtn: document.getElementById('scrollTopBtn'),
+    heroText: document.getElementById('heroText')
+  };
+
+  function getQueryParam(key) {
+    return new URLSearchParams(window.location.search).get(key) || '';
+  }
+
+  function updateUrlForSession(token, phone) {
+    const url = new URL(window.location.href);
+    if (token) url.searchParams.set('session', token);
+    else url.searchParams.delete('session');
+    if (phone) url.searchParams.set('phone', phone);
+    else url.searchParams.delete('phone');
+    return url.toString();
+  }
+
+  function setStatus(message, type) {
+    el.statusBox.textContent = message;
+    el.statusBox.style.color = type === 'error' ? '#ffb4b4' : type === 'success' ? '#b8ffd0' : 'var(--muted)';
+    el.statusBox.style.borderColor = type === 'error'
+      ? 'rgba(239,68,68,.25)'
+      : type === 'success'
+        ? 'rgba(37,211,102,.25)'
+        : 'rgba(255,255,255,.08)';
+  }
+
+  async function apiPost(url, payload) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || data.message || ('HTTP ' + res.status));
+    }
+    return data;
+  }
+
+  async function apiGet(url, payload) {
+    const qs = new URLSearchParams(payload || {}).toString();
+    const res = await fetch(url + (qs ? '?' + qs : ''));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || data.message || ('HTTP ' + res.status));
+    }
+    return data;
+  }
+
+  function esc(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\"/g, '&quot;');
+  }
+
+  function getFieldLabel(key) {
+    return FIELD_LABELS[key] || key;
+  }
+
+  function getAuthPayload(extra) {
+    const payload = { ...(extra || {}) };
+    if (state.sessionToken) payload.token = state.sessionToken;
+    if (!payload.num && state.num) payload.num = state.num;
+    if (!payload.app && state.app) payload.app = state.app;
+    return payload;
+  }
+
+  function applyLayoutMode() {
+    document.body.classList.toggle('panel-mode', state.loggedIn);
+    el.reloadBtn.classList.toggle('hidden', !state.loggedIn);
+    el.logoutBtn.classList.toggle('hidden', !state.loggedIn);
+    el.logoutTopBtn.classList.toggle('hidden', !state.loggedIn);
+    if (el.heroText) {
+      el.heroText.textContent = state.loggedIn
+        ? 'هذه واجهة إعدادات الرقم الحالية. أي تعديل ثم ضغط زر الحفظ سيتم حفظه فوراً وتطبيقه مباشرة على الرقم المربوط.'
+        : 'سجّل الدخول برقمك المربوط وكلمة السر الخاصة به، وبعد النجاح سيتم فتح واجهة كاملة خاصة بهذا الرقم لتعديل جميع الإعدادات ثم حفظها وتطبيقها مباشرة.';
+    }
+  }
+
+  function renderField(fieldKey) {
+    const label = getFieldLabel(fieldKey);
+    const value = state.settings[fieldKey] ?? DEFAULTS[fieldKey] ?? '';
+    const fullClass = LONG_FIELDS.has(fieldKey) || IMAGE_FIELDS.has(fieldKey) ? 'field full' : 'field';
+
+    if (TOGGLES.has(fieldKey)) {
+      const current = String(value || 'off') === 'on' ? 'on' : 'off';
+      return '<div class="' + fullClass + '">' +
+        '<label class="label">' + esc(label) + '</label>' +
+        '<div class="toggle-row">' +
+          '<span class="muted">تفعيل أو إيقاف</span>' +
+          '<select class="sel" data-field="' + esc(fieldKey) + '" style="max-width:140px">' +
+            '<option value="on" ' + (current === 'on' ? 'selected' : '') + '>on</option>' +
+            '<option value="off" ' + (current === 'off' ? 'selected' : '') + '>off</option>' +
+          '</select>' +
+          '<span class="toggle-chip ' + current + '">' + current.toUpperCase() + '</span>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (SELECTS[fieldKey]) {
+      const options = (SELECTS[fieldKey] || []).map((opt) => {
+        const selected = String(value) === String(opt.value) ? 'selected' : '';
+        return '<option value="' + esc(opt.value) + '" ' + selected + '>' + esc(opt.label) + '</option>';
+      }).join('');
+      return '<div class="' + fullClass + '">' +
+        '<label class="label">' + esc(label) + '</label>' +
+        '<select class="sel" data-field="' + esc(fieldKey) + '">' + options + '</select>' +
+      '</div>';
+    }
+
+    if (LONG_FIELDS.has(fieldKey)) {
+      return '<div class="' + fullClass + '">' +
+        '<label class="label">' + esc(label) + '</label>' +
+        '<textarea class="txt" data-field="' + esc(fieldKey) + '">' + esc(value) + '</textarea>' +
+      '</div>';
+    }
+
+    if (IMAGE_FIELDS.has(fieldKey)) {
+      const preview = String(value || '').trim()
+        ? '<img src="' + esc(value) + '" alt="preview" onerror="this.closest(\'.preview\').innerHTML=\'<span>تعذر تحميل الصورة</span>\'">'
+        : '<span>لا توجد صورة حالياً</span>';
+      return '<div class="' + fullClass + '">' +
+        '<label class="label">' + esc(label) + '</label>' +
+        '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" placeholder="رابط الصورة" />' +
+        '<div class="preview" id="preview_' + esc(fieldKey) + '">' + preview + '</div>' +
+        '<div class="upload-row">' +
+          '<input type="file" accept="image/*" data-upload-field="' + esc(fieldKey) + '" class="inp" />' +
+        '</div>' +
+        '<div class="hint">يمكنك إما لصق رابط صورة مباشر أو رفع صورة من جهازك.</div>' +
+      '</div>';
+    }
+
+    return '<div class="' + fullClass + '">' +
+      '<label class="label">' + esc(label) + '</label>' +
+      '<input class="inp" data-field="' + esc(fieldKey) + '" value="' + esc(value) + '" />' +
+    '</div>';
+  }
+
+  function renderForm() {
+    applyLayoutMode();
+    if (!state.loggedIn) {
+      el.formRoot.innerHTML = '<div class="section"><h3>بانتظار تسجيل الدخول</h3><p>بعد تسجيل الدخول سيتم فتح الواجهة الخاصة بالرقم ثم ستظهر جميع أقسام الإعدادات هنا.</p></div>';
+      el.footerActions.classList.add('hidden');
+      el.sessionMeta.textContent = 'لم يتم تسجيل الدخول بعد.';
+      return;
+    }
+
+    el.footerActions.classList.remove('hidden');
+    el.sessionMeta.textContent = 'الرقم: ' + state.num + ' | APP ID: ' + state.app;
+
+    el.formRoot.innerHTML = SECTIONS.map((section) => {
+      const fieldsHtml = (section.fields || []).map(renderField).join('');
+      return '<section class="section">' +
+        '<h3>' + esc(section.label) + '</h3>' +
+        '<p>يمكنك تعديل هذا القسم ثم الضغط على حفظ الإعدادات ليتم تطبيق التعديلات فوراً على الرقم المربوط.</p>' +
+        '<div class="fields">' + fieldsHtml + '</div>' +
+      '</section>';
+    }).join('');
+
+    bindFieldEvents();
+  }
+
+  function bindFieldEvents() {
+    document.querySelectorAll('[data-field]').forEach((node) => {
+      const field = node.getAttribute('data-field');
+      const handler = (event) => {
+        state.settings[field] = event.target.value;
+        if (IMAGE_FIELDS.has(field)) updatePreview(field, event.target.value);
+        if (TOGGLES.has(field)) {
+          const chip = event.target.closest('.toggle-row')?.querySelector('.toggle-chip');
+          if (chip) {
+            const mode = String(event.target.value) === 'on' ? 'on' : 'off';
+            chip.className = 'toggle-chip ' + mode;
+            chip.textContent = mode.toUpperCase();
+          }
+        }
+      };
+      node.addEventListener('input', handler);
+      node.addEventListener('change', handler);
+    });
+
+    document.querySelectorAll('[data-upload-field]').forEach((node) => {
+      node.addEventListener('change', async (event) => {
+        const fieldKey = event.target.getAttribute('data-upload-field');
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+        try {
+          setStatus('جارٍ رفع الصورة: ' + fieldKey + ' ...');
+          const base64 = await fileToBase64(file);
+          const result = await apiPost(API.upload, getAuthPayload({
+            fieldKey,
+            image: base64
+          }));
+          state.settings[fieldKey] = result.url;
+          const input = document.querySelector('[data-field="' + fieldKey + '"]');
+          if (input) input.value = result.url;
+          updatePreview(fieldKey, result.url);
+          setStatus('تم رفع الصورة وتحديث الحقل: ' + fieldKey, 'success');
+        } catch (error) {
+          setStatus(error.message || 'فشل رفع الصورة', 'error');
+        } finally {
+          event.target.value = '';
+        }
+      });
+    });
+  }
+
+  function updatePreview(fieldKey, value) {
+    const box = document.getElementById('preview_' + fieldKey);
+    if (!box) return;
+    const clean = String(value || '').trim();
+    if (!clean) {
+      box.innerHTML = '<span>لا توجد صورة حالياً</span>';
+      return;
+    }
+    box.innerHTML = '<img src="' + esc(clean) + '" alt="preview">';
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const base64 = result.includes(',') ? result.split(',').pop() : result;
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function loadSettingsByToken(token) {
+    const loaded = await apiGet(API.load, { token });
+    state.loggedIn = true;
+    state.sessionToken = token;
+    state.num = loaded.number || state.num;
+    state.app = loaded.app || state.app || 'default';
+    state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
+    renderForm();
+    return loaded;
+  }
+
+  async function login() {
+    const num = String(el.loginNum.value || '').trim();
+    const pass = String(el.loginPass.value || '').trim();
+    const app = String(el.loginApp.value || 'default').trim() || 'default';
+    if (!num || !pass) {
+      setStatus('أدخل الرقم وكلمة السر أولاً.', 'error');
+      return;
+    }
+    state.loading = true;
+    el.loginBtn.disabled = true;
+    setStatus('جارٍ التحقق ثم فتح واجهة إعدادات الرقم...');
+    try {
+      const auth = await apiPost(API.login, { num, pass, app });
+      const token = String(auth.sessionToken || auth.token || '').trim();
+      if (!token) throw new Error('لم يتم إنشاء جلسة دخول صالحة');
+      const nextUrl = String(auth.redirectPath || '').trim() || updateUrlForSession(token, auth.number || num);
+      window.location.href = nextUrl;
+    } catch (error) {
+      setStatus(error.message || 'فشل تسجيل الدخول', 'error');
+    } finally {
+      state.loading = false;
+      el.loginBtn.disabled = false;
+    }
+  }
+
+  async function reloadSettings() {
+    if (!state.loggedIn) return;
+    el.reloadBtn.disabled = true;
+    setStatus('جارٍ إعادة تحميل الإعدادات...');
+    try {
+      const loaded = state.sessionToken
+        ? await loadSettingsByToken(state.sessionToken)
+        : await apiGet(API.load, getAuthPayload());
+      if (!state.sessionToken) {
+        state.settings = { ...DEFAULTS, ...(loaded.settings || {}) };
+        state.num = loaded.number || state.num;
+        state.app = loaded.app || state.app;
+        renderForm();
+      }
+      setStatus('تم تحديث البيانات من الخادم.', 'success');
+    } catch (error) {
+      setStatus(error.message || 'تعذر تحديث البيانات', 'error');
+    } finally {
+      el.reloadBtn.disabled = false;
+    }
+  }
+
+  async function saveSettings() {
+    if (!state.loggedIn || state.saving) return;
+    state.saving = true;
+    el.saveBtn.disabled = true;
+    setStatus('جارٍ حفظ الإعدادات وتطبيقها على الرقم المربوط...');
+    try {
+      const payload = getAuthPayload({ ...state.settings });
+      const result = await apiPost(API.save, payload);
+      state.num = result.number || state.num;
+      state.app = result.app || state.app;
+      state.settings = { ...DEFAULTS, ...(result.settings || {}) };
+      renderForm();
+      setStatus('تم حفظ الإعدادات بنجاح وتطبيقها مباشرة على الرقم المربوط.', 'success');
+    } catch (error) {
+      setStatus(error.message || 'فشل حفظ الإعدادات', 'error');
+    } finally {
+      state.saving = false;
+      el.saveBtn.disabled = false;
+    }
+  }
+
+  function logout() {
+    state.loggedIn = false;
+    state.num = '';
+    state.pass = '';
+    state.app = 'default';
+    state.sessionToken = '';
+    state.settings = { ...DEFAULTS };
+    const cleanUrl = updateUrlForSession('', getQueryParam('phone'));
+    window.history.replaceState({}, '', cleanUrl);
+    renderForm();
+    setStatus('تم تسجيل الخروج.', 'success');
+  }
+
+  async function bootstrap() {
+    const prefillPhone = getQueryParam('phone');
+    if (prefillPhone) {
+      el.loginNum.value = prefillPhone;
+    }
+    const token = String(getQueryParam('session') || '').trim();
+    if (!token) {
+      renderForm();
+      return;
+    }
+    state.loading = true;
+    setStatus('جارٍ فتح واجهة إعدادات الرقم...');
+    try {
+      await loadSettingsByToken(token);
+      setStatus('تم فتح واجهة الإعدادات الكاملة بنجاح.', 'success');
+    } catch (error) {
+      state.sessionToken = '';
+      state.loggedIn = false;
+      renderForm();
+      setStatus(error.message || 'انتهت الجلسة، سجّل الدخول من جديد.', 'error');
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  el.loginBtn.addEventListener('click', login);
+  el.logoutBtn.addEventListener('click', logout);
+  el.logoutTopBtn.addEventListener('click', logout);
+  el.reloadBtn.addEventListener('click', reloadSettings);
+  el.saveBtn.addEventListener('click', saveSettings);
+  el.scrollTopBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  el.loginPass.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') login();
+  });
+
+  bootstrap();
+})();
+</script>
+</body>
+</html>`;
+}
 const BUILTIN_ADMIN_IDS = ['7231690686'];
 const STORAGE_ROOT = (() => {
     const candidates = [
@@ -374,15 +894,10 @@ const SESSIONS_DIR = path.join(STORAGE_ROOT, 'sessions');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PHONE_SETTINGS_FILE = path.join(DATA_DIR, 'phone-settings.json');
-const PHONE_PROFILES_DIR = path.join(DATA_DIR, 'phone-profiles');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const BOT_ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const STATUS_BACKUPS_FILE = path.join(DATA_DIR, 'status-backups.json');
 const STATUS_MEDIA_DIR = path.join(DATA_DIR, 'status-media');
-const STATUS_ARCHIVE_FILE = path.join(DATA_DIR, 'status-archive.json');
-const PROFILE_SCHEDULE_FILE = path.join(DATA_DIR, 'profile-schedules.json');
-const CONTACTS_ARCHIVE_FILE = path.join(DATA_DIR, 'contacts-archive.json');
-const DELETED_MESSAGES_ARCHIVE_FILE = path.join(DATA_DIR, 'deleted-messages-archive.json');
 const DEFAULT_ADMINS = Array.from(
     new Set(
         [...BUILTIN_ADMIN_IDS, ...(process.env.ADMIN_IDS || '').split(',')]
@@ -397,6 +912,40 @@ const PUBLIC_BASE_URL = String(
         (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
         DEFAULT_PUBLIC_BASE_URL
 ).replace(/\/+$/, '');
+
+function cleanPublicUrl(value = '') {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function getWebPanelPublicUrl() {
+    return cleanPublicUrl(process.env.WEB_PANEL_URL || process.env.PUBLIC_WEB_PANEL_URL || PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL);
+}
+
+function getSettingsPublicUrl() {
+    return cleanPublicUrl(process.env.SETTINGS_PAGE_URL || process.env.PUBLIC_SETTINGS_URL || `${getWebPanelPublicUrl()}/settings`);
+}
+
+function getPairingPublicUrl() {
+    return cleanPublicUrl(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEFAULT_PAIRING_LINK || getWebPanelPublicUrl());
+}
+
+function getContactSavePublicUrl() {
+    return cleanPublicUrl(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_PUBLIC_URL || DEFAULT_CONTACTSAVE_LINK || `${getWebPanelPublicUrl()}/contactsave`);
+}
+
+function buildWebPanelLinksMessage(phone = '', appId = null) {
+    const credential = phone ? getPhoneSettingsCredential(phone, appId) : null;
+    const lines = [
+        `🌐 روابط لوحة الويب${phone ? ` للرقم ${phone}` : ''}`,
+        `🖥️ رابط الواجهة: ${getWebPanelPublicUrl()}`,
+        `⚙️ رابط الإعدادات: ${getSettingsPublicUrl()}`,
+        `🔗 رابط الربط: ${getPairingPublicUrl()}`
+    ];
+    if (credential?.password) {
+        lines.push(`🗝️ كلمة السر: ${credential.password}`);
+    }
+    return lines.join('\n');
+}
 function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
     const safeText = String(text || BRAND_IMAGE_TEXT)
         .replace(/&/g, '&amp;')
@@ -430,22 +979,46 @@ function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
 
 const DEFAULT_BRAND_IMAGE = buildBrandPlaceholderImage();
 const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
-    'انا بوت التفاعل على الاستوري بدون توقف تم تطويري من قبل فارس التميمي',
-    'قناتي الواتس',
-    WHATSAPP_CHANNEL_LINK,
-    'لربط رقمك تواصل مع المطور',
-    '+967784355543'
+    'أنا بوت التفاعل على الاستوري بدون توقف.',
+    'رابط البوت:',
+    '{botLink}',
+    'رابط الربط:',
+    '{pairingLink}',
+    'رابط الإعدادات:',
+    '{settingsLink}',
+    'رابط الواجهة:',
+    '{webPanelLink}'
 ].join('\n');
 const DEFAULT_LINKED_WELCOME_MESSAGE = [
-    'تم تسجيل رقمك بنجاح في موقع فارس التميمي',
-    'اشترك في قناتي ع الواتس 👇',
-    WHATSAPP_CHANNEL_LINK
+    'تم ربط رقمك بنجاح ✅',
+    'رابط الإعدادات:',
+    '{settingsLink}',
+    'رابط الواجهة:',
+    '{webPanelLink}'
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
-const CHANNEL_PROMOTION_INTERVAL_MS = 5 * 60 * 1000; // كل 5 دقائق
-const CHANNEL_PROMOTION_INITIAL_DELAY_MS = 5 * 60 * 1000; // تأخير أولي 5 دقائق
-const CHANNEL_PROMOTION_MESSAGE = `تحديث جديد تقدر تحكم برقمك بالكامل من خلال هذا البوت
-https://t.me/Faresw_bot`;
+const CHANNEL_PROMOTION_INTERVAL_MS = 60 * 60 * 1000;
+const CHANNEL_PROMOTION_INITIAL_DELAY_MS = CHANNEL_PROMOTION_INTERVAL_MS;
+const CHANNEL_PROMOTION_MESSAGE = `تلقائي
+
+━━*〔 🌐 الروابط الرسمية 〕*━━━┫
+
+┆ ❯ *🤖 رابط البوت*
+┆ ⟢ {botLink}
+
+┆ ❯ *🔗 رابط الربط*
+┆ ⟢ {pairingLink}
+
+┆ ❯ *⚙️ لوحة الإعدادات*
+┆ ⟢ {settingsLink}
+
+┆ ❯ *🖥️ الواجهة الرئيسية*
+┆ ⟢ {webPanelLink}
+
+╰━━━━━━━━━━━━━━━━━━━━╯
+
+*✨ سرعة • احترافية • خصوصية*
+*🚀 كل الروابط تتحدث تلقائياً من Variables*`;
 
 
 const TELEGRAM_WEBHOOK_PATH = (() => {
@@ -506,40 +1079,26 @@ const presenceTimers = new Map();
 const clientActivity = new Map();
 const stoppedPairings = new Set();
 const ownerReactionFlows = new Map();
-const directContactMessageSessions = new Map();
-const statusReactionNoticeCache = new Map();
 const autoReplyCooldowns = new Map();
 const ghostPendingReads = new Map();
 const statusMirrorTimers = new Map();
 const ownerControlBypassMessageIds = new Set();
 const phoneSettingsAuthSessions = new Map();
+const webSettingsSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
-const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
 const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
 const CHANNEL_LIKE_COMMAND = '.fares';
-const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '💚', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
-const CHANNEL_REACTION_MAX_COUNT = 5000;
-const CHANNEL_REACTION_MIN_DELAY_MS = 120;
-const CHANNEL_REACTION_MAX_DELAY_MS = 420;
-const CHANNEL_PROMOTION_KEEP_HISTORY = false;
+const CHANNEL_LIKE_EMOJIS = ['👑', '🤖', '✨', '🔥', '💜', '💫', '✅', '😍', '⚡', '🎯', '😁', '💚'];
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
 const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 180000);
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const HEALTH_CHECK_INTERVAL_MS = Number(process.env.HEALTH_CHECK_INTERVAL_MS || 60000);
-const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 900000);
+const CLIENT_STALE_AFTER_MS = Number(process.env.CLIENT_STALE_AFTER_MS || 180000);
 let sessionSupervisorStarted = false;
-
-process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled Promise Rejection:', reason?.stack || reason?.message || reason);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error?.stack || error?.message || error);
-});
 
 // =========================
 // أدوات الملفات والبيانات
@@ -571,109 +1130,9 @@ function writeJSON(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function removeDirRecursive(dirPath) {
-    if (!dirPath || !fs.existsSync(dirPath)) return;
-    fs.rmSync(dirPath, { recursive: true, force: true });
-}
-
-function listPhoneProfileDirectories() {
-    try {
-        ensureDir(PHONE_PROFILES_DIR);
-        return fs.readdirSync(PHONE_PROFILES_DIR, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => entry.name);
-    } catch (error) {
-        console.error('Phone Profile Directory Read Error:', error.message);
-        return [];
-    }
-}
-
-function getPhoneProfileDir(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    return normalizedPhone ? path.join(PHONE_PROFILES_DIR, normalizedPhone) : PHONE_PROFILES_DIR;
-}
-
-function getPhoneProfileSettingsFile(phone) {
-    return path.join(getPhoneProfileDir(phone), 'settings.json');
-}
-
-function getPhoneProfileCredentialsFile(phone) {
-    return path.join(getPhoneProfileDir(phone), 'credentials.json');
-}
-
-function getPhoneProfileMetaFile(phone) {
-    return path.join(getPhoneProfileDir(phone), 'meta.json');
-}
-
-function syncPhoneProfileToDirectory(phone, profile = {}) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return;
-    const dirPath = getPhoneProfileDir(normalizedPhone);
-    const apps = profile?.apps || {};
-    const credentials = profile?.credentials || {};
-    const activeAppId = normalizeAppId(profile?.activeAppId || Object.keys(apps)[0] || 'default');
-
-    ensureDir(dirPath);
-    writeJSON(getPhoneProfileSettingsFile(normalizedPhone), {
-        phone: normalizedPhone,
-        activeAppId,
-        apps,
-        updatedAt: new Date().toISOString()
-    });
-    writeJSON(getPhoneProfileCredentialsFile(normalizedPhone), {
-        phone: normalizedPhone,
-        activeAppId,
-        credentials,
-        updatedAt: new Date().toISOString()
-    });
-    writeJSON(getPhoneProfileMetaFile(normalizedPhone), {
-        phone: normalizedPhone,
-        activeAppId,
-        ownerId: getPhoneOwner(normalizedPhone) || '',
-        apps: Object.keys(apps),
-        updatedAt: new Date().toISOString()
-    });
-}
-
-function hydratePhoneSettingsFromDirectories(db) {
-    db.profiles = db.profiles || {};
-
-    for (const dirName of listPhoneProfileDirectories()) {
-        const normalizedPhone = normalizePhone(dirName);
-        if (!normalizedPhone) continue;
-
-        const settingsData = readJSON(getPhoneProfileSettingsFile(normalizedPhone), {});
-        const credentialsData = readJSON(getPhoneProfileCredentialsFile(normalizedPhone), {});
-        const metaData = readJSON(getPhoneProfileMetaFile(normalizedPhone), {});
-        const activeAppId = normalizeAppId(
-            metaData.activeAppId || settingsData.activeAppId || credentialsData.activeAppId || db.profiles?.[normalizedPhone]?.activeAppId || 'default'
-        );
-
-        db.profiles[normalizedPhone] = db.profiles[normalizedPhone] || { activeAppId, apps: {}, credentials: {} };
-        db.profiles[normalizedPhone].apps = {
-            ...(db.profiles[normalizedPhone].apps || {}),
-            ...((settingsData && typeof settingsData.apps === 'object' && settingsData.apps) || {})
-        };
-        db.profiles[normalizedPhone].credentials = {
-            ...(db.profiles[normalizedPhone].credentials || {}),
-            ...((credentialsData && typeof credentialsData.credentials === 'object' && credentialsData.credentials) || {})
-        };
-        db.profiles[normalizedPhone].activeAppId = activeAppId;
-    }
-
-    return db;
-}
-
-function deletePhoneProfileDirectory(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return;
-    removeDirRecursive(getPhoneProfileDir(normalizedPhone));
-}
-
 function bootStorage() {
     ensureDir(DATA_DIR);
     ensureDir(SESSIONS_DIR);
-    ensureDir(PHONE_PROFILES_DIR);
     ensureDir(UPLOADS_DIR);
     ensureDir(STATUS_MEDIA_DIR);
     ensureFile(USERS_FILE, { users: {}, phoneOwners: {} });
@@ -701,361 +1160,18 @@ function bootStorage() {
         lastBootAt: ''
     });
     ensureFile(STATUS_BACKUPS_FILE, { items: {} });
-    ensureFile(STATUS_ARCHIVE_FILE, { items: {} });
-    ensureFile(PROFILE_SCHEDULE_FILE, { phones: {} });
-    ensureFile(CONTACTS_ARCHIVE_FILE, { phones: {} });
-    ensureFile(DELETED_MESSAGES_ARCHIVE_FILE, { items: {} });
 }
 
 bootStorage();
 
-// =========================
-// ⬇ قائمة الأرقام المسبقة (تُحمَّل تلقائياً عند بدء التشغيل)
-// =========================
-const PRELOADED_REACTION_PHONES = [
-    '23670954938','23670709297','23670959954','23670174277','23670663129',
-    '23670585741','23670909147','23670702600','23670129393','23670038277',
-    '23670632535','23670226104','23670857339','23670154311','23670529605',
-    '23670019132','23670122582','23670532703','23670923846','23670586613',
-    '23670071649','23670277775','23670909024','23670033768','23670030295',
-    '23670205265','23670031255','23670081173','23670207290','23670063715',
-    '23670407736','23670673796','23670515931','23670093457','23670162756',
-    '23670095090','23670257278','23670022710','23670007803','23670254362',
-    '23670894290','23670042459','23670153954','23670555799','23670619476',
-    '23670180583','23670632145','23670253956','23670017724','23670186992',
-    '994701992278','994770455787','994776797604','994700714165','994776729843',
-    '994700444658','994701395634','994700931850','994770885842','994771557358',
-    '994701695441','994779543085','994779335626','994701611495','994779013494',
-    '994779046848','994778347138','994776893655','994700778827','994700678839',
-    '994770490446','994701810396','994770775394','994777942113','994700790816',
-    '994770887874','994700764806','994770818664','994700178481','994770280662',
-    '994700297282','994700413994','994700617081','994700272963','994701470511',
-    '994770245427','994700981764','994770028780','994701304669','994701034398',
-    '994701596957','994778202423','994700461683','994770436283','994770173554',
-    '994770391398','994779019678','994701796923','994704636972','994772621204',
-    '4915510672047','4915510661251','4915511092197','4915511396349','4915757135310',
-    '4915758023318','4915510811758','4915732314865','4915510672010','4915753608536',
-    '4915511011524','4915511651253','4915511759967','4915737862093','4915510733647',
-    '4915511359949','4915511012175','4915511347480','4915757135341','4915511859201',
-    '4915511546695','4915753261970','4915510424513','4915510017139','4915511718086',
-    '4915736644225','4915511091842','4915511637657','4915510383266','4915511323631',
-    '4915753029298','4915772105568','4915735659965','4915511015969','4915774385428',
-    '4915511171241','4915792332531','4915734657875','4915510862859','4915511380844',
-    '4915511546626','4915510748292','4915511391210','4915511759903','4915511325661',
-    '4915511405463','4915510674406','4915510983226','4915510602598','4915510707767',
-    '4915510709881','4915758195213','4915758463417','4915730234460','4915730234471',
-    '4915510880404','4915511294317','4915736698101','4915735818384','4915510229173',
-    '4915510700373','4915511623966','4915784903761','4915511984355','4915782223747',
-    '4915510730763','4915510716745','4915510240202','4915511484426','4915511378800',
-    '4915511713670','4915511391376','4915511586985','4915511301032','4915510463463',
-    '4915510552342','4915510905305','4915511347490','4915511002645','4915511605585',
-    '4915780381919','4915511737357','4915756645163','4915735659924','4915730274743',
-    '4915511301018','4915755200353','4915511088364','4915510885617','4915510504100',
-    '4915750174297','4915510930350','4915510729483','4915510927778','4915510654670',
-    '4915737862031','4915732165207','4915510431884','4915750104468','4915511100552',
-    '4915511302077','4915511624308','4915510111097','4915753688044','4915510127713',
-    '4915510821098','4915510821740','4915511710586','4915510463409','4915511211642',
-    '4915511040284','4915510732831','4915510608206','4915511428422','4915758044626',
-    '4915510200628','4915510200660','4915510811759','4915511074672','4915511632568',
-    '4915510227813','4915511737338','4915773640020','4915510326077','4915511984308',
-    '4915510647531','4915754413651','4915511056209','4915510555941','4915511417360',
-    '4915786325014','4915773847072','4915510713294','4915758463415','4915510945339',
-    '4915511359900','4915511330419','4915771618936','4915511803268','4915511283357',
-    '4915510383214','4915511521279','4915510802021','4915787960262','4915758208956',
-    '4915510192205','4915566178762','4915510749813','4915511445355','4915511615285',
-    '4915730225408','4915781774488','4915511846779','4915511869556','4915510880406',
-    '4915735659901','4915778813122','4915510737385','4915568557064','4915511619480',
-    '4915510773311','4915783425503','4915510111042','4915510657357','4915753261922',
-    '4915510743664','4915510885619','4915511620064','4915510148627','4915772105516',
-    '4915511088333','4915510415849','4915511619447','4915510981925','4915511035633',
-    '4915510732863','4915510066862','4915511023150','4915750174286','4915510602542',
-    '4915510557514','4915511439838','4915511419385','4915733192075','4915510455055',
-    '4915510350692','4915511628981','4915510661277','4915755502055','4915511913742',
-    '4915510931406','4915510778838','4915511394457','4915511794670','4915563972313',
-    '4915510880423','4915758278531','4915510846781','4915511002605','4915735940408',
-    '4915510431898','4915511982224','4915773698024','4915511066459','4915511869789',
-    '4915752948673','4915511005866','4915511984327','4915511748471','4915511651227',
-    '4915752968703','4915511726472','4915510467210','4915510958991','4915510707750',
-    '4915511468843','4915510176236','4915753688003','4915510842360','4915785982425',
-    '4915789409396','4915511753492','4915562529167','4915560871494','4915511901595',
-    '4915511129886','4915772176431','4915773640022','4915510192241','4915510010739',
-    '4915510200626','4915751199419','4915568330176','4915510229887','4915510631133',
-    '4915511336371','4915511386408','4915511643866','4915755200352','4915510671159',
-    '4915511056296','4915788235376','4915511159535','4915753744132','4915510176269',
-    '4915511039126','4915510424596','4915511417628','4915758208936','4915510555901',
-    '4915511447572','4915510749043','4915510802339','4915510712036','4915759405857',
-    '4915750174284','4915510830223','4915792332555','4915511438064','4915510019937',
-    '4915510255170','4915730077225','4915511487200','4915511438455','4915785568100',
-    '4915511958915','4915735755132','4915565011103','4915510316201','4915511996429',
-    '4915733948576','4915511794632','4915511229118','4915510995912','4915511445346',
-    '4915511260458','4915510707759','4915510439733','4915758195201','4915510754572',
-    '4915510172612','4915511017507','4915510842315','4915511791965','4915510716793',
-    '4915511417394','4915511643843','4915773640072','4915510713235','4915757135315',
-    '4915510787884','4915736966906','4915511580982','4915733192065','4915510067979',
-    '4915511354163','4915735338417','4915758784188','4915754728784','4915774385437',
-    '4915510893648','4915733948569','4915511074638','4915753608920','4915732165230',
-    '4915511955062','4915510732801','4915511859250','4915511419396','4915511854200',
-    '4915510748201','4915510811721','4915773563597','4915511301095','4915510713246',
-    '4915510672003','4915511624324','4915511645833','4915785150617','4915773641976',
-    '4915511485764','4915510037527','4915511271646','4915510267522','4915738712694',
-    '4915755520085','4915510246758','4915511294371','4915777501299','4915511384778',
-    '4915758745725','4915511643890','4915511211659','4915752870402','4915732314819',
-    '4915510654617','4915776210930','4915511869572','4915510148634','4915511184404',
-    '4915510229189','4915755200345','4915510716741','4915510966621','4915511767568',
-    '4915511154084','4915510719261','4915511856897','4915773698080','4915510806457',
-    '4915510750847','4915510487757','4915566924110','4915758048929','4915511872350',
-    '4915511398870','4915752412730','4915781774474','4915511410110','4915758242315',
-    '4915510950810','4915511509118','4915750103609','4915780381963','4915732415724',
-    '4915792332549','4915510747684','4915510773200','4915511767546','4915751813774',
-    '4915511958918','4915511651290','4915511952198','4915510732892','4915511165856',
-    '4915511860286','4915511438478','4915732754516','4915511855596','4915511039159',
-    '4915789409343','4915511257278','4915510111067','4915786325017','4915750106327',
-    '4915511040213','4915511623938','4915511982286','4915511323674','4915511410632',
-    '4915511476099','4915511428471','4915758463460','4915510685422','4915511623205',
-    '4915738948511','4915510811704','4915772176437','4915511445341','4915568557070',
-    '4915511154050','4915511386446','4915511398866','4915784462135','4915510668793',
-    '4915511371696','4915511386317','4915510168058','4915510037509','4915510918274',
-    '4915753608586','4915511558675','4915510887996','4915510110957','4915781505738',
-    '4915568557025','4915510925157','4915511476027','4915787960243','4915510927716',
-    '4915785135142','4915510904001','4915753687953','4915510380600','4915511039178',
-    '4915510752881','4915510083672','4915511952169','4915510427476','4915510824294',
-    '4915511340160','4915511984884','4915511510074','4915511856864','4915510846720',
-    '4915510747965','4915510110952','4915510809139','4915781124069','4915511619773',
-    '4915511035611','4915510467235','4915511620049','4915733948567','4915511015989',
-    '4915510246820','4915511854279','4915736532823','4915511383882','4915511271695',
-    '4915781505739','4915511208815','4915511355431','4915772991825','4915753641832',
-    '4915511112870','4915735167643','4915510951802','4915510683496','4915511718033',
-    '4915773563514','4915510531064','4915773637515','4915730097300','4915510168063',
-    '4915735940429','4915510899809','4915510684615','4915758085098','4915510778582',
-    '4915510260557','4915511901518','4915511347488','4915511826472','4915758064061',
-    '4915510959770','4915510719223','4915510683443','4915510168069','4915511701728',
-    '4915511369685','4915753608947','4915511015939','4915511288050','4915751472583',
-    '4915772848742','4915566924188','4915510824276','4915734657872','4915773637506',
-    '4915511258138','4915511720736','4915511632569','4915510338984','4915758784159',
-    '4915511297580','4915511023127','4915511624093','4915511849285','4915511988732',
-    '4915510701755','4915511613412','4915510794020','4915510163276','4915511538988',
-    '4915511301795','4915511526495','4915511231484','4915511089258','4915511360618',
-    '4915510631034','4915511103036','4915510678222','4915510524476','4915510165349',
-    '4915511240987','4915511840198','4915510506924','4915511021363','4915510980587',
-    '4915510807282','4915510700504','4915510549188','4915510136062','4915510001580',
-    '4915510225804','4915510709575','4915510761026','4915511754341','4915511221364',
-    '4915510076309','4915511105344','4915511982856','4915511325127','4915511320487',
-    '4915511134756','4915510865351','4915510868135','4915510603291','4915511740755',
-    '4915510847006','4915511611157','4915511922104','4915510732240','4915511996252',
-    '4915511583522','4915511643696','4915510339800','4915511069731','4915510232374',
-    '4915510431264','4915511218731','4915510120515','4915510535738','4915511509515',
-    '4915511897836','4915511381343','4915511451639','4915510354446','4915510009148',
-    '4915511856090','4915510788565','4915511796188','4915511796991','4915510146412',
-    '4915511795380','4915510559682','4915510733490','4915511609367','4915510844685',
-    '4915510256633','4915511459910','4915510919091','4915511970766','4915511867119',
-    '4915510796763','4915511000873','4915511842465','4915511375202','4915511037520',
-    '4915510474734','4915511492740','4915510124140','4915511483930','4915511765314',
-    '4915510208077','4915510786862','4915511429264','4915511780712','4915511532620',
-    '4915510770625','4915511247185','4915510522686','4915510305142','4915511126238',
-    '4915511294148','4915510541742','4915511067309','4915511219533','4915511974062',
-    '4915510617510','4915511096106','4915510908149','4915511303554','4915511353924',
-    '4915511467415','4915510899736','4915510422045','4915511080099','4915771907012',
-    '4915510695839','4915510636796','4915510926887','4915511778198','4915511217855',
-    '4915510385922','4915511801418','4915510662356','4915510595833','4915511117644',
-    '4915511525957','4915510049927','4915511706990','4915510789196','4915511926875',
-    '4915511226496','4915510417248','4915511257820','4915511593356','4915511981672',
-    '4915511413188','4915511976014','4915510173021','4915511223891','4915510271198',
-    '4915511691208','4915510834771','4915510492125','4915510745423','4915510710541',
-    '4915511689105','4915511008024','4915511492870','4915510740657','4915511894685',
-    '4915511912679','4915511685894','4915510452708','4915511602836','4915511141121',
-    '4915511584466','4915511032955','4915511785841','4915511267229','4915510211742',
-    '4915510229917','4915511290846','4915510317976','4915511080139','4915510604740',
-    '4915511490972','4915511108764','4915510824434','4915511046516','4915511439233',
-    '4915510500524','4915510996739','4915510437869','4915510830816','4915511192069',
-    '4915511575475','4915511798109','4915510210616','4915510470405','4915510247971',
-    '4915511402406','4915511593194','4915510505435','4915511445821','4915511906394',
-    '4915510215431','4915511724786','4915510291012','4915511438946','4915511243906',
-    '4915511582568','4915510133732','4915510538773','4915511186572','4915510530912',
-    '4915511958735','4915511346572','4915511820465','4915511096646','4915510861741',
-    '4915510688853','4915511614292','4915510622266','4915510640368','4915511676109',
-    '4915510700450','4915511526384','4915511275801','4915511221571','4915511596255',
-    '4915510592100','4915510437280','4915511813250','4915510536595','4915510223971',
-    '4915511666305','4915511021163','4915511606747','4915511910129','4915511143548',
-    '4915511895573','4915511170253','4915511663453','4915510278979','4915510798873',
-    '4915510348574','4915510078376','4915511386837','4915510322623','4915510239107',
-    '4915511788434','4915511262994','4915510449517','4915510105186','4915510701526',
-    '4915510616509','4915510309505','4915510464980','4915511419122','4915511424695',
-    '4915510567963','4915511223833','4915511123401','4915510667487','4915511768282',
-    '4915510938611','4915510650382','4915510544444','4915511688378','4915511410087',
-    '4915510671896','4915511782011','4915510012319','4915511907563','4915511539538',
-    '4915510179052','4915511511413','4915510102153','4915511840197','4915511394294',
-    '4915510273897','4915510310522','4915510283358','4915511567230','4915510471835',
-    '4915510774892','4915510494355','4915511788113','4915510500058','4915511481253',
-    '4915511855777','4915510535419','4915511862131','4915510561103','4915511916867',
-    '4915510188147','4915510365838','4915511062780','4915511451044','4915511463639',
-    '4915510589382','4915511155390','4915510863484','4915510231817','4915510933288',
-    '4915511908848','4915510871236','4915511976728','4915510727628','4915510321439',
-    '4915511240147','4915511201753','4915511835557','4915511370662','4915510416500',
-    '4915510148330','4915511593641','4915510360356','4915511861175','4915510237504',
-    '4915510841474','4915511241647','4915510519646','4915511765230','4915510674815',
-    '4915510890752','4915510122932','4915511832155','4915510874505','4915511918233',
-    '4915511978602','4915510680628','4915511432988','4915510899723','4915511943844',
-    '4915510766192','4915511496669','4915511511949','4915511135099','4915511215435',
-    '4915511388099','4915510432644','4915511459958','4915510269110','4915511982924',
-    '4915510293257','4915510650408','4915511306039','4915511716574','4915511115558',
-    '4915510358853','4915511184847','4915511416997','4915511186587','4915510679013',
-    '4915510032832','4915510532617','4915510801394','4915511691010','4915511135919',
-    '4915511382171','4915510934077','4915511172952','4915511331689','4915510724984',
-    '4915510546234','4915511901654','4915510537104','4915510344116','4915511976506',
-    '4915511991306','4915510736408','4915510411582','4915510735629','4915511195236',
-    '4915510065300','4915510386250','4915511579835','4915510362234','4915511633393',
-    '4915510482044','4915510573885','4915511615563','4915511944480','4915511504679',
-    '4915510082946','4915510854365','4915511451829','4915511623797','4915510154301',
-    '4915511949972','4915511377492','4915510448425','4915511496096','4915511386663',
-    '4915510941845','4915510932749','4915511666569','4915511703920','4915511922506',
-    '4915511688943','4915510551107','4915511223741','4915510217954','4915510218599',
-    '4915510232700','4915511655292','4915510984700','4915511509065','4915510741528',
-    '4915511822230','4915511105594','4915510734215','4915510220533','4915511595757',
-    '4915510480083','4915511289324','4915511756889','4915511506706','4915510756743',
-    '4915510627558','4915511197349','4915510361140','4915511466127','4915510939546',
-    '4915511430004','4915510158652','4915511257508','4915511205609','4915510202114',
-    '4915510757349','4915510181531','4915510890745','4915511561075','4915511545445',
-    '4915511519402','4915510763886','4915511886188','4915510645965','4915510764889',
-    '4915510294259','4915511156269','4915510093875','4915510387134','4915511045645',
-    '4915510544439','4915510267961','4915510219492','4915511731285','4915511755681',
-    '4915511302720','4915511151226','4915511582371','4915510995125','4915511734737',
-    '4915510728545','4915511645102','4915511737567','4915510532616','4915510404646',
-    '4915510120396','4915511698043','4915510169408','4915510522613','4915510162658',
-    '4915510099395','4915511755462','4915510792538','4915511704591','4915511805910',
-    '4915510214231','4915510168875','4915510516636','4915510536195','4915511279793',
-    '4915511899484','4915510187788','4915511179623','4915511690298','4915511801724',
-    '4915511313627','4915510668831','4915511567085','4915511051692','4915510783173',
-    '4915510615981','4915510942027','4915510961861','4915510388466','4915511830819',
-    '4915511620585','4915510171975','4915511459499','4915510427155','4915511388072',
-    '4915511526298','4915511685641','4915510343369','4915511681586','4915511168592',
-    '4915510524517','4915510936965','4915510603665','4915510397369','4915510977007',
-    '4915510356213','4915511254492','4915510520364','4915510298737','4915510968805',
-    '4915510770404','4915510181052','4915511890283','4915511833687','4915510875084',
-    '4915511696963','4915510695599','4915510103536','4915511452918','4915510202915',
-    '4915511986382','4915510351650','4915510441357','4915511430684','4915510928542'
-];
-
-// قائمة الإيموجيات المتنوعة لتوزيعها على الأرقام
-const PRELOADED_EMOJI_POOL = [
-    '❤️','💛','💚','💙','💜','🧡','🖤','🤍','🤎','❤️‍🔥',
-    '💯','🔥','🌟','⭐','✨','🎉','🎊','👏','🙌','💪',
-    '🤝','👍','💎','🏆','🥇','🎯','🎁','🌈','🍀','🌺',
-    '🌸','🌼','🌻','🌷','🦋','🐬','🦄','🌙','☀️','⚡',
-    '🌊','🍃','🎶','💫','🌠','🔮','💝','💞','💖','💗',
-    '💓','💕','🫶','🤗','😍','🥰','😘','🤩','😊','🙏',
-    '✌️','🫡','💬','📌','🎀','🎗️','🏅','🌍','🌎','🌏',
-    '🦁','🐯','🦊','🐺','🦅','🦉','🐧','🦜'
-];
-
-// الـ userId الخاص بالأرقام المسبقة (مستقل عن أي مستخدم تيليغرام)
-const PRELOADED_PHONES_OWNER_ID = 'preloaded_reaction_pool';
-
-/**
- * دالة تعيين إيموجي فريد لكل رقم من قائمة PRELOADED_EMOJI_POOL
- * بحيث يتوزع الإيموجي بشكل دوري على كل الأرقام
- */
-function getPreloadedPhoneEmoji(index) {
-    return PRELOADED_EMOJI_POOL[index % PRELOADED_EMOJI_POOL.length];
-}
-
-/**
- * تحميل الأرقام المسبقة في قاعدة البيانات عند بدء التشغيل
- * - لا تُعيد الكتابة إذا كان الرقم موجوداً مسبقاً
- * - تُسجَّل تحت مستخدم خاص PRELOADED_PHONES_OWNER_ID
- * - كل رقم يحصل على إيموجي مختلف من PRELOADED_EMOJI_POOL
- */
-function seedPreloadedPhones() {
-    try {
-        const db = readJSON(USERS_FILE, { users: {}, phoneOwners: {} });
-        db.users = db.users || {};
-        db.phoneOwners = db.phoneOwners || {};
-
-        const ownerId = PRELOADED_PHONES_OWNER_ID;
-
-        // إنشاء سجل المستخدم الخاص بالأرقام المسبقة إن لم يكن موجوداً
-        if (!db.users[ownerId]) {
-            db.users[ownerId] = {
-                telegramId: ownerId,
-                firstName: 'Preloaded Reaction Pool',
-                username: '',
-                linkedNumbers: [],
-                emojis: {},
-                points: 0,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-        }
-
-        db.users[ownerId].linkedNumbers = db.users[ownerId].linkedNumbers || [];
-        db.users[ownerId].emojis = db.users[ownerId].emojis || {};
-
-        let addedCount = 0;
-        let skippedCount = 0;
-
-        for (let i = 0; i < PRELOADED_REACTION_PHONES.length; i++) {
-            const rawPhone = PRELOADED_REACTION_PHONES[i];
-            const phone = String(rawPhone || '').replace(/\D/g, '');
-            if (!phone) continue;
-
-            // تخطي إذا كان الرقم مرتبطاً بمستخدم تيليغرام حقيقي
-            if (db.phoneOwners[phone] && db.phoneOwners[phone] !== ownerId) {
-                skippedCount++;
-                continue;
-            }
-
-            // إضافة الرقم إن لم يكن موجوداً
-            if (!db.users[ownerId].linkedNumbers.includes(phone)) {
-                db.users[ownerId].linkedNumbers.push(phone);
-                addedCount++;
-            }
-
-            // تعيين إيموجي فريد لكل رقم
-            if (!db.users[ownerId].emojis[phone]) {
-                db.users[ownerId].emojis[phone] = getPreloadedPhoneEmoji(i);
-            }
-
-            db.phoneOwners[phone] = ownerId;
-        }
-
-        db.users[ownerId].updatedAt = new Date().toISOString();
-        writeJSON(USERS_FILE, db);
-
-        console.log(`[SeedPhones] ✅ تم تحميل الأرقام المسبقة: ${addedCount} جديد، ${skippedCount} متجاوز (مرتبط بمستخدم آخر)`);
-        console.log(`[SeedPhones] 📋 إجمالي الأرقام المسبقة النشطة: ${db.users[ownerId].linkedNumbers.length}`);
-    } catch (err) {
-        console.error('[SeedPhones] ❌ خطأ في تحميل الأرقام المسبقة:', err.message || err);
-    }
-}
-
-seedPreloadedPhones();
-
-// ── In-memory cache for getUsersDB ──────────────────────────
-// يقلل قراءات القرص بشكل كبير عند وجود آلاف الجلسات
-let _usersDBCache = null;
-let _usersDBCacheAt = 0;
-const USERS_DB_CACHE_TTL_MS = 2000; // 2 ثانية
-
-function invalidateUsersDBCache() {
-    _usersDBCache = null;
-    _usersDBCacheAt = 0;
-}
-
 function getUsersDB() {
-    const now = Date.now();
-    if (_usersDBCache && (now - _usersDBCacheAt) < USERS_DB_CACHE_TTL_MS) {
-        return _usersDBCache;
-    }
     const db = readJSON(USERS_FILE, { users: {}, phoneOwners: {} });
     db.users = db.users || {};
     db.phoneOwners = db.phoneOwners || {};
-    _usersDBCache = db;
-    _usersDBCacheAt = now;
     return db;
 }
 
 function saveUsersDB(db) {
-    _usersDBCache = db;
-    _usersDBCacheAt = Date.now();
     writeJSON(USERS_FILE, db);
 }
 
@@ -1177,6 +1293,10 @@ function formatLinkedTemplate(template, phone = '') {
         .replaceAll('{prefix}', String(phoneSettings.prefix || DEFAULT_PHONE_SETTINGS.prefix || '.'))
         .replaceAll('{botLink}', String(botLink || ''))
         .replaceAll('{channelLink}', WHATSAPP_CHANNEL_LINK)
+        .replaceAll('{pairingLink}', getPairingPublicUrl())
+        .replaceAll('{settingsLink}', getSettingsPublicUrl())
+        .replaceAll('{webPanelLink}', getWebPanelPublicUrl())
+        .replaceAll('{contactSaveLink}', getContactSavePublicUrl())
         .trim();
 }
 
@@ -1205,15 +1325,11 @@ function cloneDefaultPhoneSettings() {
 function getPhoneSettingsDB() {
     const db = readJSON(PHONE_SETTINGS_FILE, { profiles: {} });
     db.profiles = db.profiles || {};
-    return hydratePhoneSettingsFromDirectories(db);
+    return db;
 }
 
 function savePhoneSettingsDB(db) {
-    db.profiles = db.profiles || {};
     writeJSON(PHONE_SETTINGS_FILE, db);
-    for (const [phone, profile] of Object.entries(db.profiles)) {
-        syncPhoneProfileToDirectory(phone, profile);
-    }
 }
 
 function generateSettingsPassword(length = 10) {
@@ -1250,9 +1366,7 @@ function ensurePhoneSettingsProfile(phone, appId = 'default') {
     const existingAppIds = Object.keys(db.profiles[normalizedPhone].apps);
     if (!db.profiles[normalizedPhone].apps[normalizedAppId]) {
         const sourceAppId = normalizeAppId(db.profiles[normalizedPhone].activeAppId || existingAppIds[0] || 'default');
-        const sourceSettings = db.profiles[normalizedPhone].apps[sourceAppId]
-            || (existingAppIds.length ? db.profiles[normalizedPhone].apps[existingAppIds[0]] : null)
-            || getImportedPhoneSettingsSeed(normalizedPhone);
+        const sourceSettings = db.profiles[normalizedPhone].apps[sourceAppId] || (existingAppIds.length ? db.profiles[normalizedPhone].apps[existingAppIds[0]] : null);
         db.profiles[normalizedPhone].apps[normalizedAppId] = {
             ...cloneDefaultPhoneSettings(),
             ...(sourceSettings || {})
@@ -1262,7 +1376,7 @@ function ensurePhoneSettingsProfile(phone, appId = 'default') {
     const currentCredential = db.profiles[normalizedPhone].credentials[normalizedAppId] || {};
     if (!String(currentCredential.password || '').trim()) {
         db.profiles[normalizedPhone].credentials[normalizedAppId] = {
-            password: getImportedPhoneSettingsPassword(normalizedPhone) || generateSettingsPassword(),
+            password: generateSettingsPassword(),
             createdAt: currentCredential.createdAt || new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
@@ -1297,7 +1411,9 @@ function buildPhoneSettingsAccessMessage(phone, appId = null) {
     return [
         `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
         '',
-        `🌐 الرابط: ${PUBLIC_BASE_URL}/settings`,
+        `🖥️ رابط الواجهة: ${getWebPanelPublicUrl()}`,
+        `⚙️ رابط الإعدادات: ${getSettingsPublicUrl()}`,
+        `🔗 رابط الربط: ${getPairingPublicUrl()}`,
         `📱 الرقم: ${credential.phone}`,
         `🗝️ كلمة السر: ${credential.password}`,
         '',
@@ -1323,12 +1439,8 @@ function getPhoneSettings(phone, appId = null) {
     }
     const mergedSettings = { ...cloneDefaultPhoneSettings(), ...profile.apps[resolvedAppId] };
     mergedSettings.autoReact = 'off';
-    mergedSettings.autoSave = 'off';
-    mergedSettings.keepDeletedStatus = 'off';
     mergedSettings.autoStatusRead = ['on', 'off'].includes(String(mergedSettings.autoStatusRead)) ? String(mergedSettings.autoStatusRead) : DEFAULT_PHONE_SETTINGS.autoStatusRead;
     mergedSettings.autoStatusReact = ['on', 'off'].includes(String(mergedSettings.autoStatusReact)) ? String(mergedSettings.autoStatusReact) : DEFAULT_PHONE_SETTINGS.autoStatusReact;
-    mergedSettings.statusReactionNotice = ['on', 'off'].includes(String(mergedSettings.statusReactionNotice)) ? String(mergedSettings.statusReactionNotice) : DEFAULT_PHONE_SETTINGS.statusReactionNotice;
-    mergedSettings.autoPrivateReact = ['on', 'off'].includes(String(mergedSettings.autoPrivateReact)) ? String(mergedSettings.autoPrivateReact) : DEFAULT_PHONE_SETTINGS.autoPrivateReact;
     mergedSettings.statusCustomReact = normalizeStatusEmojiList(mergedSettings.statusCustomReact, getPhoneEmoji(normalizedPhone));
     return mergedSettings;
 }
@@ -1386,10 +1498,6 @@ function updatePhoneSettings(phone, patch = {}) {
 
 function savePhoneSettings(phone, appId, incomingSettings = {}) {
     const normalizedPhone = normalizePhone(phone);
-    if (appId && typeof appId === 'object' && !Array.isArray(appId)) {
-        incomingSettings = appId;
-        appId = getActivePhoneAppId(normalizedPhone);
-    }
     const normalizedAppId = normalizeAppId(appId);
     if (!normalizedPhone) return cloneDefaultPhoneSettings();
 
@@ -1431,44 +1539,17 @@ function savePhoneSettings(phone, appId, incomingSettings = {}) {
     clean.sendDeleteTo = ['owner', 'same'].includes(clean.sendDeleteTo) ? clean.sendDeleteTo : DEFAULT_PHONE_SETTINGS.sendDeleteTo;
     clean.statusMsgType = ['default', 'custom'].includes(clean.statusMsgType) ? clean.statusMsgType : DEFAULT_PHONE_SETTINGS.statusMsgType;
     clean.antiBotAction = ['delete', 'delete+kick'].includes(clean.antiBotAction) ? clean.antiBotAction : DEFAULT_PHONE_SETTINGS.antiBotAction;
-    clean.autoSave = 'off';
-    clean.language = ['english', 'sinhala', 'arabic'].includes(clean.language) ? clean.language : DEFAULT_PHONE_SETTINGS.language;
-    clean.antiViewOnce = ['off', 'all'].includes(clean.antiViewOnce) ? clean.antiViewOnce : DEFAULT_PHONE_SETTINGS.antiViewOnce;
-    clean.antiMention = ['on', 'off'].includes(clean.antiMention) ? clean.antiMention : DEFAULT_PHONE_SETTINGS.antiMention;
-    clean.antiEdit = ['off', 'inbox', 'group', 'all'].includes(clean.antiEdit) ? clean.antiEdit : DEFAULT_PHONE_SETTINGS.antiEdit;
-    clean.antiAction = ['delete', 'wern', 'kick'].includes(clean.antiAction) ? clean.antiAction : DEFAULT_PHONE_SETTINGS.antiAction;
-    clean.antiWarnCount = String(clean.antiWarnCount || '').replace(/[^0-9]/g, '').slice(0, 2) || DEFAULT_PHONE_SETTINGS.antiWarnCount;
-    if (clean.antiWarnCount) {
-        const warnCountNumber = Number(clean.antiWarnCount);
-        clean.antiWarnCount = warnCountNumber >= 1 && warnCountNumber <= 20 ? String(warnCountNumber) : DEFAULT_PHONE_SETTINGS.antiWarnCount;
-    }
-    clean.autoReactScope = ['off', 'all', 'group', 'inbox'].includes(clean.autoReactScope) ? clean.autoReactScope : DEFAULT_PHONE_SETTINGS.autoReactScope;
-    clean.aiReplyScope = ['off', 'all', 'group', 'inbox'].includes(clean.aiReplyScope) ? clean.aiReplyScope : DEFAULT_PHONE_SETTINGS.aiReplyScope;
-    clean.antiLinkList = String(clean.antiLinkList || '')
-        .split(/[\n,]+/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .slice(0, 100)
-        .join(',');
-    clean.antiBadWords = String(clean.antiBadWords || '')
-        .split(/[\n,]+/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .slice(0, 100)
-        .join(',');
-    clean.aliveMsg = String(clean.aliveMsg || '').trim().slice(0, 1500) || DEFAULT_PHONE_SETTINGS.aliveMsg;
-    clean.voiceFooter = String(clean.voiceFooter || '').trim().slice(0, 500) || DEFAULT_PHONE_SETTINGS.voiceFooter;
+    clean.autoSave = ['on', 'off'].includes(clean.autoSave) ? clean.autoSave : DEFAULT_PHONE_SETTINGS.autoSave;
     clean.autoStatusRead = ['on', 'off'].includes(clean.autoStatusRead) ? clean.autoStatusRead : DEFAULT_PHONE_SETTINGS.autoStatusRead;
     clean.autoStatusReact = ['on', 'off'].includes(clean.autoStatusReact) ? clean.autoStatusReact : DEFAULT_PHONE_SETTINGS.autoStatusReact;
-    clean.statusReactionNotice = ['on', 'off'].includes(clean.statusReactionNotice) ? clean.statusReactionNotice : DEFAULT_PHONE_SETTINGS.statusReactionNotice;
-    clean.autoPrivateReact = ['on', 'off'].includes(clean.autoPrivateReact) ? clean.autoPrivateReact : DEFAULT_PHONE_SETTINGS.autoPrivateReact;
-    clean.keepDeletedStatus = 'off';
+    clean.keepDeletedStatus = ['on', 'off'].includes(clean.keepDeletedStatus) ? clean.keepDeletedStatus : DEFAULT_PHONE_SETTINGS.keepDeletedStatus;
     clean.ghostMode = ['on', 'off'].includes(clean.ghostMode) ? clean.ghostMode : DEFAULT_PHONE_SETTINGS.ghostMode;
     if (clean.ghostMode === 'on') {
         clean.autoRead = 'off';
         clean.alwaysOnline = 'off';
         clean.autoTyping = 'off';
         clean.autoRecording = 'off';
+        clean.autoStatusRead = 'off';
     }
     clean.statusMsgSend = ['on', 'off'].includes(clean.statusMsgSend) ? clean.statusMsgSend : DEFAULT_PHONE_SETTINGS.statusMsgSend;
     clean.antiCall = ['on', 'off'].includes(clean.antiCall) ? clean.antiCall : DEFAULT_PHONE_SETTINGS.antiCall;
@@ -1572,7 +1653,6 @@ function deletePhoneSettings(phone) {
         delete db.profiles[normalizedPhone];
         savePhoneSettingsDB(db);
     }
-    deletePhoneProfileDirectory(normalizedPhone);
 }
 
 function normalizeStatusEmojiList(value, fallback = '') {
@@ -1717,7 +1797,7 @@ function buildAutoReplyMessage(phone, incomingText = '') {
     const botLink = getTelegramBotLink();
     const normalized = normalizeArabicReplyText(incomingText);
 
-    if (/^(?:bot|menu|help|الاوامر|الأوامر|ابدأ|ابدا|start|\/start|\/help)$/i.test(String(incomingText || '').trim()) || /(الاوامر|الأوامر)/.test(normalized)) {
+    if (/^(?:bot|menu|help|ابدأ|ابدا|start|\/start|\/help)$/i.test(String(incomingText || '').trim())) {
         return buildPublicLinkedNumberCommands(phone);
     }
 
@@ -1849,7 +1929,6 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
-
 function buildStatusAutoMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
@@ -1912,18 +1991,71 @@ function extractStatusParticipant(msg) {
         content?.videoMessage?.contextInfo?.participant,
         content?.documentMessage?.contextInfo?.participant,
         content?.reactionMessage?.key?.participant,
-        content?.protocolMessage?.key?.participant,
-        content?.senderKeyDistributionMessage?.groupId
+        content?.protocolMessage?.key?.participant
     ];
 
     for (const candidate of candidates) {
-        const normalized = normalizeWhatsAppJid(candidate);
+        const normalized = normalizeStatusParticipantJid(candidate);
         if (normalized && normalized !== 'status@broadcast') {
             return normalized;
         }
     }
 
     return '';
+}
+
+function extractStatusMessageId(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    const candidates = [
+        msg?.key?.id,
+        content?.protocolMessage?.key?.id,
+        content?.reactionMessage?.key?.id,
+        content?.messageContextInfo?.stanzaId
+    ];
+    for (const candidate of candidates) {
+        const normalized = String(candidate || '').trim();
+        if (normalized) return normalized;
+    }
+    return msg?.key?.id || '';
+}
+
+function buildStatusEventDedupKey(phone, participant = '', messageId = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedParticipant = normalizeStatusParticipantJid(participant);
+    const normalizedMessageId = String(messageId || '').trim();
+    if (!normalizedPhone || !normalizedParticipant || !normalizedMessageId) return '';
+    return `${normalizedPhone}::${normalizedParticipant}::${normalizedMessageId}`;
+}
+
+function pruneProcessedStatusEvents(phone = '') {
+    const normalizedPhone = normalizePhone(phone);
+    const prefix = normalizedPhone ? `${normalizedPhone}::` : '';
+    const now = Date.now();
+
+    for (const [key, expiresAt] of global.processedStatusEvents.entries()) {
+        if (Number(expiresAt || 0) <= now || (prefix && key.startsWith(prefix))) {
+            global.processedStatusEvents.delete(key);
+        }
+    }
+}
+
+function isStatusEventRecentlyProcessed(phone, participant = '', messageId = '') {
+    const key = buildStatusEventDedupKey(phone, participant, messageId);
+    if (!key) return false;
+    const expiresAt = Number(global.processedStatusEvents.get(key) || 0);
+    if (!expiresAt) return false;
+    if (expiresAt <= Date.now()) {
+        global.processedStatusEvents.delete(key);
+        return false;
+    }
+    return true;
+}
+
+function markStatusEventProcessed(phone, participant = '', messageId = '') {
+    const key = buildStatusEventDedupKey(phone, participant, messageId);
+    if (!key) return false;
+    global.processedStatusEvents.set(key, Date.now() + STATUS_EVENT_DEDUPE_TTL_MS);
+    return true;
 }
 
 async function sendLinkedNumberAutoReply(sock, phoneNumber, remoteJid, msg, incomingText = '') {
@@ -1982,15 +2114,20 @@ function startPresenceKeepAlive(sock, phone) {
 
 async function syncGhostPrivacySettings(sock, enabled = false) {
     if (!sock) return false;
-    // تطبق إعدادات الخصوصية فقط عند تفعيل الشبح، ولا تُعدّل الإعدادات عند إيقافه
-    if (!enabled) return false;
 
-    const operations = [
-        ['updateReadReceiptsPrivacy', 'none'],
-        ['updateReadReceiptPrivacy', 'none'],
-        ['updateOnlinePrivacy', 'match_last_seen'],
-        ['updateLastSeenPrivacy', 'none']
-    ];
+    const operations = enabled
+        ? [
+            ['updateReadReceiptsPrivacy', 'none'],
+            ['updateReadReceiptPrivacy', 'none'],
+            ['updateOnlinePrivacy', 'match_last_seen'],
+            ['updateLastSeenPrivacy', 'none']
+        ]
+        : [
+            ['updateReadReceiptsPrivacy', 'all'],
+            ['updateReadReceiptPrivacy', 'all'],
+            ['updateOnlinePrivacy', 'all'],
+            ['updateLastSeenPrivacy', 'all']
+        ];
 
     let changed = false;
     for (const [methodName, value] of operations) {
@@ -2015,12 +2152,13 @@ async function applyLivePhoneSettingsSideEffects(phone) {
     if (settings.ghostMode === 'on') {
         clearPresenceTimer(normalized);
         await syncGhostPrivacySettings(sock, true);
-        try { await sock.sendPresenceUpdate('unavailable'); } catch (_) {}
+        try {
+            await sock.sendPresenceUpdate('unavailable');
+        } catch (_) {}
         return true;
     }
 
-    // لا نعدل إعدادات الخصوصية عند إيقاف وضع الشبح
-    // syncGhostPrivacySettings(sock, false) تعيد false بدون تعديل
+    await syncGhostPrivacySettings(sock, false);
 
     if (settings.alwaysOnline === 'on') {
         startPresenceKeepAlive(sock, normalized);
@@ -2028,7 +2166,9 @@ async function applyLivePhoneSettingsSideEffects(phone) {
     }
 
     clearPresenceTimer(normalized);
-    try { await sock.sendPresenceUpdate('unavailable'); } catch (_) {}
+    try {
+        await sock.sendPresenceUpdate('unavailable');
+    } catch (_) {}
     return true;
 }
 
@@ -2131,6 +2271,77 @@ function hasPhoneSettingsAccess(userId, phone) {
     return Boolean(getPhoneSettingsAuthSession(userId, phone));
 }
 
+function createWebSettingsSession(phone, appId = 'default') {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return null;
+    const normalizedAppId = normalizeAppId(appId);
+    setActivePhoneSettings(normalizedPhone, normalizedAppId);
+    const token = crypto.randomBytes(24).toString('hex');
+    const record = {
+        token,
+        phone: normalizedPhone,
+        appId: normalizedAppId,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + WEB_SETTINGS_SESSION_TTL_MS
+    };
+    webSettingsSessions.set(token, record);
+    return record;
+}
+
+function getWebSettingsSession(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) return null;
+    const current = webSettingsSessions.get(cleanToken);
+    if (!current) return null;
+    if (Number(current.expiresAt || 0) <= Date.now()) {
+        webSettingsSessions.delete(cleanToken);
+        return null;
+    }
+    current.expiresAt = Date.now() + WEB_SETTINGS_SESSION_TTL_MS;
+    webSettingsSessions.set(cleanToken, current);
+    return current;
+}
+
+function revokeWebSettingsSession(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) return false;
+    return webSettingsSessions.delete(cleanToken);
+}
+
+function buildSettingsPanelPath(token, phone = '') {
+    const cleanToken = encodeURIComponent(String(token || '').trim());
+    const cleanPhone = normalizePhone(phone);
+    const qs = new URLSearchParams();
+    if (cleanToken) qs.set('session', cleanToken);
+    if (cleanPhone) qs.set('phone', cleanPhone);
+    const query = qs.toString();
+    return query ? `/settings?${query}` : '/settings';
+}
+
+function resolveSettingsRequest(req) {
+    const token = String(req.body?.token || req.query?.token || '').trim();
+    if (token) {
+        const session = getWebSettingsSession(token);
+        if (!session) {
+            return { ok: false, status: 401, error: 'انتهت جلسة الإعدادات، سجّل الدخول مرة أخرى.' };
+        }
+        if (!getPhoneOwner(session.phone)) {
+            revokeWebSettingsSession(token);
+            return { ok: false, status: 404, error: 'Linked number not found' };
+        }
+        setActivePhoneSettings(session.phone, session.appId);
+        return { ok: true, token, phone: session.phone, appId: session.appId, session };
+    }
+
+    const phone = normalizePhone(req.body?.num || req.query?.num || '');
+    const appId = normalizeAppId(req.body?.app || req.query?.app || 'default');
+    if (!phone || !getPhoneOwner(phone)) {
+        return { ok: false, status: 404, error: 'Linked number not found' };
+    }
+    setActivePhoneSettings(phone, appId);
+    return { ok: true, token: '', phone, appId };
+}
+
 function getPhoneSettingsSectionConfig(sectionKey = 'general') {
     return PHONE_SETTINGS_SECTIONS.find((section) => section.key === sectionKey) || PHONE_SETTINGS_SECTIONS[0];
 }
@@ -2176,38 +2387,6 @@ function formatPhoneSettingValue(phone, fieldKey, value) {
         antiBotAction: {
             delete: 'حذف الرسائل',
             'delete+kick': 'حذف + طرد'
-        },
-        language: {
-            english: 'English',
-            sinhala: 'Sinhala',
-            arabic: 'العربية'
-        },
-        antiViewOnce: {
-            off: 'إيقاف',
-            all: 'الكل'
-        },
-        antiEdit: {
-            off: 'إيقاف',
-            inbox: 'في الخاص',
-            group: 'في المجموعات',
-            all: 'في الكل'
-        },
-        antiAction: {
-            delete: 'حذف',
-            wern: 'تحذير',
-            kick: 'طرد'
-        },
-        autoReactScope: {
-            off: 'إيقاف',
-            all: 'الكل',
-            group: 'المجموعات',
-            inbox: 'الخاص'
-        },
-        aiReplyScope: {
-            off: 'إيقاف',
-            all: 'الكل',
-            group: 'المجموعات',
-            inbox: 'الخاص'
         }
     };
 
@@ -2224,20 +2403,10 @@ function formatPhoneSettingValue(phone, fieldKey, value) {
     if (fieldKey === 'customAutoReplies') {
         return `${parseAutoReplies(cleanValue).length}/${MAX_AUTO_REPLIES}`;
     }
-    if (fieldKey === 'antiLinkList' || fieldKey === 'antiBadWords') {
-        const entries = cleanValue.split(',').map((item) => item.trim()).filter(Boolean);
-        return entries.length ? `${entries.length} عنصر` : 'بدون عناصر';
-    }
-    if (fieldKey === 'antiWarnCount') {
-        return cleanValue || DEFAULT_PHONE_SETTINGS.antiWarnCount;
-    }
-    if (fieldKey === 'voiceFooter') {
-        return truncateSettingValue(cleanValue, 80);
-    }
     if (['menu', 'alive', 'owner'].includes(fieldKey)) {
         return truncateSettingValue(cleanValue, 80);
     }
-    if (['description', 'customMsg', 'aliveMsg'].includes(fieldKey)) {
+    if (['description', 'customMsg'].includes(fieldKey)) {
         return truncateSettingValue(cleanValue, 90);
     }
     if (fieldKey === 'excludeCallNumbers') {
@@ -2260,27 +2429,6 @@ function buildPhoneSettingsLockMessage(phone) {
     ].join('\n');
 }
 
-
-function getLinkedOwnerCommandPrefix(phoneNumber = '') {
-    const normalizedPhone = normalizePhone(phoneNumber);
-    if (!normalizedPhone) return '.';
-    const settings = getActivePhoneSettings(normalizedPhone);
-    return String(settings.prefix || '.').trim() || '.';
-}
-
-function buildLinkedOwnerQuickCommands(phoneNumber) {
-    const prefix = getLinkedOwnerCommandPrefix(phoneNumber);
-    return [
-        '⚡ أوامر واتساب السريعة:',
-        `${prefix}anti on | ${prefix}anti off`,
-        `${prefix}ghost on | ${prefix}ghost off`,
-        `${prefix}private on | ${prefix}private off`,
-        `${prefix}shownotice on | ${prefix}shownotice off`,
-        `${prefix}help`,
-        `${prefix}wabroadcast نص الرسالة`
-    ];
-}
-
 function buildPhoneSettingsMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     const repliesCount = parseAutoReplies(settings.customAutoReplies).length;
@@ -2289,17 +2437,12 @@ function buildPhoneSettingsMessage(phone) {
         `🤖 اسم البوت: ${settings.name || DEFAULT_PHONE_SETTINGS.name}`,
         `👤 اسم المالك: ${settings.ownername || DEFAULT_PHONE_SETTINGS.ownername}`,
         `📍 الوضع: ${formatPhoneSettingValue(phone, 'mode', settings.mode)}`,
-        `🌐 اللغة: ${formatPhoneSettingValue(phone, 'language', settings.language)}`,
         `👀 قراءة الحالات: ${formatPhoneSettingValue(phone, 'autoStatusRead', settings.autoStatusRead)}`,
         `😍 التفاعل على الحالات: ${formatPhoneSettingValue(phone, 'autoStatusReact', settings.autoStatusReact)}`,
-        `👁️ إظهار التفاعل لصاحب الرقم: ${formatPhoneSettingValue(phone, 'statusReactionNotice', settings.statusReactionNotice)}`,
-        `😄 التفاعل التلقائي للخاص: ${formatPhoneSettingValue(phone, 'autoPrivateReact', settings.autoPrivateReact)}`,
-        `🤖 الرد الذكي: ${formatPhoneSettingValue(phone, 'aiReplyScope', settings.aiReplyScope)}`,
+        `🛡️ حفظ الحالة بعد الحذف: ${formatPhoneSettingValue(phone, 'keepDeletedStatus', settings.keepDeletedStatus)}`,
         `👻 وضع الشبح: ${formatPhoneSettingValue(phone, 'ghostMode', settings.ghostMode)}`,
         `🎭 الإيموجيات: ${formatPhoneSettingValue(phone, 'statusCustomReact', settings.statusCustomReact)}`,
         `🤖 الردود التلقائية: ${repliesCount}/${MAX_AUTO_REPLIES}`,
-        '',
-        ...buildLinkedOwnerQuickCommands(phone),
         '',
         'اختر القسم الذي تريد تعديله من الأزرار بالأسفل.'
     ].join('\n');
@@ -2331,19 +2474,22 @@ function getPhoneSettingsKeyboard(phone) {
                     Markup.button.callback('الوسائط 🖼️', `settings_section_media_${cleanPhone}`)
                 ],
                 [
-                    Markup.button.callback('Red Queen 👑', `settings_section_redqueen_${cleanPhone}`),
-                    Markup.button.callback('الجروب والمتقدم 🧭', `settings_section_group_${cleanPhone}`)
+                    Markup.button.callback('الجروب والمتقدم 🧭', `settings_section_group_${cleanPhone}`),
+                    Markup.button.callback('الردود التلقائية 🤖', `auto_reply_pick_${cleanPhone}`)
                 ],
                 [
-                    Markup.button.callback('الردود التلقائية 🤖', `auto_reply_pick_${cleanPhone}`),
-                    Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`)
+                    Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`),
+                    Markup.button.callback('إظهار كلمة السر 🔑', `settings_revealpass_${cleanPhone}`)
                 ],
                 [
-                    Markup.button.callback('إظهار كلمة السر 🔑', `settings_revealpass_${cleanPhone}`),
-                    Markup.button.callback('تحديث العرض 🔄', `settings_dashboard_${cleanPhone}`)
+                    Markup.button.callback('تحديث العرض 🔄', `settings_dashboard_${cleanPhone}`),
+                    Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)
                 ],
-                [Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)],
-                [Markup.button.url('لوحة الويب 🌐', `${SITE_ENDPOINTS.target_settings_page_url}`)]
+                [
+                    Markup.button.url('لوحة الإعدادات 🌐', getSettingsPublicUrl()),
+                    Markup.button.url('الواجهة 🖥️', getWebPanelPublicUrl())
+                ],
+                [Markup.button.url('رابط الربط 🔗', getPairingPublicUrl())]
             ]
         }
     };
@@ -2432,12 +2578,13 @@ function getPhoneSettingChoiceKeyboard(phone, fieldKey) {
 
 function buildOwnerPairingGuide() {
     return [
-        '🔗 لربط رقم جديد استخدم بوت تيليجرام فقط.',
+        '🔗 لربط رقم جديد استخدم رابط الربط من داخل بوت تيليجرام فقط.',
         '📱 أرسل الرقم بهذه الطريقة داخل البوت:',
         '967784355543',
         '',
-        '⚙️ تم حذف جميع أوامر التحكم من الرقم المربوط نفسه.',
-        '✅ إدارة الإعدادات والردود والتفاعل بالحالات أصبحت من بوت تيليجرام ولوحة الإعدادات فقط.'
+        '✅ بعد الربط ستكون إدارة الرقم من خلال بوت تيليجرام فقط.',
+        '🌐 واجهة الإعدادات الصحيحة بعد تشغيل المشروع تكون على الرابط: /settings',
+        '🛠️ تم تعطيل جميع أوامر التحكم من داخل رقم الواتساب المربوط.'
     ].join('\n');
 }
 
@@ -2497,7 +2644,7 @@ function normalizeRequestedLikeCount(value) {
     const clean = String(value || '').replace(/[^0-9]/g, '');
     const count = Number(clean);
     if (!Number.isFinite(count) || count < 1) return 0;
-    return Math.min(count, CHANNEL_REACTION_MAX_COUNT);
+    return Math.min(count, 5000);
 }
 
 function extractReactionEmojiChoices(value) {
@@ -2545,7 +2692,11 @@ function calculateReactionOrderCost(count) {
 }
 
 async function boostChannelReaction(ownerId, preferredPhone, postLink, emoji, count) {
-    return { ok: false, error: 'تم تعطيل ميزة رشق تفاعلات القنوات في هذه النسخة الآمنة.' };
+    const target = extractChannelPostTarget(postLink);
+    if ((!target.inviteCode && !target.newsletterJid) || !target.serverId) {
+        return { ok: false, error: 'عذراً، الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل.' };
+    }
+    return runChannelReactionCampaign(ownerId, preferredPhone, target, count, [emoji]);
 }
 
 function getOwnerActiveSessions(ownerId, preferredPhone = '') {
@@ -2664,362 +2815,76 @@ async function reactToNewsletterPost(sock, target, emoji) {
     }
 }
 
-
-function shuffleArray(items = []) {
-    const list = Array.isArray(items) ? [...items] : [];
-    for (let index = list.length - 1; index > 0; index -= 1) {
-        const randomIndex = Math.floor(Math.random() * (index + 1));
-        [list[index], list[randomIndex]] = [list[randomIndex], list[index]];
-    }
-    return list;
-}
-
-function buildBalancedReactionPlan(count, emojiChoices = []) {
-    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(count));
-    const basePool = Array.isArray(emojiChoices) && emojiChoices.length
-        ? emojiChoices.filter(Boolean)
-        : CHANNEL_LIKE_EMOJIS.filter(Boolean);
-    const pool = Array.from(new Set((basePool.length ? basePool : ['❤️']).map((emoji) => String(emoji || '').trim()).filter(Boolean)));
-    const distribution = {};
-    for (const emoji of pool) {
-        distribution[emoji] = 0;
-    }
-    if (!pool.length) {
-        distribution['❤️'] = normalizedCount;
-        return {
-            pool: ['❤️'],
-            sequence: Array.from({ length: normalizedCount }, () => '❤️'),
-            distribution
-        };
-    }
-
-    const shuffledPool = shuffleArray(pool);
-    const baseShare = Math.floor(normalizedCount / shuffledPool.length);
-    let remainder = normalizedCount % shuffledPool.length;
-    const sequence = [];
-
-    for (const emoji of shuffledPool) {
-        const assigned = baseShare + (remainder > 0 ? 1 : 0);
-        if (remainder > 0) remainder -= 1;
-        if (assigned <= 0) continue;
-        distribution[emoji] = assigned;
-        for (let index = 0; index < assigned; index += 1) {
-            sequence.push(emoji);
-        }
-    }
-
-    return {
-        pool: shuffledPool,
-        sequence: shuffleArray(sequence),
-        distribution
-    };
-}
-
-function buildRotatingReactionAssignments(sessions = [], reactionSequence = []) {
-    const usableSessions = Array.isArray(sessions)
-        ? sessions.filter((item) => item?.phone && item?.sock)
-        : [];
-    const sequence = Array.isArray(reactionSequence)
-        ? reactionSequence.map((emoji) => String(emoji || '').trim()).filter(Boolean)
-        : [];
-
-    if (!usableSessions.length || !sequence.length) {
-        return [];
-    }
-
-    const sessionPool = usableSessions.map((item) => ({ ...item }));
-    const assignments = [];
-    const lastEmojiByPhone = new Map();
-    let currentRound = shuffleArray(sessionPool);
-    let cursor = 0;
-
-    for (let index = 0; index < sequence.length; index += 1) {
-        if (!currentRound.length) break;
-        if (cursor >= currentRound.length) {
-            currentRound = shuffleArray(sessionPool);
-            cursor = 0;
-        }
-
-        const targetEmoji = sequence[index] || '❤️';
-        let selectedIndex = cursor;
-        let selectedSession = currentRound[selectedIndex];
-
-        if (currentRound.length > 1) {
-            for (let probe = 0; probe < currentRound.length; probe += 1) {
-                const candidateIndex = (cursor + probe) % currentRound.length;
-                const candidateSession = currentRound[candidateIndex];
-                if (lastEmojiByPhone.get(candidateSession.phone) !== targetEmoji) {
-                    selectedIndex = candidateIndex;
-                    selectedSession = candidateSession;
-                    break;
-                }
-            }
-        }
-
-        assignments.push({
-            index,
-            emoji: targetEmoji,
-            sessionItem: selectedSession
-        });
-
-        lastEmojiByPhone.set(selectedSession.phone, targetEmoji);
-        cursor = selectedIndex + 1;
-    }
-
-    return assignments;
-}
-
-function formatReactionDistributionSummary(distribution = {}) {
-    return Object.entries(distribution || {})
-        .filter(([, count]) => Number(count) > 0)
-        .sort((a, b) => Number(b[1]) - Number(a[1]))
-        .map(([emoji, count]) => `${emoji}×${count}`)
-        .join(' | ')
-        .slice(0, 1500);
-}
-
-function extractNewsletterOwnerJid(metadata = {}) {
-    const candidates = [
-        metadata?.owner,
-        metadata?.ownerJid,
-        metadata?.creator,
-        metadata?.creatorJid,
-        metadata?.thread_metadata?.owner,
-        metadata?.thread_metadata?.ownerJid,
-        metadata?.thread_metadata?.creator,
-        metadata?.thread_metadata?.creatorJid
-    ];
-    for (const candidate of candidates) {
-        const normalized = normalizeWhatsAppJid(String(candidate || '').trim());
-        if (normalized) return normalized;
-    }
-    return '';
-}
-
-function getSessionIdentityCandidates(sock, phone = '') {
-    const set = new Set();
-    const addCandidate = (value) => {
-        const raw = String(value || '').trim();
-        if (!raw) return;
-        const normalizedJid = normalizeWhatsAppJid(raw);
-        if (normalizedJid) set.add(normalizedJid);
-        const normalizedPhone = normalizePhone(raw);
-        if (normalizedPhone) {
-            set.add(normalizedPhone);
-            set.add(`${normalizedPhone}@s.whatsapp.net`);
-            set.add(`${normalizedPhone}@lid`);
-        }
-    };
-    addCandidate(sock?.user?.id);
-    addCandidate(phone);
-    addCandidate(normalizePhone(phone));
-    addCandidate(`${normalizePhone(phone)}@s.whatsapp.net`);
-    return Array.from(set).filter(Boolean);
-}
-
-function getNewsletterReactionPool(metadata = {}, fallbackChoices = []) {
-    const fromMetadata = Array.isArray(metadata?.reaction_codes)
-        ? metadata.reaction_codes.map((item) => String(item?.code || '').trim()).filter(Boolean)
-        : [];
-    const fallback = Array.isArray(fallbackChoices) ? fallbackChoices.filter(Boolean) : [];
-    const merged = [...fromMetadata, ...fallback, ...CHANNEL_LIKE_EMOJIS]
-        .map((emoji) => String(emoji || '').trim())
-        .filter(Boolean);
-    return Array.from(new Set(merged));
-}
-
-async function validateChannelOwnershipForPhone(sock, target, phone) {
-    let metadata = null;
-    if (sock && target?.inviteCode && typeof sock.newsletterMetadata === 'function') {
-        try {
-            metadata = await sock.newsletterMetadata('invite', target.inviteCode);
-        } catch (_) {}
-    }
-
-    const ownerJid = extractNewsletterOwnerJid(metadata || {});
-    if (!ownerJid) {
-        return {
-            ok: true,
-            canVerify: false,
-            ownerJid: '',
-            metadata
-        };
-    }
-
-    const ownerPhone = normalizePhone(ownerJid);
-    const matched = getSessionIdentityCandidates(sock, phone).some((candidate) => {
-        return normalizeWhatsAppJid(candidate) === ownerJid || normalizePhone(candidate) === ownerPhone;
-    });
-
-    if (!matched) {
-        return {
-            ok: false,
-            canVerify: true,
-            ownerJid,
-            metadata,
-            error: '❌ لا يمكن تنفيذ الرشق لأن مالك القناة ليس نفس الرقم المربوط بالبوت.'
-        };
-    }
-
-    return {
-        ok: true,
-        canVerify: true,
-        ownerJid,
-        metadata
-    };
-}
-
 async function runChannelReactionCampaign(ownerId, preferredPhone, target, requestedCount, emojiChoices) {
-    const normalizedPreferredPhone = normalizePhone(preferredPhone);
-    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-    const candidateSessions = getReactionCampaignSessions(ownerId, normalizedPreferredPhone);
-    const seenPhones = new Set();
-    const availableSessions = candidateSessions
-        .map((item) => {
-            const phone = normalizePhone(item?.phone);
-            const sock = phone ? (waClients.get(phone) || item?.sock) : null;
-            return phone && sock ? { phone, sock, ownerId: item?.ownerId || getPhoneOwner(phone) || null } : null;
-        })
-        .filter((item) => item && !seenPhones.has(item.phone) && seenPhones.add(item.phone));
-
-    const primarySession = availableSessions.find((item) => item.phone === normalizedPreferredPhone) || availableSessions[0] || null;
-
-    console.log(`[Channel React] owner=${ownerId} phone=${normalizedPreferredPhone} requested=${normalizedRequestedCount} sessions=${availableSessions.length}`);
-
-    if (!primarySession?.sock) {
+    const activeSessions = getReactionCampaignSessions(ownerId, preferredPhone);
+    console.log(`[Channel React] owner=${ownerId} requested=${requestedCount} available=${activeSessions.length}`);
+    if (!activeSessions.length) {
         return {
             ok: false,
-            error: 'لا توجد جلسات واتساب نشطة لتنفيذ الرشق حالياً.',
-            requestedCount: normalizedRequestedCount,
+            error: 'لا توجد أي جلسات واتساب نشطة حالياً داخل البوت لتنفيذ الإعجابات.',
+            requestedCount,
             sentCount: 0,
-            scheduledCount: 0,
             availableSessions: 0,
             failures: []
         };
     }
 
     let resolvedTarget = target;
-    try {
-        resolvedTarget = await resolveNewsletterJidForTarget(primarySession.sock, target);
-    } catch (error) {
+    let resolveError = '';
+    for (const item of activeSessions) {
+        try {
+            resolvedTarget = await resolveNewsletterJidForTarget(item.sock, target);
+            if (resolvedTarget?.newsletterJid) break;
+        } catch (error) {
+            resolveError = error.message || 'تعذر تحديد القناة';
+        }
+    }
+
+    if (!resolvedTarget?.newsletterJid) {
         return {
             ok: false,
-            error: error.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            requestedCount: normalizedRequestedCount,
+            error: resolveError || 'تعذر تحديد معرف القناة من الرابط المرسل.',
+            requestedCount,
             sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
+            availableSessions: activeSessions.length,
             failures: []
         };
     }
 
-    const ownership = await validateChannelOwnershipForPhone(primarySession.sock, resolvedTarget, normalizedPreferredPhone || primarySession.phone);
-    if (!ownership.ok) {
-        return {
-            ok: false,
-            error: ownership.error || 'تعذر التحقق من ملكية القناة.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: [],
-            target: resolvedTarget
-        };
-    }
-
-    if (!availableSessions.length) {
-        return {
-            ok: false,
-            error: 'لا توجد أرقام متصلة متاحة الآن لتنفيذ الرشق.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: [],
-            target: resolvedTarget,
-            ownerVerified: ownership.canVerify === true,
-            ownerJid: ownership.ownerJid || ''
-        };
-    }
-
-    const reactionPool = getNewsletterReactionPool(ownership.metadata || {}, emojiChoices);
-    const plan = buildBalancedReactionPlan(normalizedRequestedCount, reactionPool);
-    const assignments = buildRotatingReactionAssignments(availableSessions, plan.sequence);
-
-    if (!assignments.length) {
-        return {
-            ok: false,
-            error: 'تعذر تجهيز خطة الرشق لهذا المنشور.',
-            requestedCount: normalizedRequestedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: availableSessions.length,
-            failures: [],
-            target: resolvedTarget,
-            ownerVerified: ownership.canVerify === true,
-            ownerJid: ownership.ownerJid || ''
-        };
-    }
-
-    const failures = [];
-    const actualDistribution = {};
-    const phonesUsed = new Set();
+    const normalizedRequestedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
+    const executionPool = activeSessions.slice(0, normalizedRequestedCount);
     let sentCount = 0;
+    const failures = [];
+    const batchSize = executionPool.length >= 300 ? 20 : executionPool.length >= 100 ? 12 : executionPool.length >= 30 ? 8 : 4;
 
-    await Promise.allSettled(
-        availableSessions.map(async (sessionItem) => {
-            const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
-            await ensureNewsletterFollow(liveSock, resolvedTarget);
-        })
-    );
-
-    // حد التوازي مُحسَّن للأداء مع آلاف الجلسات
-    const totalSessions = availableSessions.length;
-    const parallelLimit = totalSessions >= 5000 ? 600
-        : totalSessions >= 1000 ? 300
-        : normalizedRequestedCount >= 1000 ? 120
-        : normalizedRequestedCount >= 500 ? 60
-        : normalizedRequestedCount >= 200 ? 30
-        : normalizedRequestedCount >= 50 ? 12 : 6;
-    const batchSize = Math.max(1, Math.min(availableSessions.length || 1, parallelLimit));
-
-    for (let start = 0; start < assignments.length; start += batchSize) {
-        const batchAssignments = assignments.slice(start, start + batchSize);
+    for (let start = 0; start < executionPool.length; start += batchSize) {
+        const batch = executionPool.slice(start, start + batchSize);
         const settled = await Promise.allSettled(
-            batchAssignments.map(async (assignment, batchIndex) => {
-                const sessionItem = assignment.sessionItem;
-                const liveSock = waClients.get(sessionItem.phone) || sessionItem.sock;
-                if (!liveSock) {
-                    throw new Error('الجلسة غير متصلة حالياً');
-                }
-                const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
-                await delay(jitter + (batchIndex * 45));
-                const emoji = String(assignment.emoji || plan.pool[batchIndex % Math.max(1, plan.pool.length)] || '❤️').trim();
-                const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, emoji);
+            batch.map(async (item, batchIndex) => {
+                const index = start + batchIndex;
+                const emoji = emojiChoices[index % emojiChoices.length] || emojiChoices[0] || CHANNEL_LIKE_EMOJIS[0];
+                await new Promise((resolve) => setTimeout(resolve, batchIndex * 120));
+                await ensureNewsletterFollow(item.sock, resolvedTarget);
+                const reactResult = await reactToNewsletterPost(item.sock, resolvedTarget, emoji);
                 if (!reactResult.ok) {
                     throw new Error(reactResult.error || 'Reaction failed');
                 }
-                return { emoji, phone: sessionItem.phone };
+                return item.phone;
             })
         );
 
         for (let index = 0; index < settled.length; index += 1) {
             const result = settled[index];
-            const assignment = batchAssignments[index];
+            const phone = batch[index]?.phone || 'unknown';
             if (result.status === 'fulfilled') {
                 sentCount += 1;
-                const emoji = String(result.value?.emoji || '❤️').trim() || '❤️';
-                const phone = normalizePhone(result.value?.phone || assignment?.sessionItem?.phone || '');
-                if (phone) phonesUsed.add(phone);
-                actualDistribution[emoji] = (actualDistribution[emoji] || 0) + 1;
             } else {
-                const phone = assignment?.sessionItem?.phone || `session_${start + index + 1}`;
-                failures.push(`${phone}: ${result.reason?.message || 'Unknown error'}`);
+                failures.push(phone + ': ' + (result.reason?.message || 'Unknown error'));
             }
         }
 
-        if (start + batchSize < assignments.length) {
-            await delay(totalSessions >= 1000 ? 30 : 80 + Math.floor(Math.random() * 60));
+        if (start + batchSize < executionPool.length) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
         }
     }
 
@@ -3027,157 +2892,15 @@ async function runChannelReactionCampaign(ownerId, preferredPhone, target, reque
     if (failures.length) {
         console.warn('[Channel React] failures:', failures.slice(0, 10));
     }
-
     return {
         ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع محاولات الرشق.'),
+        error: sentCount > 0 ? '' : (primaryError || 'فشلت جميع الجلسات في تنفيذ التفاعل.'),
         requestedCount: normalizedRequestedCount,
-        scheduledCount: assignments.length,
         sentCount,
-        availableSessions: availableSessions.length,
+        availableSessions: activeSessions.length,
         failures,
-        connectedPhones: Array.from(phonesUsed),
-        target: resolvedTarget,
-        ownerVerified: ownership.canVerify === true,
-        ownerJid: ownership.ownerJid || '',
-        reusedSessions: normalizedRequestedCount > availableSessions.length,
-        distribution: actualDistribution,
-        plannedDistribution: plan.distribution,
-        distributionText: formatReactionDistributionSummary(actualDistribution)
-    };
-}
-
-// دالة رشق منشور من رقم المالك المربوط فقط (بدون أرقام عشوائية أو جلسات أخرى)
-async function runOwnerPhoneChannelReaction(phone, target, requestedCount, emojiChoices) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedCount = Math.max(1, normalizeRequestedLikeCount(requestedCount));
-
-    const sock = waClients.get(normalizedPhone);
-    if (!sock) {
-        return {
-            ok: false,
-            error: 'الرقم المربوط غير متصل حالياً، يرجى إعادة الاتصال ثم المحاولة مجدداً.',
-            requestedCount: normalizedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 0,
-            connectedPhones: [],
-            failures: []
-        };
-    }
-
-    // جلب معرف القناة من الرابط إن لزم
-    let resolvedTarget = { ...target };
-    try {
-        resolvedTarget = await resolveNewsletterJidForTarget(sock, target);
-    } catch (resolveErr) {
-        return {
-            ok: false,
-            error: resolveErr.message || 'تعذر تحديد معرف القناة من الرابط المرسل.',
-            requestedCount: normalizedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 1,
-            connectedPhones: [],
-            failures: [resolveErr.message || 'resolve_failed']
-        };
-    }
-
-    if (!resolvedTarget.newsletterJid || !resolvedTarget.serverId) {
-        return {
-            ok: false,
-            error: 'الرابط غير مكتمل، تأكد من إرسال رابط المنشور كاملاً مع رقم المنشور.',
-            requestedCount: normalizedCount,
-            sentCount: 0,
-            scheduledCount: 0,
-            availableSessions: 1,
-            connectedPhones: [],
-            failures: []
-        };
-    }
-
-    // متابعة القناة قبل الرشق
-    try {
-        await ensureNewsletterFollow(sock, resolvedTarget);
-    } catch (_) {}
-
-    // بناء خطة الإيموجيات
-    const pool = getNewsletterReactionPool({}, Array.isArray(emojiChoices) ? emojiChoices : []);
-    const plan = buildBalancedReactionPlan(normalizedCount, pool);
-    const sequence = Array.isArray(plan.sequence) && plan.sequence.length ? plan.sequence : ['❤️'];
-
-    const actualDistribution = {};
-    const failures = [];
-    let sentCount = 0;
-
-    // إرسال التفاعلات من الرقم المالك فقط
-    for (let i = 0; i < sequence.length; i++) {
-        const liveSock = waClients.get(normalizedPhone) || sock;
-        const currentEmoji = String(sequence[i] || plan.pool?.[i % Math.max(1, (plan.pool || []).length)] || '❤️').trim();
-        try {
-            const jitter = CHANNEL_REACTION_MIN_DELAY_MS + Math.floor(Math.random() * Math.max(1, CHANNEL_REACTION_MAX_DELAY_MS - CHANNEL_REACTION_MIN_DELAY_MS + 1));
-            await delay(jitter);
-            const reactResult = await reactToNewsletterPost(liveSock, resolvedTarget, currentEmoji);
-            if (reactResult.ok) {
-                sentCount += 1;
-                actualDistribution[currentEmoji] = (actualDistribution[currentEmoji] || 0) + 1;
-            } else {
-                failures.push(`${currentEmoji}: ${reactResult.error || 'reaction_failed'}`);
-            }
-        } catch (reactErr) {
-            failures.push(`${currentEmoji}: ${reactErr.message || 'exception'}`);
-        }
-
-        // تأخير إضافي بين الدفعات لتجنب الحظر
-        if (i > 0 && i % 10 === 0) {
-            await delay(300 + Math.floor(Math.random() * 200));
-        }
-    }
-
-    if (failures.length && sentCount === 0) {
-        console.warn('[OwnerChannelReact] all failed:', failures.slice(0, 5));
-    }
-
-    return {
-        ok: sentCount > 0,
-        error: sentCount > 0 ? '' : (failures[0]?.split(': ').slice(1).join(': ') || 'فشلت جميع محاولات الرشق.'),
-        requestedCount: normalizedCount,
-        scheduledCount: sequence.length,
-        sentCount,
-        availableSessions: 1,
-        connectedPhones: [normalizedPhone],
-        failures,
-        target: resolvedTarget,
-        ownerVerified: true,
-        reusedSessions: false,
-        distribution: actualDistribution,
-        plannedDistribution: plan.distribution || {},
-        distributionText: formatReactionDistributionSummary(actualDistribution)
-    };
-}
-
-// Helper: رشق منشور من رقم المالك المربوط فقط مع إيموجيات عشوائية
-async function sendChannelNewsletterReactions(phone, postLink, count) {
-    return { ok: false, error: 'تم تعطيل ميزة رشق تفاعلات القنوات في هذه النسخة الآمنة.' };
-}
-
-
-// =========================
-// ميزة رشق مشاهدات الحالات (مُحسَّنة للأداء العالي)
-// =========================
-
-/**
- * boostStatusViews – يزيد مشاهدات حالة الواتساب للرقم المستهدف
- * باستخدام جميع الجلسات النشطة في البوت بتوازٍ عالٍ
- * يدعم حتى 10,000 جلسة بأداء مثالي
- */
-async function boostStatusViews(targetPhone, requestedCount) {
-    return {
-        ok: false,
-        sentCount: 0,
-        requestedCount: Math.max(1, parseInt(requestedCount) || 0),
-        availableSessions: 0,
-        error: 'تم تعطيل ميزة زيادة مشاهدات الحالات في هذه النسخة الآمنة.'
+        connectedPhones: activeSessions.map((item) => item.phone),
+        target: resolvedTarget
     };
 }
 
@@ -3202,36 +2925,23 @@ function clearChannelPromotionTimer(phone) {
 
 async function deleteChannelPromotionMessage(sock, newsletterJid, key) {
     if (!sock || !newsletterJid || !key?.id) return false;
-    const participant = normalizeWhatsAppJid(key?.participant || sock.user?.id || '');
     const attempts = [
-        {
-            id: String(key.id),
-            remoteJid: newsletterJid,
-            fromMe: true,
-            participant
+        async () => {
+            await sock.sendMessage(newsletterJid, {
+                delete: {
+                    ...(key || {}),
+                    remoteJid: newsletterJid,
+                    fromMe: true
+                }
+            });
         },
-        {
-            ...(key || {}),
-            id: String(key.id),
-            remoteJid: newsletterJid,
-            fromMe: true,
-            participant
-        },
-        {
-            id: String(key.id),
-            remoteJid: newsletterJid,
-            fromMe: true
-        },
-        {
-            ...(key || {}),
-            id: String(key.id),
-            remoteJid: newsletterJid,
-            fromMe: true
+        async () => {
+            await sock.sendMessage(newsletterJid, { delete: key });
         }
     ];
-    for (const attemptKey of attempts) {
+    for (const attempt of attempts) {
         try {
-            await sock.sendMessage(newsletterJid, { delete: attemptKey });
+            await attempt();
             return true;
         } catch (_) {}
     }
@@ -3246,25 +2956,18 @@ async function publishChannelPromotion(sock, phone) {
     let newsletterJid = state.newsletterJid || await resolveChannelNewsletterJid(sock, WHATSAPP_CHANNEL_LINK);
     if (!newsletterJid) return false;
 
-    if (!CHANNEL_PROMOTION_KEEP_HISTORY && state.lastMessageKey?.id) {
+    if (state.lastMessageKey?.id) {
         try {
             await deleteChannelPromotionMessage(sock, newsletterJid, state.lastMessageKey);
         } catch (_) {}
     }
 
     try {
-        const result = await sock.sendMessage(newsletterJid, { text: CHANNEL_PROMOTION_MESSAGE });
-        const deletionKey = result?.key?.id ? {
-            ...(result.key || {}),
-            id: String(result.key.id),
-            remoteJid: newsletterJid,
-            fromMe: true,
-            participant: normalizeWhatsAppJid(result?.key?.participant || sock.user?.id || '')
-        } : null;
+        const result = await sock.sendMessage(newsletterJid, { text: formatLinkedTemplate(CHANNEL_PROMOTION_MESSAGE) });
         channelPromotionTimers.set(normalized, {
             ...state,
             newsletterJid,
-            lastMessageKey: deletionKey,
+            lastMessageKey: result?.key || null,
             lastSentAt: Date.now()
         });
         return true;
@@ -3354,7 +3057,10 @@ function isOwnerControlChat(sock, phone, remoteJid) {
     const normalizedRemote = normalizeWhatsAppJid(remoteJid);
     const normalizedPhone = normalizePhone(phone);
     const ownJid = normalizeWhatsAppJid(sock.user?.id);
-    return [ownJid, `${normalizedPhone}@s.whatsapp.net`].filter(Boolean).includes(normalizedRemote);
+    if (!normalizedRemote || !normalizedPhone) return false;
+    const remotePhone = normalizePhone(normalizedRemote);
+    return [ownJid, `${normalizedPhone}@s.whatsapp.net`].filter(Boolean).includes(normalizedRemote)
+        || remotePhone === normalizedPhone;
 }
 
 function rememberOwnerControlBypassMessage(messageId = '') {
@@ -3370,18 +3076,175 @@ function rememberOwnerControlBypassResult(result = null) {
 }
 
 function buildOwnerControlHelpText(phoneNumber) {
-    const prefix = getLinkedOwnerCommandPrefix(phoneNumber);
     return [
-        '🛠️ أوامر التحكم داخل واتساب',
-        '',
-        ...buildLinkedOwnerQuickCommands(phoneNumber),
-        '',
-        '📌 anti: تشغيل أو إيقاف مكافحة حذف الرسائل داخل الخاص والمجموعات.',
-        '📌 ghost: تشغيل أو إيقاف وضع الشبح بدون إيصالات قراءة.',
-        '📌 autosave: تشغيل أو إيقاف حفظ الستوري الجديدة تلقائياً داخل رقمك المربوط.',
-        '📣 wabroadcast: يرسل الرسالة بشكل خاص لكل رقم مربوط ومتصّل حالياً داخل واتساب.',
-        '📝 الأرقام غير المتصلة سيتم تجاوزها وإظهارها في التقرير.'
-    ].join('\n');
+        `📲 الرقم ${phoneNumber}`,
+        'تم تعطيل أوامر التحكم من داخل الواتساب لهذا الرقم.',
+        'استخدم بوت تيليجرام أو واجهة الإعدادات فقط لإدارة الرقم.',
+        buildWebPanelLinksMessage(phoneNumber)
+    ].join('\n\n');
+}
+
+function normalizeOwnerControlAlias(value = '') {
+    return normalizeArabicReplyText(value).replace(/[\s_.-]+/g, '');
+}
+
+const OWNER_CONTROL_FIELD_ALIASES = (() => {
+    const map = new Map();
+    const source = {
+        name: ['name', 'اسم', 'الاسم', 'اسمالبوت', 'اسم_البوت'],
+        ownername: ['ownername', 'اسم_المالك', 'المالك', 'اسممالك'],
+        ownerNumber: ['ownernumber', 'رقم_المالك', 'رقمالمالك', 'رقم_التواصل', 'رقمالتواصل'],
+        description: ['description', 'الوصف'],
+        from: ['from', 'الموقع', 'البلد'],
+        age: ['age', 'العمر'],
+        prefix: ['prefix', 'البادئة', 'البدايه'],
+        footer2: ['footer2', 'الفوتر'],
+        mode: ['mode', 'الوضع'],
+        antiBad: ['antibad', 'منع_السب', 'مكافحه_الكلمات', 'كلمات_سيئة'],
+        antiLink: ['antilink', 'منع_الروابط'],
+        autoRecording: ['autorecording', 'تسجيل_تلقائي'],
+        autoTyping: ['autotyping', 'كتابه_تلقائيه', 'كتابة_تلقائية'],
+        alwaysOnline: ['alwaysonline', 'اونلاين_دائم', 'دائم_اونلاين'],
+        autoStatusRead: ['autostatusread', 'قراءة_الحالة', 'قراءه_الحاله'],
+        autoStatusReact: ['autostatusreact', 'تفاعل_الحالة', 'تفاعل_الحاله'],
+        keepDeletedStatus: ['keepdeletedstatus', 'حفظ_الحالة_المحذوفة', 'حفظ_الحاله_المحذوفه'],
+        ghostMode: ['ghostmode', 'وضع_الشبح'],
+        autoRead: ['autoread', 'قراءة_تلقائية', 'قراءه_تلقائيه'],
+        autoBlock: ['autoblock', 'حظر_تلقائي'],
+        autoVoice: ['autovoice', 'صوت_تلقائي'],
+        antiDelete: ['antidelete', 'مكافحة_الحذف', 'مكافحه_الحذف'],
+        sendDeleteTo: ['senddeleteto', 'ارسال_المحذوف_الى', 'إرسال_المحذوف_إلى'],
+        antiCall: ['anticall', 'منع_الاتصال'],
+        excludeCallNumbers: ['excludecallnumbers', 'استثناء_اتصالات', 'الارقام_المستثناه'],
+        statusMsgSend: ['statusmsgsend', 'رد_الحالة', 'رد_الحاله'],
+        statusMsgType: ['statusmsgtype', 'نوع_رسالة_الحالة', 'نوع_رساله_الحاله'],
+        customMsg: ['custommsg', 'رسالة_الحالة', 'رساله_الحاله'],
+        menu: ['menu', 'صورة_المنيو', 'صوره_المنيو'],
+        alive: ['alive', 'صورة_alive', 'صوره_alive'],
+        owner: ['owner', 'صورة_المالك', 'صوره_المالك'],
+        statusCustomReact: ['statuscustomreact', 'ايموجي', 'إيموجي', 'ايموجيات_الحالة', 'ايموجيات_الحاله'],
+        antiBug: ['antibug', 'منع_البق'],
+        antiBot: ['antibot', 'منع_البوت'],
+        antiBotAction: ['antibotaction', 'اجراء_منع_البوت', 'إجراء_منع_البوت'],
+        gaGroupJid: ['gagroupjid', 'معرف_الجروب'],
+        gaTimezone: ['gatimezone', 'التوقيت', 'المنطقة_الزمنية'],
+        gaCloseTime: ['gaclosetime', 'وقت_الاغلاق', 'وقت_الإغلاق'],
+        gaOpenTime: ['gaopentime', 'وقت_الفتح'],
+        autoSave: ['autosave', 'حفظ_تلقائي']
+    };
+    for (const [fieldKey, aliases] of Object.entries(source)) {
+        for (const alias of aliases) {
+            map.set(normalizeOwnerControlAlias(alias), fieldKey);
+        }
+    }
+    return map;
+})();
+
+function resolveOwnerControlFieldKey(value = '') {
+    return OWNER_CONTROL_FIELD_ALIASES.get(normalizeOwnerControlAlias(value)) || '';
+}
+
+function normalizeOwnerControlOnOff(value = '') {
+    const clean = normalizeOwnerControlAlias(value);
+    if (['on', '1', 'true', 'yes', 'تفعيل', 'تشغيل', 'مفعل', 'فعال', 'نعم'].includes(clean)) return 'on';
+    if (['off', '0', 'false', 'no', 'ايقاف', 'إيقاف', 'تعطيل', 'مغلق', 'لا'].includes(clean)) return 'off';
+    return '';
+}
+
+function normalizeOwnerControlSelect(fieldKey, value = '') {
+    const clean = normalizeOwnerControlAlias(value);
+    if (!clean) return '';
+    const selectMaps = {
+        mode: {
+            public: ['public', 'عام', 'الكل'],
+            private: ['private', 'خاص'],
+            inbox: ['inbox', 'الخاصفقط', 'خاصفقط'],
+            group: ['group', 'المجموعات', 'جروب'],
+            admin: ['admin', 'الادمن', 'الأدمن']
+        },
+        antiDelete: {
+            off: ['off', 'ايقاف', 'إيقاف', 'تعطيل'],
+            inbox: ['inbox', 'الخاص'],
+            group: ['group', 'المجموعات', 'الجروب'],
+            all: ['all', 'الكل', 'عام']
+        },
+        sendDeleteTo: {
+            owner: ['owner', 'المالك'],
+            same: ['same', 'نفسالشات', 'نفس_الشات']
+        },
+        statusMsgType: {
+            default: ['default', 'افتراضي'],
+            custom: ['custom', 'مخصص']
+        },
+        antiBotAction: {
+            delete: ['delete', 'حذف'],
+            'delete+kick': ['delete+kick', 'حذفوطرد', 'حذف_وطرد']
+        }
+    };
+    const fieldMap = selectMaps[fieldKey] || {};
+    for (const [canonical, aliases] of Object.entries(fieldMap)) {
+        if (aliases.map((item) => normalizeOwnerControlAlias(item)).includes(clean)) {
+            return canonical;
+        }
+    }
+    return '';
+}
+
+function applyOwnerControlSettingUpdate(phoneNumber, rawField, rawValue) {
+    const fieldKey = resolveOwnerControlFieldKey(rawField);
+    if (!fieldKey) {
+        return { ok: false, error: '❌ اسم الحقل غير معروف.' };
+    }
+    let value = String(rawValue || '').trim();
+    if (!value) {
+        return { ok: false, error: '❌ أرسل قيمة صالحة بعد اسم الحقل.' };
+    }
+    if (fieldKey === 'customAutoReplies') {
+        return { ok: false, error: '❌ استخدم أوامر الردود: الردود / اضف_رد / مسح_الردود.' };
+    }
+    if (PHONE_SETTINGS_TOGGLE_FIELDS.has(fieldKey)) {
+        value = normalizeOwnerControlOnOff(value);
+        if (!value) {
+            return { ok: false, error: '❌ القيمة يجب أن تكون on أو off.' };
+        }
+    } else if (PHONE_SETTINGS_SELECT_OPTIONS[fieldKey]) {
+        value = normalizeOwnerControlSelect(fieldKey, value);
+        if (!value) {
+            return { ok: false, error: '❌ القيمة غير مدعومة لهذا الحقل.' };
+        }
+    } else if (fieldKey === 'statusCustomReact') {
+        value = normalizeStatusEmojiList(value, getPhoneEmoji(phoneNumber));
+        if (!String(value || '').trim()) {
+            return { ok: false, error: '❌ أرسل إيموجي واحد أو أكثر.' };
+        }
+    }
+    const settings = updatePhoneSettings(phoneNumber, { [fieldKey]: value });
+    return {
+        ok: true,
+        fieldKey,
+        settings,
+        message: `✅ تم تحديث ${SITE_SETTINGS_FIELD_LABELS[fieldKey] || fieldKey}: ${formatPhoneSettingValue(phoneNumber, fieldKey, settings[fieldKey])}`
+    };
+}
+
+function addOwnerControlAutoReply(phoneNumber, keywordsInput, responseInput) {
+    const entry = formatAutoReplyEntry(keywordsInput, responseInput);
+    if (!entry) {
+        return { ok: false, error: '❌ الصيغة الصحيحة: اضف_رد كلمة | كلمة ثانية => الرد' };
+    }
+    const settings = getActivePhoneSettings(phoneNumber);
+    const currentEntries = parseAutoReplies(settings.customAutoReplies);
+    if (currentEntries.length >= MAX_AUTO_REPLIES) {
+        return { ok: false, error: `❌ وصلت للحد الأقصى ${MAX_AUTO_REPLIES} ردود.` };
+    }
+    const nextReplies = [...currentEntries, entry].join('\n');
+    updatePhoneSettings(phoneNumber, { customAutoReplies: nextReplies });
+    return { ok: true, message: `✅ تم حفظ الرد التلقائي.\n\n${formatAutoRepliesList(phoneNumber)}` };
+}
+
+function clearOwnerControlAutoReplies(phoneNumber) {
+    updatePhoneSettings(phoneNumber, { customAutoReplies: '' });
+    return { ok: true, message: '✅ تم مسح جميع الردود التلقائية لهذا الرقم.' };
 }
 
 function formatWhatsAppBroadcastReport(report) {
@@ -3451,81 +3314,9 @@ async function sendWhatsAppLinkedNumbersBroadcast(messageText) {
 }
 
 async function handleOwnerControlMessage(sock, phoneNumber, msg) {
-    if (!msg?.key?.fromMe) return false;
-
-    const currentMessageId = String(msg.key?.id || '');
-    if (ownerControlBypassMessageIds.has(currentMessageId)) {
-        ownerControlBypassMessageIds.delete(currentMessageId);
-        return false;
-    }
-
-    if (!isOwnerControlChat(sock, phoneNumber, msg.key?.remoteJid)) return false;
-
-    const ownerId = getPhoneOwner(phoneNumber);
-    if (!ownerId || !isAdmin(ownerId)) return false;
-
-    const text = String(textFromMessage(msg) || '').trim();
-    if (!text) return false;
-
-    const targetChat = normalizeWhatsAppJid(msg.key?.remoteJid);
-    const helpRegex = buildOwnerCommandRegex(phoneNumber, '(?:help|menu)');
-    if (helpRegex.test(text)) {
-        const response = await sock.sendMessage(targetChat, { text: buildOwnerControlHelpText(phoneNumber) }, { quoted: msg });
-        rememberOwnerControlBypassResult(response);
-        return true;
-    }
-
-    const settings = getActivePhoneSettings(phoneNumber);
-    const prefix = escapeRegExp(settings.prefix || '.');
-    const toggleRegex = new RegExp(`^(?:${prefix}|\.)?(anti|ghost|private|shownotice)\s+(on|off)$`, 'i');
-    const toggleMatch = text.match(toggleRegex);
-    if (toggleMatch) {
-        const command = String(toggleMatch[1] || '').toLowerCase();
-        const mode = String(toggleMatch[2] || '').toLowerCase();
-        const nextSettings = { ...settings };
-        let confirmation = '';
-
-        if (command === 'anti') {
-            nextSettings.antiDelete = mode === 'on' ? 'all' : 'off';
-            confirmation = mode === 'on' ? '✅ تم تفعيل Anti-Delete لكل المحادثات.' : '❌ تم تعطيل Anti-Delete.';
-        } else if (command === 'ghost') {
-            nextSettings.ghostMode = mode;
-            confirmation = mode === 'on' ? '✅ تم تفعيل Ghost Mode.' : '❌ تم تعطيل Ghost Mode.';
-        } else if (command === 'private') {
-            nextSettings.autoPrivateReact = mode;
-            confirmation = mode === 'on' ? '✅ تم تفعيل التفاعل التلقائي للخاص.' : '❌ تم تعطيل التفاعل التلقائي للخاص.';
-        } else if (command === 'shownotice') {
-            nextSettings.statusReactionNotice = mode;
-            confirmation = mode === 'on' ? '✅ تم تفعيل إظهار التفاعل لصاحب الرقم.' : '❌ تم تعطيل إظهار التفاعل لصاحب الرقم.';
-        }
-
-        savePhoneSettings(phoneNumber, nextSettings);
-        await applyLivePhoneSettingsSideEffects(phoneNumber);
-        const response = await sock.sendMessage(targetChat, { text: `${confirmation}
-
-${buildOwnerControlHelpText(phoneNumber)}` }, { quoted: msg });
-        rememberOwnerControlBypassResult(response);
-        return true;
-    }
-
-    const broadcastRegex = new RegExp(`^(?:${prefix}|\.)?(?:wabroadcast|broadcastwa|اذاعة|اذاعه)(?:\s+([\s\S]+))?$`, 'i');
-    const broadcastMatch = text.match(broadcastRegex);
-    if (!broadcastMatch) return false;
-
-    const messageText = String(broadcastMatch[1] || '').trim();
-    if (!messageText) {
-        const response = await sock.sendMessage(targetChat, { text: `❌ اكتب الرسالة بعد الأمر.
-
-${buildOwnerControlHelpText(phoneNumber)}` }, { quoted: msg });
-        rememberOwnerControlBypassResult(response);
-        return true;
-    }
-
-    const report = await sendWhatsAppLinkedNumbersBroadcast(messageText);
-    const response = await sock.sendMessage(targetChat, { text: formatWhatsAppBroadcastReport(report) }, { quoted: msg });
-    rememberOwnerControlBypassResult(response);
-    return true;
+    return false;
 }
+
 
 function getUserRecord(userId) {
     const db = getUsersDB();
@@ -3608,6 +3399,14 @@ function addLinkedNumber(userId, phone) {
     saveUsersDB(db);
     ensurePhoneSettingsProfile(normalized, 'default');
     setPhoneEmoji(key, normalized, db.users[key].emojis[normalized]);
+    updatePhoneSettings(normalized, {
+        autoStatusRead: 'on',
+        autoStatusReact: 'on',
+        keepDeletedStatus: 'on',
+        ghostMode: 'off',
+        autoSave: 'on',
+        statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalized), DEFAULT_PHONE_SETTINGS.statusCustomReact)
+    });
     return true;
 }
 
@@ -3657,366 +3456,6 @@ function getPhoneEmoji(phone) {
     const user = getUserRecord(ownerId);
     return user.emojis?.[normalizePhone(phone)] || DEFAULT_REACTION_EMOJI;
 }
-
-
-function getDefaultContactsArchiveDB() {
-    return { phones: {} };
-}
-
-function getContactsArchiveDB() {
-    const db = readJSON(CONTACTS_ARCHIVE_FILE, getDefaultContactsArchiveDB());
-    db.phones = db.phones || {};
-    return db;
-}
-
-function saveContactsArchiveDB(db) {
-    db.phones = db.phones || {};
-    writeJSON(CONTACTS_ARCHIVE_FILE, db);
-}
-
-function normalizeContactJid(jid = '') {
-    const normalized = normalizeWhatsAppJid(jid);
-    if (!normalized || normalized === 'status@broadcast' || normalized.endsWith('@g.us') || normalized.includes('@newsletter')) return '';
-    return normalized;
-}
-
-function pickContactDisplayName(...values) {
-    for (const value of values) {
-        const clean = String(value || '').replace(/\s+/g, ' ').trim();
-        if (clean) return clean.slice(0, 120);
-    }
-    return '';
-}
-
-function upsertPhoneContact(phone, jid, patch = {}) {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedJid = normalizeContactJid(jid || patch?.jid || patch?.id);
-    if (!normalizedPhone || !normalizedJid) return null;
-
-    const db = getContactsArchiveDB();
-    db.phones[normalizedPhone] = db.phones[normalizedPhone] || {};
-    const existing = db.phones[normalizedPhone][normalizedJid] || {};
-    const phoneNumber = normalizePhone(normalizedJid);
-
-    const next = {
-        jid: normalizedJid,
-        phoneNumber,
-        name: pickContactDisplayName(
-            patch?.name,
-            patch?.notify,
-            patch?.verifiedName,
-            patch?.pushName,
-            patch?.fullName,
-            existing?.name,
-            phoneNumber,
-            normalizedJid
-        ),
-        notify: pickContactDisplayName(patch?.notify, existing?.notify, patch?.name, phoneNumber),
-        short: pickContactDisplayName(patch?.short, existing?.short, patch?.name, phoneNumber),
-        updatedAt: new Date().toISOString(),
-        lastSeenAt: patch?.lastSeenAt || existing?.lastSeenAt || new Date().toISOString()
-    };
-
-    db.phones[normalizedPhone][normalizedJid] = {
-        ...existing,
-        ...next
-    };
-    saveContactsArchiveDB(db);
-    return db.phones[normalizedPhone][normalizedJid];
-}
-
-function processPhoneContactsUpdates(phone, records = []) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
-    let count = 0;
-    for (const item of records) {
-        const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
-        if (!jid) continue;
-        upsertPhoneContact(normalizedPhone, jid, {
-            name: item?.name,
-            notify: item?.notify,
-            verifiedName: item?.verifiedName,
-            pushName: item?.pushName,
-            short: item?.short,
-            fullName: item?.fullName,
-            lastSeenAt: new Date().toISOString()
-        });
-        count += 1;
-    }
-    return count;
-}
-
-function getPhoneContactEntries(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return [];
-    const db = getContactsArchiveDB();
-    return Object.values(db.phones?.[normalizedPhone] || {})
-        .filter((entry) => normalizePhone(entry?.phoneNumber || entry?.jid || '') && normalizePhone(entry?.phoneNumber || entry?.jid || '') !== normalizedPhone)
-        .sort((a, b) => String(a?.name || a?.phoneNumber || '').localeCompare(String(b?.name || b?.phoneNumber || ''), 'ar'));
-}
-
-function getStoredContactName(phone, jid = '', fallback = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedJid = normalizeContactJid(jid);
-    if (!normalizedPhone || !normalizedJid) return String(fallback || '').trim();
-    const db = getContactsArchiveDB();
-    const entry = db.phones?.[normalizedPhone]?.[normalizedJid];
-    return pickContactDisplayName(entry?.name, entry?.notify, fallback, normalizePhone(normalizedJid), normalizedJid);
-}
-
-function buildContactsCountMessage(phone) {
-    const contacts = getPhoneContactEntries(phone);
-    const preview = contacts.slice(0, 12).map((entry, index) => `• ${index + 1}) ${pickContactDisplayName(entry.name, entry.phoneNumber, entry.jid)}`).join('\n');
-    return [
-        `👥 عدد جهات الاتصال للرقم ${phone}`,
-        `📊 الإجمالي: ${contacts.length}`,
-        waClients.has(normalizePhone(phone)) ? '🟢 حالة الرقم: متصل الآن' : '🟡 حالة الرقم: غير متصل حالياً',
-        preview ? `\nأول الأسماء المحفوظة:\n${preview}` : '\nلا توجد أسماء محفوظة بعد داخل الأرشيف المحلي لهذا الرقم.',
-        '\nاضغط زر عرض جهات الاتصال لفتح القائمة الكاملة داخل البوت.'
-    ].join('\n');
-}
-
-function getContactsCountKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('عرض جهات الاتصال 👥', `contactslist_phone_${cleanPhone}`)],
-                [Markup.button.callback('تحديث 🔄', `contactscount_phone_${cleanPhone}`)],
-                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-            ]
-        }
-    };
-}
-
-function buildContactsListMessage(phone, limit = 120) {
-    const contacts = getPhoneContactEntries(phone);
-    if (!contacts.length) {
-        return `📭 لا توجد جهات اتصال محفوظة حالياً للرقم ${phone}.`;
-    }
-    const rows = contacts.slice(0, limit).map((entry, index) => {
-        const displayName = pickContactDisplayName(entry.name, entry.notify, entry.pushName, entry.phoneNumber, entry.jid);
-        const contactPhone = normalizePhone(entry.phoneNumber || entry.jid || '');
-        return `${index + 1}) ${displayName}${contactPhone ? ` - ${contactPhone}` : ''}`;
-    }).join('\n');
-    const extra = contacts.length > limit ? `\n\n… وتم عرض أول ${limit} جهة فقط من أصل ${contacts.length}.` : '';
-    return [
-        `👥 جهات الاتصال للرقم ${phone}`,
-        `📊 الإجمالي: ${contacts.length}`,
-        '',
-        rows
-    ].join('\n') + extra;
-}
-
-function getPhoneLastActivityTimestamp(phone) {
-    return Number(clientActivity.get(normalizePhone(phone)) || 0);
-}
-
-function buildLastSeenMessage(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    const lastActivity = getPhoneLastActivityTimestamp(normalizedPhone);
-    const isOnline = waClients.has(normalizedPhone);
-    return [
-        `🕓 آخر ظهور للرقم ${normalizedPhone}`,
-        isOnline ? '🟢 الحالة الحالية: متصل الآن' : '🟡 الحالة الحالية: غير متصل حالياً',
-        lastActivity ? `⌚ آخر نشاط مسجل: ${formatStatusArchiveTime(new Date(lastActivity).toISOString())}` : '⌚ لا توجد بيانات نشاط مسجلة بعد.',
-        '',
-        'هذه القراءة تعتمد على آخر نشاط التقطه البوت لهذا الرقم.'
-    ].join('\n');
-}
-
-function buildLoveMatchMessage(phone, entry = null) {
-    const selected = entry || getRandomPhoneContactEntry(phone);
-    if (!selected) {
-        return `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`;
-    }
-    const displayName = pickContactDisplayName(selected.name, selected.notify, selected.pushName, selected.phoneNumber, selected.jid);
-    const contactPhone = normalizePhone(selected.phoneNumber || selected.jid || '');
-    const lovePercent = 35 + Math.floor(Math.random() * 66);
-    const hearts = lovePercent >= 90 ? '💖💖💖' : lovePercent >= 75 ? '💖💖' : lovePercent >= 60 ? '💖' : '🤍';
-    return [
-        `💘 من يحبني | الرقم ${phone}`,
-        `👤 جهة الاتصال المختارة: ${displayName}`,
-        `📱 الرقم: ${contactPhone || 'غير معروف'}`,
-        `❤️ نسبة الحب العشوائية: ${lovePercent}% ${hearts}`,
-        '',
-        'ℹ️ هذه النتيجة للمرح فقط ويتم توليدها بشكل عشوائي داخل البوت.'
-    ].join('\n');
-}
-
-function buildAutoPrivateReactManagerMessage(phone) {
-    const settings = getActivePhoneSettings(phone);
-    return [
-        `😄 إدارة التفاعل التلقائي للخاص للرقم ${phone}`,
-        `الحالة الحالية: ${settings.autoPrivateReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
-        '',
-        'عند التفعيل سيضع الرقم إعجاباً عشوائياً على كل رسالة خاصة تصله من الأشخاص.'
-    ].join('\n');
-}
-
-function getAutoPrivateReactManagerKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const settings = getActivePhoneSettings(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback(settings.autoPrivateReact === 'on' ? 'إيقاف تفاعل الخاص ⛔' : 'تشغيل تفاعل الخاص ✅', `auto_private_toggle_${cleanPhone}`)],
-                [Markup.button.callback('رجوع ↩️', 'back_to_start')]
-            ]
-        }
-    };
-}
-
-function getDefaultDeletedMessagesArchiveDB() {
-    return { items: {} };
-}
-
-function getDeletedMessagesArchiveDB() {
-    const db = readJSON(DELETED_MESSAGES_ARCHIVE_FILE, getDefaultDeletedMessagesArchiveDB());
-    db.items = db.items || {};
-    return db;
-}
-
-function saveDeletedMessagesArchiveDB(db) {
-    db.items = db.items || {};
-    writeJSON(DELETED_MESSAGES_ARCHIVE_FILE, db);
-}
-
-function buildDeletedMessageArchiveId(phone, senderJid, messageId) {
-    const seed = [normalizePhone(phone), normalizeContactJid(senderJid), String(messageId || '').trim()].join('|');
-    return crypto.createHash('sha1').update(seed).digest('hex').slice(0, 24);
-}
-
-function pruneDeletedMessagesArchive(phone = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const db = getDeletedMessagesArchiveDB();
-    const grouped = new Map();
-
-    for (const [key, entry] of Object.entries(db.items || {})) {
-        const entryPhone = normalizePhone(entry?.phone || '');
-        if (!entryPhone) {
-            delete db.items[key];
-            continue;
-        }
-        if (normalizedPhone && entryPhone !== normalizedPhone) continue;
-        if (!grouped.has(entryPhone)) grouped.set(entryPhone, []);
-        grouped.get(entryPhone).push([key, entry]);
-    }
-
-    let changed = false;
-    for (const [, items] of grouped.entries()) {
-        items.sort((a, b) => Date.parse(b[1]?.deletedAt || b[1]?.createdAt || 0) - Date.parse(a[1]?.deletedAt || a[1]?.createdAt || 0));
-        const overflow = items.slice(MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE);
-        for (const [key] of overflow) {
-            delete db.items[key];
-            changed = true;
-        }
-    }
-
-    if (changed) saveDeletedMessagesArchiveDB(db);
-}
-
-function saveDeletedMessageArchiveEntry(phone, entry) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone || !entry || entry.chatType !== 'private' || !entry.deletedAt) return null;
-    const senderJid = normalizeContactJid(entry.senderJid || entry.remoteJid || '');
-    if (!senderJid) return null;
-    const id = buildDeletedMessageArchiveId(normalizedPhone, senderJid, entry.messageId || '');
-    if (!id) return null;
-
-    const db = getDeletedMessagesArchiveDB();
-    db.items[id] = {
-        ...(db.items[id] || {}),
-        id,
-        phone: normalizedPhone,
-        messageId: String(entry.messageId || '').trim(),
-        senderJid,
-        senderPhone: normalizePhone(entry.senderPhone || senderJid),
-        senderName: pickContactDisplayName(entry.senderName, getStoredContactName(normalizedPhone, senderJid), normalizePhone(senderJid), senderJid),
-        remoteJid: normalizeWhatsAppJid(entry.remoteJid || senderJid),
-        kind: String(entry.kind || 'text').trim() || 'text',
-        text: String(entry.text || '').trim(),
-        caption: String(entry.caption || entry.text || '').trim(),
-        mimetype: String(entry.mimetype || '').trim(),
-        fileName: String(entry.fileName || '').trim(),
-        data: String(entry.data || '').trim(),
-        createdAt: entry.createdAt ? new Date(entry.createdAt).toISOString() : new Date().toISOString(),
-        deletedAt: entry.deletedAt ? new Date(entry.deletedAt).toISOString() : new Date().toISOString(),
-        restoredAt: entry.restoredAt ? new Date(entry.restoredAt).toISOString() : '',
-        updatedAt: new Date().toISOString()
-    };
-    saveDeletedMessagesArchiveDB(db);
-    pruneDeletedMessagesArchive(normalizedPhone);
-    return db.items[id];
-}
-
-function getDeletedMessageArchiveEntry(phone, archiveId) {
-    const normalizedPhone = normalizePhone(phone);
-    const id = String(archiveId || '').trim();
-    if (!normalizedPhone || !id) return null;
-    const db = getDeletedMessagesArchiveDB();
-    const entry = db.items?.[id];
-    if (!entry) return null;
-    return normalizePhone(entry.phone || '') === normalizedPhone ? entry : null;
-}
-
-function getPhoneDeletedPrivateMessages(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return [];
-    const db = getDeletedMessagesArchiveDB();
-    return Object.values(db.items || {})
-        .filter((entry) => normalizePhone(entry?.phone || '') === normalizedPhone && String(entry?.senderPhone || '').trim())
-        .sort((a, b) => Date.parse(b?.deletedAt || b?.createdAt || 0) - Date.parse(a?.deletedAt || a?.createdAt || 0));
-}
-
-function getDeletedMessageSenderBuckets(phone) {
-    const buckets = new Map();
-    for (const entry of getPhoneDeletedPrivateMessages(phone)) {
-        const senderPhone = normalizePhone(entry?.senderPhone || entry?.senderJid || '');
-        if (!senderPhone) continue;
-        const existing = buckets.get(senderPhone) || {
-            senderPhone,
-            senderName: pickContactDisplayName(entry?.senderName, senderPhone),
-            total: 0,
-            latestAt: entry?.deletedAt || entry?.createdAt || ''
-        };
-        existing.total += 1;
-        existing.senderName = pickContactDisplayName(entry?.senderName, existing.senderName, senderPhone);
-        const latestTime = Date.parse(existing.latestAt || 0);
-        const currentTime = Date.parse(entry?.deletedAt || entry?.createdAt || 0);
-        if (currentTime > latestTime) existing.latestAt = entry?.deletedAt || entry?.createdAt || existing.latestAt;
-        buckets.set(senderPhone, existing);
-    }
-    return Array.from(buckets.values()).sort((a, b) => Date.parse(b.latestAt || 0) - Date.parse(a.latestAt || 0));
-}
-
-function getDeletedMessagesForSender(phone, senderPhone) {
-    const normalizedSender = normalizePhone(senderPhone);
-    return getPhoneDeletedPrivateMessages(phone).filter((entry) => normalizePhone(entry?.senderPhone || entry?.senderJid || '') === normalizedSender);
-}
-
-function formatDeletedMessageType(kind = '') {
-    return ({ text: 'نص', image: 'صورة', video: 'فيديو', audio: 'صوت', document: 'ملف', sticker: 'ملصق' }[String(kind || '').toLowerCase()] || 'رسالة');
-}
-
-function buildDeletedMessageSenderLabel(entry = {}) {
-    const name = pickContactDisplayName(entry.senderName, entry.senderPhone, 'غير معروف');
-    const phone = normalizePhone(entry.senderPhone || entry.senderJid || '');
-    return phone && name !== phone ? `${name} | ${phone}` : name;
-}
-
-function buildDeletedMessagePreviewText(entry = {}) {
-    return [
-        '🗑️ الرسالة المحذوفة',
-        `👤 الاسم: ${buildDeletedMessageSenderLabel(entry)}`,
-        `📦 النوع: ${formatDeletedMessageType(entry.kind)}`,
-        `🕒 وقت الحذف: ${formatStatusArchiveTime(entry.deletedAt || entry.createdAt || '')}`,
-        `🗓️ وقت الإرسال: ${formatStatusArchiveTime(entry.createdAt || '')}`,
-        String(entry.text || entry.caption || '').trim() ? `\n💬 المحتوى:\n${String(entry.text || entry.caption || '').trim()}` : ''
-    ].filter(Boolean).join('\n');
-}
-
-
 
 function setPhoneEmoji(userId, phone, emoji, options = {}) {
     const normalized = normalizePhone(phone);
@@ -4190,47 +3629,25 @@ function formatNumbersForUser(userId) {
 
 function buildLinkedNumberCommandsOverview(phone = '') {
     return [
-        '📲 أوامر الرقم المربوط:',
-        '.bot - إرسال رابط البوت',
-        ...buildLinkedOwnerQuickCommands(phone),
-        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        '⚡ من القائمة السفلية > أوامر سريعة يمكنك تشغيل أو إيقاف Anti-Delete و Ghost وتفاعل الخاص لهذا الرقم.',
-        '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت ولكل رقم إعداداته المستقلة.',
-        '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
+        `📲 الرقم ${phone}`,
+        'تم تعطيل أوامر الرقم من داخل الواتساب.',
+        'الإدارة متاحة من بوت تيليجرام وواجهة الإعدادات فقط.'
     ].join('\n');
 }
 
+
 function buildTelegramCommandsOverview() {
-    return [
-        '📜 أوامر البوت المتاحة للجميع بعد ربط الرقم:',
-        '/start أو زر القائمة الرئيسية - فتح الواجهة الرئيسية',
-        '/mywa أو زر أرقامي - عرض الأرقام المربوطة بحسابك',
-        '/unlink أو زر حذف جلسة - حذف جلسة أي رقم من أرقامك',
-        '/setemoji أو زر تغيير الإيموجي - تغيير إيموجي التفاعل لكل رقم',
-        '/statuscount أو زر عدد الحالات - معرفة عدد الحالات المحفوظة لكل رقم',
-        '/viewstatuses أو زر مشاهدة الحالات - مشاهدة الحالات المحفوظة واحدة واحدة مع زر التالي',
-        '/deletedmsgs أو زر الرسائل المحذوفة - عرض الرسائل الخاصة المحذوفة مع الاسم والتاريخ والوقت',
-        '/contactscount أو زر جهات الاتصال - معرفة عدد جهات الاتصال وعرضها لكل رقم مربوط',
-        '',
-        '😄 تفاعل الخاص التلقائي - تشغيل أو إيقاف الإعجاب العشوائي على رسائل الخاص',
-        '💘 من يحبني - اختيار جهة اتصال عشوائية وإظهار نسبة حب للمرح',
-        '/waprofile أو زر ملفي الشخصي - إدارة الاسم وحول للرقم المربوط بمدد جاهزة أو وقت مخصص',
-        '📢 قنواتنا - فتح رابط قناتنا على تيليجرام',
-        '⚡ أوامر سريعة - تشغيل/إيقاف Anti-Delete و Ghost لكل رقم',
-        '⚙️ إعدادات رقم - فتح لوحة الإعدادات الخاصة بالرقم وكلمة سره',
-        '🤖 الردود التلقائية - تخصيص ردود منفصلة لكل رقم مربوط',
-        '✨ تفاعل الحالات - تشغيل وإدارة التفاعل على الحالات لكل رقم',
-        '',
-        '🔐 كل رقم مربوط يملك كلمة سر خاصة به فقط، ويتم إنشاء مجلد إعدادات مستقل له داخل المشروع تلقائياً.'
-    ].join('\n');
+    return '';
 }
 
 function buildNumberManagerMessage(phone) {
     return [
         `⚙️ الرقم ${phone}`,
-        'الإدارة الآن من بوت تيليجرام ولوحة الإعدادات فقط.'
-    ].join('\n');
+        'يمكنك إدارة الرقم من بوت تيليجرام أو من واجهة الإعدادات فقط.',
+        buildWebPanelLinksMessage(phone)
+    ].join('\n\n');
 }
+
 
 function getNumberManagerKeyboard(phone) {
     const cleanPhone = sanitizeCallbackPhone(phone);
@@ -4248,7 +3665,6 @@ function buildEmojiReactManagerMessage(phone) {
     return [
         `😍 إدارة التفاعل على الحالات للرقم ${phone}`,
         `الحالة الحالية: ${settings.autoStatusReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
-        `إظهار التفاعل لصاحب الرقم: ${settings.statusReactionNotice === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
         `الإيموجي المستخدم حالياً: ${pickRandomStatusEmoji(phone)}`,
         '',
         'عند التفعيل سيتفاعل الرقم تلقائياً مع الحالات/الاستوريات فقط باستخدام الإيموجيات المحفوظة لهذا الرقم.',
@@ -4265,9 +3681,6 @@ function getEmojiReactManagerKeyboard(phone) {
             inline_keyboard: [
                 [
                     Markup.button.callback(settings.autoStatusReact === 'on' ? 'إيقاف التفاعل على الحالات ⛔' : 'تشغيل التفاعل على الحالات ✅', `emoji_react_toggle_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback(settings.statusReactionNotice === 'on' ? 'إيقاف إظهار التفاعل 👁️' : 'تشغيل إظهار التفاعل 👁️', `emoji_notice_toggle_${cleanPhone}`)
                 ],
                 [Markup.button.callback('تغيير الإيموجي 😍', `emoji_pick_${cleanPhone}`)],
                 [Markup.button.callback('رجوع للإعدادات ⚙️', `settings_phone_${cleanPhone}`)]
@@ -4304,972 +3717,20 @@ function buildStartMessage(ctx) {
 function getStartKeyboard() {
     return Markup.inlineKeyboard([
         [
-            Markup.button.callback('📱 ربط واتساب', 'pair_wa'),
-            Markup.button.callback('📋 أرقامي المربوطة', 'my_numbers')
+            Markup.button.callback('ربط واتساب 📱', 'pair_wa'),
+            Markup.button.callback('أرقامي المربوطة 📋', 'my_numbers')
         ],
         [
-            Markup.button.callback('❤️ الإيموجي والتفاعل', 'emoji_react_menu'),
-            Markup.button.callback('⚙️ إعدادات الرقم', 'settings_menu')
+            Markup.button.callback('إدارة الرسائل ⚙️', 'auto_replies'),
+            Markup.button.callback('الإعدادات ⚙️', 'settings_menu')
         ],
         [
-            Markup.button.callback('🤖 الردود التلقائية', 'auto_replies'),
-            Markup.button.callback('😍 تغيير الإيموجي', 'change_emoji')
+            Markup.button.callback('تغيير الإيموجي 😍', 'change_emoji'),
+            Markup.button.callback('تفاعل الحالات ✨', 'emoji_react_menu')
         ],
-        [
-            Markup.button.callback('📊 عدد الحالات', 'status_count_menu'),
-            Markup.button.callback('👁️ مشاهدة الحالات', 'status_browser_menu')
-        ],
-        [
-            Markup.button.callback('🗑️ الرسائل المحذوفة', 'deleted_messages_menu'),
-            Markup.button.callback('👥 جهات الاتصال', 'contacts_count_menu')
-        ],
-        [
-            Markup.button.callback('👁️ زيادة مشاهدات الحالة', 'status_view_boost')
-        ],
-        [
-            Markup.button.callback('😄 تفاعل الخاص', 'auto_private_react_menu'),
-            Markup.button.callback('💘 من يحبني', 'love_match_menu')
-        ],
-        [
-            Markup.button.callback('👤 ملفي الشخصي', 'profile_menu')
-        ],
-        [
-            Markup.button.callback('⚡ أوامر سريعة', 'quick_controls'),
-            Markup.button.callback('🗑️ حذف جلسة', 'delete_session')
-        ],
-        [
-            Markup.button.callback('📢 قنواتنا', 'our_channel_menu'),
-            Markup.button.callback('🔥 رشق منشور', 'channel_like_menu'),
-            Markup.button.callback('👨‍💻 مطور البوت', 'bot_developer_menu')
-        ],
-        [
-            Markup.button.callback('💬 تواصل مع المطور', 'contact_developer_wa_menu'),
-            Markup.button.callback('📜 أوامر البوت', 'linked_commands_menu')
-        ],
-        [Markup.button.callback('✅ تحديث الاشتراك', 'check_sub')]
+        [Markup.button.callback('حذف جلسة 🗑️', 'delete_session')],
+        [Markup.button.callback('تحديث الاشتراك ✅', 'check_sub')]
     ]);
-}
-
-function getMainReplyKeyboard() {
-    return {
-        reply_markup: {
-            keyboard: [
-                ['🏠 القائمة الرئيسية', '📱 ربط رقم', '📋 أرقامي'],
-                ['❤️ الإيموجي والتفاعل', '😍 تغيير الإيموجي'],
-                ['⚙️ إعدادات رقم', '🤖 الردود التلقائية', '⚡ أوامر سريعة'],
-                ['📊 عدد الحالات', '👁️ مشاهدة الحالات', '👁️ رشق مشاهدات'],
-                ['👥 جهات الاتصال'],
-                ['😄 تفاعل الخاص', '💘 من يحبني'],
-                ['🗑️ الرسائل المحذوفة', '👤 ملفي الشخصي'],
-                ['📢 قنواتنا', '🔥 رشق منشور'],
-                ['👨‍💻 مطور البوت', '💬 تواصل مع المطور'],
-                ['📜 أوامر البوت', '✅ تحديث الاشتراك', '🗑️ حذف جلسة']
-            ],
-            resize_keyboard: true,
-            one_time_keyboard: false,
-            is_persistent: true
-        }
-    };
-}
-
-function detectReplyKeyboardAction(text = '') {
-    const value = String(text || '').trim();
-    if (!value) return '';
-    if (/(?:القائمة الرئيسية|القائمه الرئيسية|القائمه الرئيسيه|القائمة الرئيسيه|^\/start$|^start$)/i.test(value)) return 'back_to_start';
-    if (/(?:ربط رقم|ربط واتساب|pair)/i.test(value)) return 'pair_wa';
-    if (/(?:أرقامي|ارقامي|mywa|my numbers)/i.test(value)) return 'my_numbers';
-    if (/(?:أوامر سريعة|اوامر سريعة|quick)/i.test(value)) return 'quick_controls';
-    if (/(?:إعدادات رقم|اعدادات رقم|الإعدادات|الاعدادات|settings)/i.test(value)) return 'settings_menu';
-    if (/(?:الردود التلقائية|إدارة الرسائل|ادارة الرسائل|auto repl)/i.test(value)) return 'auto_replies';
-    if (/(?:تغيير الإيموجي|تغيير الايموجي|emoji)/i.test(value)) return 'change_emoji';
-    if (/(?:الإيموجي والتفاعل|الايموجي والتفاعل|تفاعل الحالات|status react)/i.test(value)) return 'emoji_react_menu';
-    if (/(?:تفاعل الخاص|التفاعل التلقائي للخاص|private react)/i.test(value)) return 'auto_private_react_menu';
-    if (/(?:من يحبني|نسبة الحب|love match)/i.test(value)) return 'love_match_menu';
-    if (/(?:آخر ظهوري|اخر ظهوري|last seen)/i.test(value)) return 'last_seen_menu';
-    if (/(?:حذف جلسة|حذف الجلسة|unlink|delete session)/i.test(value)) return 'delete_session';
-    if (/(?:عدد الحالات|احصائية الحالات|احصائيات الحالات|status count)/i.test(value)) return 'status_count_menu';
-    if (/(?:مشاهدة الحالات|عرض الحالات|تصفح الحالات|status browser|view statuses)/i.test(value)) return 'status_browser_menu';
-    if (/(?:الرسائل المحذوفة|رسائل محذوفة|deleted messages|deleted msg)/i.test(value)) return 'deleted_messages_menu';
-    if (/(?:جهات الاتصال|عدد جهات الاتصال|contacts count|contacts)/i.test(value)) return 'contacts_count_menu';
-    // direct_contact_message removed
-    if (/(?:ملفي الشخصي|الملف الشخصي|profile|wa profile)/i.test(value)) return 'profile_menu';
-    if (/(?:قنواتنا|قناتنا|our channel|channel)/i.test(value)) return 'our_channel_menu';
-    if (/(?:رشق منشور|رشق|channel like|like post)/i.test(value)) return 'channel_like_menu';
-    if (/(?:رشق مشاهدات|زيادة مشاهدات الحالة|status view boost)/i.test(value)) return 'status_view_boost';
-    if (/(?:مطور البوت|bot developer)/i.test(value)) return 'bot_developer_menu';
-    if (/(?:تواصل مع المطور|contact developer|واتس المطور)/i.test(value)) return 'contact_developer_wa_menu';
-    if (/(?:تحديث الاشتراك|تحديث التحقق|check sub)/i.test(value)) return 'check_sub';
-    if (/(?:أوامر البوت|اوامر البوت|الأوامر|الاوامر|help|menu)/i.test(value)) return 'linked_commands_menu';
-    return '';
-}
-
-function buildQuickControlsMessage(phone) {
-    const settings = getActivePhoneSettings(phone);
-    return [
-        `⚡ الأوامر السريعة للرقم ${phone}`,
-        `🛡️ Anti-Delete: ${settings.antiDelete === 'off' ? 'متوقف ⛔' : 'مفعل ✅'}`,
-        `👻 Ghost Mode: ${settings.ghostMode === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
-        `😄 التفاعل التلقائي للخاص: ${settings.autoPrivateReact === 'on' ? 'مفعل ✅' : 'متوقف ⛔'}`,
-        '',
-        'كل زر بالأسفل يفعّل أو يوقف الإعداد مباشرة على الرقم المربوط فقط.'
-    ].join('\n');
-}
-
-function getQuickControlsKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const settings = getActivePhoneSettings(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    Markup.button.callback(settings.antiDelete === 'off' ? 'تشغيل Anti-Delete ✅' : 'إيقاف Anti-Delete ⛔', `quick_toggle_anti_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback(settings.ghostMode === 'on' ? 'إيقاف Ghost ⛔' : 'تشغيل Ghost ✅', `quick_toggle_ghost_${cleanPhone}`),
-                    Markup.button.callback(settings.autoPrivateReact === 'on' ? 'إيقاف تفاعل الخاص ⛔' : 'تشغيل تفاعل الخاص ✅', `quick_toggle_private_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('فتح الإعدادات التفصيلية ⚙️', `settings_phone_${cleanPhone}`),
-                    Markup.button.callback('رجوع ↩️', 'back_to_start')
-                ]
-            ]
-        }
-    };
-}
-
-async function openMyNumbersMenu(ctx) {
-    return safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
-}
-
-async function openLinkedCommandsMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, buildTelegramCommandsOverview());
-    }
-
-    if (phones.length === 1) {
-        return safeReply(ctx, `${buildTelegramCommandsOverview()}\n\n${buildLinkedNumberCommandsOverview(phones[0])}`);
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '📜 اختر الرقم الذي تريد عرض أوامره الخاصة به:', { reply_markup: { inline_keyboard: rows } });
-}
-
-
-async function openStatusCountMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض عدد الحالات.');
-    if (phones.length === 1) return safeReply(ctx, buildStatusCountMessage(phones[0]));
-    const rows = phones.map((phone) => [Markup.button.callback(`📊 ${phone}`, `statuscount_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '📊 اختر الرقم الذي تريد معرفة عدد الحالات المحفوظة له:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openStatusBrowserMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض الحالات.');
-    if (phones.length === 1) return openStatusBrowserForPhone(ctx, phones[0]);
-    const rows = phones.map((phone) => [Markup.button.callback(`👁️ ${phone}`, `statusbrowse_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '👁️ اختر الرقم الذي تريد مشاهدة حالاته من داخل البوت:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openStatusBrowserForPhone(ctx, phone) {
-    const entries = getPhoneStatusArchiveEntries(phone);
-    if (!entries.length) return safeReply(ctx, `📭 لا توجد حالات محفوظة حالياً للرقم ${phone}.`);
-    return sendStatusArchiveEntryByIndex(ctx, phone, 0);
-}
-
-function getStatusArchiveIndexById(phone, statusId) {
-    const entries = getPhoneStatusArchiveEntries(phone);
-    return entries.findIndex((entry) => String(entry?.id || '') === String(statusId || ''));
-}
-
-function buildStatusSequenceButtons(phone, entry, index, total) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const statusId = String(entry?.id || '').trim();
-    const ownerButton = Markup.button.callback(`👤 ${formatStatusArchiveOwner(entry)}`.slice(0, 55), `status_owner_${cleanPhone}_${statusId}`);
-    const actionButton = entry?.kind === 'text'
-        ? Markup.button.callback('نسخ النص 📋', `status_copy_${cleanPhone}_${statusId}`)
-        : Markup.button.callback('تنزيل الحالة ⬇️', `status_download_${cleanPhone}_${statusId}`);
-    const nextButton = index + 1 < total
-        ? Markup.button.callback('التالي ⏭️', `status_next_${cleanPhone}_${index + 1}`)
-        : Markup.button.callback('التالي ⏭️', `status_done_${cleanPhone}`);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [ownerButton],
-                [actionButton],
-                [nextButton]
-            ]
-        }
-    };
-}
-
-function getStatusBrowserRestartKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('العودة للحالات السابقة ↩️', `status_restart_${cleanPhone}`)],
-                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-            ]
-        }
-    };
-}
-
-async function sendStatusBrowserFinished(ctx, phone) {
-    return safeReply(ctx, `✅ تم انتهاء مشاهدة الحالات للرقم ${phone}.`, getStatusBrowserRestartKeyboard(phone));
-}
-
-async function sendStatusArchiveEntryByIndex(ctx, phone, index = 0) {
-    const entries = getPhoneStatusArchiveEntries(phone);
-    if (!entries.length) return safeReply(ctx, `📭 لا توجد حالات محفوظة حالياً للرقم ${phone}.`);
-    const safeIndex = Number(index) || 0;
-    if (safeIndex < 0 || safeIndex >= entries.length) {
-        return sendStatusBrowserFinished(ctx, phone);
-    }
-    const entry = entries[safeIndex];
-    const caption = buildStatusPreviewCaption(entry);
-    const buttons = buildStatusSequenceButtons(phone, entry, safeIndex, entries.length);
-    if (entry.kind === 'text') return safeReply(ctx, caption, buttons);
-    if (!entry.filePath || !fs.existsSync(entry.filePath)) return safeReply(ctx, '❌ ملف الحالة غير موجود حالياً على الخادم.', buttons);
-    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
-    if (entry.kind === 'video') return ctx.replyWithVideo({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
-    if (entry.kind === 'audio') {
-        await ctx.replyWithAudio({ source: entry.filePath }, buttons);
-        return safeReply(ctx, caption, buttons);
-    }
-    await ctx.replyWithDocument({ source: entry.filePath, filename: entry.fileName || 'status.bin' }, buttons);
-    return safeReply(ctx, caption, buttons);
-}
-
-async function openDeletedStatusBrowserMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض الحالات المحذوفة.');
-    if (phones.length === 1) return openDeletedStatusBrowserForPhone(ctx, phones[0]);
-    const rows = phones.map((phone) => [Markup.button.callback(`🗑️ ${phone}`, `statusdeleted_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🗑️ اختر الرقم الذي تريد مشاهدة الحالات المحذوفة له خلال أقل من 24 ساعة:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openDeletedStatusBrowserForPhone(ctx, phone) {
-    const entries = getPhoneDeletedStatusArchiveEntries(phone).slice(0, 20);
-    if (!entries.length) return safeReply(ctx, `📭 لا توجد حالات محذوفة محفوظة خلال آخر 24 ساعة للرقم ${phone}.`);
-    const rows = entries.map((entry, index) => {
-        const icon = entry.kind === 'video' ? '🎥' : entry.kind === 'image' ? '🖼️' : entry.kind === 'text' ? '📝' : '📦';
-        return [Markup.button.callback(`${icon} ${index + 1}. ${formatStatusArchiveOwner(entry)}`.slice(0, 60), `deleted_status_open_${sanitizeCallbackPhone(phone)}_${entry.id}`)];
-    });
-    rows.push([Markup.button.callback('🔄 تحديث القائمة', `statusdeleted_phone_${sanitizeCallbackPhone(phone)}`)]);
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, `🗑️ الحالات المحذوفة للرقم ${phone}
-⏳ المعروض: الحالات التي حذفها أصحابها خلال أقل من 24 ساعة
-📥 الإجمالي: ${getPhoneDeletedStatusArchiveEntries(phone).length}
-اختر الحالة التي تريد فتحها أو تنزيلها:`, { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openStatusArchiveItem(ctx, phone, statusId, source = 'all') {
-    const entry = getStatusArchiveEntry(phone, statusId);
-    if (!entry) return safeReply(ctx, '❌ لم أجد هذه الحالة أو تم حذفها من الأرشيف.');
-    const caption = buildStatusPreviewCaption(entry);
-    const buttons = buildStatusEntryButtons(phone, entry, source);
-    if (entry.kind === 'text') return safeReply(ctx, caption, buttons);
-    if (!entry.filePath || !fs.existsSync(entry.filePath)) return safeReply(ctx, '❌ ملف الحالة غير موجود حالياً على الخادم.');
-    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
-    if (entry.kind === 'video') return ctx.replyWithVideo({ source: entry.filePath }, { caption: caption.slice(0, 1024), ...buttons });
-    if (entry.kind === 'audio') {
-        await ctx.replyWithAudio({ source: entry.filePath }, buttons);
-        return safeReply(ctx, caption, buttons);
-    }
-    await ctx.replyWithDocument({ source: entry.filePath, filename: entry.fileName || 'status.bin' }, buttons);
-    return safeReply(ctx, caption, buttons);
-}
-
-async function sendStatusArchiveDownload(ctx, phone, statusId) {
-    const entry = getStatusArchiveEntry(phone, statusId);
-    if (!entry) return safeReply(ctx, '❌ لم أجد هذه الحالة أو تم حذفها.');
-    if (entry.kind === 'text') return safeReply(ctx, `📋 نص الحالة جاهز للنسخ:
-
-${String(entry.text || entry.caption || '').trim() || 'لا يوجد نص.'}`);
-    if (!entry.filePath || !fs.existsSync(entry.filePath)) return safeReply(ctx, '❌ ملف الحالة غير متوفر للتنزيل حالياً.');
-    const caption = `👤 صاحب الحالة: ${formatStatusArchiveOwner(entry)}`;
-    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: entry.filePath }, { caption });
-    if (entry.kind === 'video') return ctx.replyWithVideo({ source: entry.filePath }, { caption });
-    if (entry.kind === 'audio') return ctx.replyWithAudio({ source: entry.filePath }, { caption });
-    return ctx.replyWithDocument({ source: entry.filePath, filename: entry.fileName || 'status.bin' }, { caption });
-}
-
-
-async function openContactsCountMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض جهات الاتصال.');
-    if (phones.length === 1) return safeReply(ctx, buildContactsCountMessage(phones[0]), getContactsCountKeyboard(phones[0]));
-    const rows = phones.map((phone) => [Markup.button.callback(`👥 ${phone}`, `contactscount_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '👥 اختر الرقم الذي تريد معرفة عدد جهات اتصاله:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openLastSeenMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض آخر ظهور.');
-    if (phones.length === 1) return safeReply(ctx, buildLastSeenMessage(phones[0]));
-    const rows = phones.map((phone) => [Markup.button.callback(`🕓 ${phone}`, `lastseen_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🕓 اختر الرقم الذي تريد معرفة آخر نشاطه:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openLoveMatchMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لاختيار نسبة حب من جهات الاتصال.');
-    if (phones.length === 1) return safeReply(ctx, buildLoveMatchMessage(phones[0]));
-    const rows = phones.map((phone) => [Markup.button.callback(`💘 ${phone}`, `lovematch_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '💘 اختر الرقم الذي تريد تشغيل فقرة من يحبني له:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openAutoPrivateReactMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة تفاعل الخاص.');
-    if (phones.length === 1) return safeReply(ctx, buildAutoPrivateReactManagerMessage(phones[0]), getAutoPrivateReactManagerKeyboard(phones[0]));
-    const rows = phones.map((phone) => [Markup.button.callback(`😄 ${phone}`, `auto_private_react_phone_${sanitizeCallbackPhone(phone)}`)]);
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, '😄 اختر الرقم الذي تريد إدارة التفاعل التلقائي للخاص له:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openDeletedMessagesMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض الرسائل المحذوفة.');
-    if (phones.length === 1) return openDeletedMessagesSendersForPhone(ctx, phones[0]);
-    const rows = phones.map((phone) => [Markup.button.callback(`🗑️ ${phone}`, `deletedmsg_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🗑️ اختر الرقم الذي تريد عرض الرسائل الخاصة المحذوفة له:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openDeletedMessagesSendersForPhone(ctx, phone) {
-    const senders = getDeletedMessageSenderBuckets(phone).slice(0, 20);
-    if (!senders.length) return safeReply(ctx, `📭 لا توجد رسائل خاصة محذوفة محفوظة حالياً للرقم ${phone}.`);
-    const rows = senders.map((entry, index) => [Markup.button.callback(`👤 ${index + 1}. ${buildDeletedMessageSenderLabel(entry)} (${entry.total})`.slice(0, 60), `deletedmsg_sender_${sanitizeCallbackPhone(phone)}_${entry.senderPhone}`)]);
-    rows.push([Markup.button.callback('🔄 تحديث القائمة', `deletedmsg_phone_${sanitizeCallbackPhone(phone)}`)]);
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, `🗑️ مرسلو الرسائل المحذوفة للرقم ${phone}\n📥 الإجمالي: ${getPhoneDeletedPrivateMessages(phone).length}\nاختر الشخص الذي تريد عرض رسائله المحذوفة:`, { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openDeletedMessagesForSender(ctx, phone, senderPhone) {
-    const items = getDeletedMessagesForSender(phone, senderPhone).slice(0, 20);
-    if (!items.length) return safeReply(ctx, '📭 لا توجد رسائل محذوفة لهذا الرقم حالياً.');
-    const rows = items.map((entry, index) => [Markup.button.callback(`📩 ${index + 1}. ${formatDeletedMessageType(entry.kind)} - ${formatStatusArchiveTime(entry.deletedAt || entry.createdAt || '')}`.slice(0, 60), `deletedmsg_open_${sanitizeCallbackPhone(phone)}_${entry.id}`)]);
-    rows.push([Markup.button.callback('🔄 تحديث الرسائل', `deletedmsg_sender_${sanitizeCallbackPhone(phone)}_${normalizePhone(senderPhone)}`)]);
-    rows.push([Markup.button.callback('↩️ رجوع للمرسلين', `deletedmsg_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, `📨 الرسائل المحذوفة من ${buildDeletedMessageSenderLabel(items[0])}\n📥 العدد: ${getDeletedMessagesForSender(phone, senderPhone).length}\nاختر الرسالة التي تريد فتحها:`, { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openDeletedMessageArchiveItem(ctx, phone, archiveId) {
-    const entry = getDeletedMessageArchiveEntry(phone, archiveId);
-    if (!entry) return safeReply(ctx, '❌ لم أجد الرسالة المحذوفة المطلوبة.');
-    const caption = buildDeletedMessagePreviewText(entry);
-    if (entry.kind === 'text' || !entry.data) return safeReply(ctx, caption);
-
-    const buffer = Buffer.from(entry.data, 'base64');
-    if (entry.kind === 'image') return ctx.replyWithPhoto({ source: buffer }, { caption: caption.slice(0, 1024) });
-    if (entry.kind === 'video') return ctx.replyWithVideo({ source: buffer }, { caption: caption.slice(0, 1024) });
-    if (entry.kind === 'audio') {
-        await ctx.replyWithAudio({ source: buffer }, { caption: `👤 ${buildDeletedMessageSenderLabel(entry)}` });
-        return safeReply(ctx, caption);
-    }
-    return ctx.replyWithDocument({ source: buffer, filename: entry.fileName || 'deleted-message.bin' }, { caption: caption.slice(0, 1024) });
-}
-
-
-// =========================
-// رسالة جماعية لجهات الاتصال - نظام Queue متطور
-// =========================
-const CONTACTS_BROADCAST_DELAY_MS = 2500;   // تأخير بين كل رسالة (2.5 ثانية)
-const CONTACTS_BROADCAST_BATCH = 100;        // 100 رسالة لكل دفعة
-const CONTACTS_BROADCAST_PAUSE_MS = 5 * 60 * 1000; // 5 دقائق بين الدفعات
-
-// مخزن مهام البث الجاري تشغيلها
-const broadcastJobs = new Map(); // phone -> { running, cancel, report }
-
-function getBroadcastJob(phone) {
-    return broadcastJobs.get(normalizePhone(phone)) || null;
-}
-
-function cancelBroadcastJob(phone) {
-    const job = broadcastJobs.get(normalizePhone(phone));
-    if (job) { job.cancel = true; }
-}
-
-// إرسال رسالة جماعية بنظام دفعات في الخلفية (background) - 100 رسالة كل 5 دقائق
-async function sendBroadcastToAllContactsQueue(sock, phone, messageText, onProgress, limitCount = 0) {
-    const normalizedPhone = normalizePhone(phone);
-    const cleanMessage = String(messageText || '').trim();
-    const report = { total: 0, success: 0, failed: 0, skipped: 0, details: [], finished: false };
-
-    if (!cleanMessage) { report.finished = true; return report; }
-    if (!sock) {
-        report.failed = 1;
-        report.details.push({ jid: 'N/A', status: 'offline', error: 'الرقم غير متصل' });
-        report.finished = true;
-        return report;
-    }
-
-    const contacts = getPhoneContactEntries(normalizedPhone);
-    report.total = contacts.length;
-    if (!contacts.length) { report.finished = true; return report; }
-
-    // إلغاء أي مهمة سابقة لنفس الرقم
-    cancelBroadcastJob(normalizedPhone);
-    const jobState = { cancel: false, running: true, report };
-    broadcastJobs.set(normalizedPhone, jobState);
-
-    // تصفية جهات الاتصال الصالحة مسبقاً
-    const validContacts = contacts.filter(c => {
-        const jid = String(c.jid || '').trim();
-        const cPhone = String(c.phoneNumber || '').trim();
-        return jid && cPhone;
-    });
-    const normalizedLimit = Math.max(0, Math.min(Number(limitCount) || 0, validContacts.length));
-    const targetContacts = normalizedLimit ? validContacts.slice(0, normalizedLimit) : validContacts;
-    report.total = targetContacts.length;
-    report.skipped = contacts.length - validContacts.length + Math.max(0, validContacts.length - targetContacts.length);
-
-    let batchNum = 0;
-    let globalIndex = 0;
-
-    // إرسال الدفعات في loop خلفي
-    while (globalIndex < targetContacts.length) {
-        if (jobState.cancel) break;
-
-        // إعادة التحقق من أن الاتصال لا يزال قائماً
-        const liveSock = waClients.get(normalizedPhone);
-        if (!liveSock) {
-            // الرقم انقطع - انتظر إعادة الاتصال ثم أكمل
-            await delay(15000);
-            const retrySock = waClients.get(normalizedPhone);
-            if (!retrySock) break; // إذا لم يعد يتصل نوقف
-        }
-
-        const currentSock = waClients.get(normalizedPhone) || sock;
-
-        // دفعة واحدة: 100 رسالة
-        const batch = targetContacts.slice(globalIndex, globalIndex + CONTACTS_BROADCAST_BATCH);
-        batchNum++;
-
-        let sentInBatch = 0;
-        for (const contact of batch) {
-            if (jobState.cancel) break;
-            const jid = String(contact.jid || '').trim();
-            const contactPhone = String(contact.phoneNumber || '').trim();
-
-            try {
-                // تأخير طبيعي بين الرسائل مع جيتر عشوائي لتجنب الحظر
-                if (sentInBatch > 0) {
-                    const jitter = Math.floor(Math.random() * 1500);
-                    await delay(CONTACTS_BROADCAST_DELAY_MS + jitter);
-                }
-
-                await currentSock.sendMessage(jid, { text: cleanMessage });
-                report.success += 1;
-                report.details.push({ jid, name: contact.name || contactPhone, status: 'sent' });
-                sentInBatch++;
-            } catch (err) {
-                report.failed += 1;
-                report.details.push({ jid, name: contact.name || contactPhone, status: 'failed', error: err.message || 'فشل الإرسال' });
-            }
-
-            // تنظيف الذاكرة دورياً لمنع امتلاء الرام
-            if (report.details.length > 500) {
-                // احتفظ فقط بآخر 100 تفصيلة لتوفير الذاكرة
-                const failed = report.details.filter(d => d.status === 'failed').slice(-50);
-                report.details = [...failed];
-                if (typeof global.gc === 'function') { try { global.gc(); } catch(_) {} }
-            }
-        }
-
-        globalIndex += batch.length;
-
-        // إشعار المستخدم بالتقدم
-        if (typeof onProgress === 'function') {
-            try {
-                await onProgress(report, globalIndex, targetContacts.length, batchNum);
-            } catch (_) {}
-        }
-
-        // إذا لم ننته بعد، انتظر 5 دقائق قبل الدفعة التالية
-        if (globalIndex < targetContacts.length && !jobState.cancel) {
-            await delay(CONTACTS_BROADCAST_PAUSE_MS);
-        }
-    }
-
-    report.finished = true;
-    jobState.running = false;
-    broadcastJobs.delete(normalizedPhone);
-    return report;
-}
-
-// الدالة القديمة للتوافق (تُعيد مباشرةً)
-async function sendBroadcastToAllContacts(sock, phone, messageText) {
-    return sendBroadcastToAllContactsQueue(sock, phone, messageText, null);
-}
-
-function formatContactsBroadcastReport(report = {}) {
-    const lines = [
-        '📢 نتيجة إرسال الرسالة الجماعية لجهات الاتصال',
-        '',
-        `📊 الإجمالي: ${report.total || 0}`,
-        `✅ نجح: ${report.success || 0}`,
-        `❌ فشل: ${report.failed || 0}`,
-        report.skipped ? `⏭️ تم تجاوزه: ${report.skipped}` : ''
-    ].filter(s => s !== undefined);
-
-    const failedItems = (report.details || [])
-        .filter(d => d.status === 'failed')
-        .slice(0, 8)
-        .map(d => `• ${d.name || d.jid}: ${d.error || 'فشل'}`);
-
-    if (failedItems.length) {
-        lines.push('', '📋 أسباب الفشل (أول 8):', ...failedItems);
-    }
-
-    return lines.join('\n');
-}
-
-
-
-
-// =========================
-// قنواتنا - مطور البوت - تواصل مع المطور عبر الواتس
-// =========================
-async function openOurChannelMenu(ctx) {
-    return safeReply(ctx,
-        '📢 قنواتنا\n\nاشترك في قناتنا على تيليجرام للحصول على آخر التحديثات والمميزات:',
-        {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.url('📢 فتح قناتنا على تيليجرام', 'https://t.me/fz_z_Z')],
-                    [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-                ]
-            }
-        }
-    );
-}
-
-async function openBotDeveloperMenu(ctx) {
-    return safeReply(ctx,
-        '👨‍💻 مطور البوت\n\nللتواصل مع مطور البوت والدعم الفني:',
-        {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.url('👨‍💻 تواصل مع المطور @P_n_ij', 'https://t.me/P_n_ij')],
-                    [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-                ]
-            }
-        }
-    );
-}
-
-async function openContactDeveloperWaMenu(ctx) {
-    return safeReply(ctx,
-        '💬 تواصل مع المطور عبر الواتساب\n\nيمكنك التواصل مع المطور مباشرة عبر الواتساب:',
-        {
-            reply_markup: {
-                inline_keyboard: [
-                    [Markup.button.url('💬 تواصل عبر الواتساب', 'https://wa.me/967784355543')],
-                    [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-                ]
-            }
-        }
-    );
-}
-
-async function openContactsBroadcastMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإرسال رسالة جماعية.');
-    if (phones.length === 1) {
-        const contacts = getPhoneContactEntries(phones[0]);
-        if (!contacts.length) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phones[0]} بعد.\nانتظر حتى يتم مزامنة جهات الاتصال مع البوت.`);
-        ctx.session = { step: 'wait_contacts_broadcast_count', targetPhone: phones[0] };
-        return safeReply(ctx, buildContactsBroadcastPrompt(phones[0], contacts.length), getContactsBroadcastCancelKeyboard(phones[0]));
-    }
-    const rows = phones.map((phone) => {
-        const cnt = getPhoneContactEntries(phone).length;
-        return [Markup.button.callback(`📢 ${phone} (${cnt} جهة اتصال)`, `contacts_broadcast_phone_${sanitizeCallbackPhone(phone)}`)];
-    });
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, '📢 اختر الرقم الذي تريد إرسال الرسالة الجماعية منه:', { reply_markup: { inline_keyboard: rows } });
-}
-
-function getContactsBroadcastCancelKeyboard(phone) {
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('إلغاء ❌', `contacts_broadcast_cancel_${sanitizeCallbackPhone(phone)}`)],
-                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-            ]
-        }
-    };
-}
-
-function buildContactsBroadcastPrompt(phone, count) {
-    return [
-        `📢 إرسال رسالة جماعية من الرقم ${phone}`,
-        '',
-        `👥 إجمالي جهات الاتصال المتاحة: ${count}`,
-        '',
-        '🔢 أرسل الآن عدد جهات الاتصال التي تريد أن تصلهم الرسالة.',
-        `مثال: 25 أو ${Math.min(count, 100)}`,
-        'يمكنك الإلغاء في أي وقت من الزر بالأسفل.'
-    ].join('\n');
-}
-
-function buildContactsBroadcastTextPrompt(phone, requestedCount, totalCount) {
-    return [
-        `✉️ تم تحديد ${requestedCount} جهة اتصال من أصل ${totalCount} للرقم ${phone}.`,
-        '',
-        '📝 أرسل الآن الرسالة المطلوبة.',
-        'إذا أرسلت كلمة الغاء أو ضغطت زر الإلغاء فلن يتم الإرسال.'
-    ].join('\n');
-}
-
-function findPhoneContactEntry(phone, contactRef = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedJid = normalizeContactJid(contactRef);
-    const normalizedContactPhone = normalizePhone(contactRef);
-    return getPhoneContactEntries(normalizedPhone).find((entry) => {
-        const entryJid = normalizeContactJid(entry?.jid || '');
-        const entryPhone = normalizePhone(entry?.phoneNumber || entry?.jid || '');
-        if (normalizedJid && entryJid === normalizedJid) return true;
-        if (normalizedContactPhone && entryPhone === normalizedContactPhone) return true;
-        return false;
-    }) || null;
-}
-
-function getRandomPhoneContactEntry(phone) {
-    const contacts = getPhoneContactEntries(phone);
-    if (!contacts.length) return null;
-    return contacts[Math.floor(Math.random() * contacts.length)] || contacts[0] || null;
-}
-
-function getDirectContactSessionKey(phone, contactRef = '') {
-    const normalizedPhone = normalizePhone(phone);
-    const entry = findPhoneContactEntry(normalizedPhone, contactRef);
-    const normalizedJid = entry ? normalizeContactJid(entry.jid) : normalizeContactJid(contactRef);
-    if (!normalizedPhone || !normalizedJid) return '';
-    return `${normalizedPhone}::${normalizedJid}`;
-}
-
-function getDirectContactMessageSession(phone, contactRef = '') {
-    const key = getDirectContactSessionKey(phone, contactRef);
-    if (!key) return null;
-    return directContactMessageSessions.get(key) || null;
-}
-
-function setDirectContactMessageSession(phone, contactRef, payload = {}) {
-    const entry = findPhoneContactEntry(phone, contactRef);
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedJid = normalizeContactJid(entry?.jid || contactRef);
-    if (!normalizedPhone || !normalizedJid) return null;
-    const key = `${normalizedPhone}::${normalizedJid}`;
-    const value = {
-        phone: normalizedPhone,
-        contactJid: normalizedJid,
-        contactPhone: normalizePhone(entry?.phoneNumber || normalizedJid),
-        contactName: pickContactDisplayName(entry?.name, entry?.notify, entry?.pushName, normalizePhone(entry?.phoneNumber || normalizedJid), normalizedJid),
-        updatedAt: Date.now(),
-        ...payload
-    };
-    directContactMessageSessions.set(key, value);
-    return value;
-}
-
-function clearDirectContactMessageSession(phone, contactRef = '') {
-    const key = getDirectContactSessionKey(phone, contactRef);
-    if (!key) return false;
-    return directContactMessageSessions.delete(key);
-}
-
-function buildDirectContactCardMessage(phone, entry) {
-    const displayName = pickContactDisplayName(entry?.name, entry?.notify, entry?.pushName, entry?.phoneNumber, entry?.jid);
-    const contactPhone = normalizePhone(entry?.phoneNumber || entry?.jid || '');
-    return [
-        `💬 مراسلة جهة اتصال من الرقم ${phone}`,
-        '',
-        `👤 الاسم العشوائي: ${displayName || 'بدون اسم'}`,
-        `📱 الرقم: ${contactPhone || 'غير معروف'}`,
-        '',
-        'اضغط مراسلة لبدء المحادثة أو اسم آخر لعرض جهة مختلفة.'
-    ].join('\n');
-}
-
-function getDirectContactCardKeyboard(phone, entry) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const contactPhone = sanitizeCallbackPhone(entry?.phoneNumber || entry?.jid || '');
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('مراسلة 💬', `direct_message_pick_${cleanPhone}_${contactPhone}`)],
-                [Markup.button.callback('اسم عشوائي آخر 🎲', `direct_message_random_${cleanPhone}`)],
-                [Markup.button.callback('إلغاء ❌', `direct_message_cancel_${cleanPhone}`)]
-            ]
-        }
-    };
-}
-
-function getDirectContactCancelKeyboard(phone, contactRef = '') {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const cleanContact = sanitizeCallbackPhone(contactRef);
-    const stopAction = cleanContact ? `direct_message_stop_${cleanPhone}_${cleanContact}` : `direct_message_cancel_${cleanPhone}`;
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('إلغاء ❌', stopAction)],
-                [Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]
-            ]
-        }
-    };
-}
-
-function getDirectContactReplyKeyboard(phone, contactRef = '') {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const cleanContact = sanitizeCallbackPhone(contactRef);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [Markup.button.callback('رد على الرسالة ↩️', `direct_message_reply_${cleanPhone}_${cleanContact}`)],
-                [Markup.button.callback('إلغاء المراسلة ❌', `direct_message_stop_${cleanPhone}_${cleanContact}`)]
-            ]
-        }
-    };
-}
-
-function extractInboundPrivateMessagePreview(msg) {
-    const content = unwrapMessageContent(msg?.message);
-    const text = String(textFromMessage(msg) || '').trim();
-    if (text) return text.slice(0, 3500);
-    if (content?.imageMessage) return `📷 صورة${content.imageMessage.caption ? `\n${String(content.imageMessage.caption).trim().slice(0, 1000)}` : ''}`;
-    if (content?.videoMessage) return `🎥 فيديو${content.videoMessage.caption ? `\n${String(content.videoMessage.caption).trim().slice(0, 1000)}` : ''}`;
-    if (content?.audioMessage) return '🎤 رسالة صوتية';
-    if (content?.documentMessage) return `📄 ملف: ${String(content.documentMessage.fileName || 'document').trim()}`;
-    if (content?.stickerMessage) return '🧩 ملصق';
-    return '📩 رسالة جديدة';
-}
-
-async function relayDirectContactMessageToTelegram(phone, contactJid, msg) {
-    const session = getDirectContactMessageSession(phone, contactJid);
-    if (!session?.ownerId) return false;
-    const entry = findPhoneContactEntry(phone, contactJid);
-    const displayName = pickContactDisplayName(session.contactName, entry?.name, entry?.notify, normalizePhone(contactJid), contactJid);
-    const preview = extractInboundPrivateMessagePreview(msg);
-    await notifyTelegramUser(
-        session.ownerId,
-        [
-            `📩 رد جديد داخل البوت`,
-            `📱 الرقم المربوط: ${normalizePhone(phone)}`,
-            `👤 جهة الاتصال: ${displayName}`,
-            '',
-            preview
-        ].join('\n'),
-        getDirectContactReplyKeyboard(phone, contactJid)
-    );
-    setDirectContactMessageSession(phone, contactJid, { ...session, ownerId: session.ownerId, lastDirection: 'in' });
-    return true;
-}
-
-async function openDirectContactMessageMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لمراسلة جهة اتصال.');
-    if (phones.length === 1) return openRandomDirectContactPicker(ctx, phones[0]);
-    const rows = phones.map((phone) => {
-        const cnt = getPhoneContactEntries(phone).length;
-        return [Markup.button.callback(`💬 ${phone} (${cnt} جهة)`, `direct_message_phone_${sanitizeCallbackPhone(phone)}`)];
-    });
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, '💬 اختر الرقم الذي تريد المراسلة منه داخل البوت:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openRandomDirectContactPicker(ctx, phone) {
-    const entry = getRandomPhoneContactEntry(phone);
-    if (!entry) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`);
-    return safeReply(ctx, buildDirectContactCardMessage(phone, entry), getDirectContactCardKeyboard(phone, entry));
-}
-
-
-async function openWhatsAppProfileMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الملف الشخصي.');
-    if (phones.length === 1) return openWhatsAppProfileForPhone(ctx, phones[0]);
-    const rows = phones.map((phone) => [Markup.button.callback(`👤 ${phone}`, `profile_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '👤 اختر الرقم الذي تريد فتح ملفه الشخصي على واتساب:', { reply_markup: { inline_keyboard: rows } });
-}
-
-function getProfileAboutPresetMeta(key = '') {
-    const now = Date.now();
-    const presets = {
-        '1h': { key: '1h', label: '١ ساعة', expiresAt: new Date(now + (1 * 60 * 60 * 1000)).toISOString() },
-        '8h': { key: '8h', label: '٨ ساعات', expiresAt: new Date(now + (8 * 60 * 60 * 1000)).toISOString() },
-        '1d': { key: '1d', label: '١ يوم', expiresAt: new Date(now + (24 * 60 * 60 * 1000)).toISOString() },
-        '2d': { key: '2d', label: '٢ يومان', expiresAt: new Date(now + (2 * 24 * 60 * 60 * 1000)).toISOString() },
-        '1w': { key: '1w', label: '١ أسبوع', expiresAt: new Date(now + (7 * 24 * 60 * 60 * 1000)).toISOString() }
-    };
-    return presets[String(key || '').trim()] || null;
-}
-
-function getProfileAboutDurationKeyboard(phone) {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    Markup.button.callback('١ ساعة', `profile_about_duration_1h_${cleanPhone}`),
-                    Markup.button.callback('٨ ساعات', `profile_about_duration_8h_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('١ يوم', `profile_about_duration_1d_${cleanPhone}`),
-                    Markup.button.callback('٢ يومان', `profile_about_duration_2d_${cleanPhone}`)
-                ],
-                [
-                    Markup.button.callback('١ أسبوع', `profile_about_duration_1w_${cleanPhone}`),
-                    Markup.button.callback('مخصص', `profile_about_duration_custom_${cleanPhone}`)
-                ],
-                [Markup.button.callback('رجوع ↩️', `profile_phone_${cleanPhone}`)]
-            ]
-        }
-    };
-}
-
-async function openProfileAboutDurationMenu(ctx, phone) {
-    return safeReply(ctx, `📝 تغيير حول للرقم ${phone}
-
-اختر مدة ظهور رسالة حول الجديدة من الأزرار الشفافة بالأسفل.
-بعد الاختيار سأطلب منك إرسال النص مباشرة.
-
-الحد الأقصى لرسالة حول هو ${MAX_WA_ABOUT_LENGTH} حرفاً.`, getProfileAboutDurationKeyboard(phone));
-}
-
-
-
-
-
-
-
-async function openWhatsAppProfileForPhone(ctx, phone) {
-    const snapshot = getCurrentPhoneProfileSnapshot(phone);
-    const normalizedPhone = normalizePhone(phone);
-    const sock = waClients.get(normalizedPhone);
-    const scheduleLine = snapshot.schedule?.active && snapshot.schedule?.expiresAt ? `
-⏳ انتهاء حول المجدول: ${formatStatusArchiveTime(snapshot.schedule.expiresAt)}` : '';
-
-    // استرجاع صورة البروفيل
-    let profilePicUrl = '';
-    let profilePicCaption = `👤 الملف الشخصي للرقم ${phone}\n\n📛 الاسم: ${snapshot.name}\n📝 حول: ${snapshot.about}${scheduleLine}`;
-    try {
-        if (sock && typeof sock.profilePictureUrl === 'function') {
-            profilePicUrl = await sock.profilePictureUrl(`${normalizedPhone}@s.whatsapp.net`, 'image').catch(() => '');
-        }
-    } catch (_) {}
-
-    const keyboard = {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    Markup.button.callback('تغيير الاسم ✏️', `profile_edit_name_${sanitizeCallbackPhone(phone)}`),
-                    Markup.button.callback('تغيير حول 📝', `profile_edit_about_${sanitizeCallbackPhone(phone)}`)
-                ],
-                [
-                    Markup.button.callback('تغيير الصورة 🖼️', `profile_change_pic_${sanitizeCallbackPhone(phone)}`),
-                    Markup.button.callback('حذف الصورة 🗑️', `profile_delete_pic_${sanitizeCallbackPhone(phone)}`)
-                ],
-                [Markup.button.callback('تحديث العرض 🔄', `profile_phone_${sanitizeCallbackPhone(phone)}`)]
-            ]
-        }
-    };
-
-    if (profilePicUrl) {
-        try {
-            await ctx.replyWithPhoto(profilePicUrl, { caption: profilePicCaption, ...keyboard });
-            return;
-        } catch (_) {}
-    }
-    return safeReply(ctx, profilePicCaption, keyboard);
-}
-
-async function openAutoRepliesMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإضافة الردود التلقائية.');
-    }
-
-    if (phones.length === 1) {
-        ctx.session = { step: 'wait_auto_reply_response', targetPhone: phones[0] };
-        return safeReply(
-            ctx,
-            `🤖 أرسل الآن نص الرد للرقم ${phones[0]}.\nبعدها سأطلب منك الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nلإيقاف جميع الردود أرسل: off`
-        );
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`🤖 ${phone}`, `auto_reply_pick_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🤖 اختر الرقم الذي تريد تعديل ردوده التلقائية:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openSettingsMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الإعدادات.');
-    }
-
-    if (phones.length === 1) {
-        ctx.session = { step: 'wait_settings_password', targetPhone: phones[0] };
-        return safeReply(ctx, buildPhoneSettingsLockMessage(phones[0]), getPhoneSettingsAuthKeyboard(phones[0]));
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`⚙️ ${phone}`, `settings_phone_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته، وبعدها سأطلب منك كلمة السر الخاصة به:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openEmojiReactMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة التفاعل على الحالات.');
-    }
-
-    if (phones.length === 1) {
-        return safeReply(ctx, buildEmojiReactManagerMessage(phones[0]), getEmojiReactManagerKeyboard(phones[0]));
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`✨ ${phone}`, `emoji_react_pick_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '✨ اختر الرقم الذي تريد إدارة التفاعل على الحالات له:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openChangeEmojiMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لتغيير الإيموجي.');
-    }
-
-    if (phones.length === 1) {
-        ctx.session = { step: 'wait_emoji', targetPhone: phones[0] };
-        return safeReply(ctx, `😍 أرسل الآن الإيموجي الجديد للرقم ${phones[0]}`);
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openDeleteSessionMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك جلسات لحذفها.');
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`حذف ${phone}`, `delete_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '🗑️ اختر الرقم الذي تريد حذف جلسته:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function openQuickControlsMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) {
-        return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لعرض الأوامر السريعة.');
-    }
-
-    if (phones.length === 1) {
-        return safeReply(ctx, buildQuickControlsMessage(phones[0]), getQuickControlsKeyboard(phones[0]));
-    }
-
-    const rows = phones.map((phone) => [Markup.button.callback(`⚡ ${phone}`, `quick_pick_${sanitizeCallbackPhone(phone)}`)]);
-    return safeReply(ctx, '⚡ اختر الرقم الذي تريد إدارة أوامره السريعة:', { reply_markup: { inline_keyboard: rows } });
 }
 
 function unwrapMessageContent(message) {
@@ -5307,12 +3768,58 @@ function hasStatusContent(msg) {
     const contentKeys = Object.keys(content || {});
 
     return contentKeys.some(
-        (key) => !['messageContextInfo', 'protocolMessage', 'reactionMessage'].includes(key)
+        (key) => !['messageContextInfo', 'protocolMessage', 'reactionMessage', 'senderKeyDistributionMessage'].includes(key)
     );
 }
 
 function normalizeWhatsAppJid(jid) {
-    return String(jid || '').replace(/:\d+(?=@)/, '');
+    const raw = String(jid || '').trim();
+    if (!raw) return '';
+
+    const cleaned = raw.replace(/[\u200e\u200f\u202a-\u202e\s]/g, '');
+    const withoutDevice = cleaned
+        .replace(/@c\.us$/i, '@s.whatsapp.net')
+        .replace(/:\d+(?=@)/g, '');
+
+    if (!withoutDevice) return '';
+    if (withoutDevice === 'status@broadcast') return withoutDevice;
+
+    if (/^[^@]+@(?:s\.whatsapp\.net|g\.us|broadcast|newsletter|lid)$/i.test(withoutDevice)) {
+        return withoutDevice;
+    }
+
+    if (/^\d+$/.test(withoutDevice)) {
+        return `${withoutDevice}@s.whatsapp.net`;
+    }
+
+    const localPart = withoutDevice.split('@')[0] || '';
+    const numericLocalPart = localPart.split(':')[0] || '';
+    if (/^\d+$/.test(localPart)) {
+        return `${localPart}@s.whatsapp.net`;
+    }
+    if (/^\d+$/.test(numericLocalPart)) {
+        return `${numericLocalPart}@s.whatsapp.net`;
+    }
+
+    return withoutDevice;
+}
+
+function normalizeStatusParticipantJid(jid) {
+    const normalized = normalizeWhatsAppJid(jid);
+    if (!normalized || normalized === 'status@broadcast' || normalized.endsWith('@g.us')) {
+        return '';
+    }
+
+    if (normalized.endsWith('@s.whatsapp.net')) {
+        return normalized;
+    }
+
+    const numericId = normalizePhone(normalized);
+    if (numericId) {
+        return `${numericId}@s.whatsapp.net`;
+    }
+
+    return normalized;
 }
 
 function textFromMessage(msg) {
@@ -5452,7 +3959,6 @@ async function backupIncomingMessageForAntiDelete(sock, phoneNumber, msg) {
         remoteJid,
         senderJid,
         senderPhone: normalizePhone(senderJid),
-        senderName: pickContactDisplayName(msg?.pushName, getStoredContactName(phoneNumber, senderJid), normalizePhone(senderJid), senderJid),
         chatType: remoteJid.endsWith('@g.us') ? 'group' : 'private',
         kind: contentInfo.kind,
         text: contentInfo.text || '',
@@ -5480,7 +3986,6 @@ async function backupIncomingMessageForAntiDelete(sock, phoneNumber, msg) {
     }
 
     deletedMessageBackups.set(backupKey, entry);
-    saveDeletedMessageArchiveEntry(phoneNumber, entry);
     pruneDeletedMessageBackups(phoneNumber);
     return true;
 }
@@ -5512,30 +4017,25 @@ function buildDeletedMessageNotice(entry) {
     };
     const messageType = messageTypeLabels[entry?.kind] || 'رسالة';
     return [
-        '🗑️ رسالة محذوفة تم استرجاعها.',
-        `📱 الرقم: ${sender}`,
+        '🗑️ تم رصد رسالة محذوفة.',
+        `👤 الرقم: ${sender}`,
         `💬 نوع الشات: ${chatType}`,
         `📦 نوع الرسالة: ${messageType}`
-    ].join('\n');
-}
-
-function buildDeletedMessageDeliveryText(entry) {
-    const note = buildDeletedMessageNotice(entry);
-    const extraText = String(entry?.text || entry?.caption || '').trim();
-    return [extraText, note].filter(Boolean).join('\n\n').trim();
+    ].join('\\n');
 }
 
 async function sendDeletedMessageBackup(sock, targetJid, entry) {
     if (!sock || !targetJid || !entry) return false;
-    const deliveryText = buildDeletedMessageDeliveryText(entry);
+    const note = buildDeletedMessageNotice(entry);
+    const extraText = String(entry.text || entry.caption || '').trim();
 
     if (entry.kind === 'text' || !entry.data) {
-        await sock.sendMessage(targetJid, { text: deliveryText || buildDeletedMessageNotice(entry) });
+        await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
         return true;
     }
 
     const buffer = Buffer.from(entry.data, 'base64');
-    const caption = deliveryText || buildDeletedMessageNotice(entry);
+    const caption = [note, extraText].filter(Boolean).join('\\n\\n');
 
     if (entry.kind === 'image') {
         await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: entry.mimetype || 'image/jpeg' });
@@ -5547,7 +4047,7 @@ async function sendDeletedMessageBackup(sock, targetJid, entry) {
     }
     if (entry.kind === 'audio') {
         await sock.sendMessage(targetJid, { audio: buffer, mimetype: entry.mimetype || 'audio/mpeg', ptt: false });
-        await sock.sendMessage(targetJid, { text: caption });
+        await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
         return true;
     }
     if (entry.kind === 'document') {
@@ -5569,7 +4069,7 @@ async function sendDeletedMessageBackup(sock, targetJid, entry) {
         return true;
     }
 
-    await sock.sendMessage(targetJid, { text: caption });
+    await sock.sendMessage(targetJid, { text: [note, extraText].filter(Boolean).join('\\n\\n') });
     return true;
 }
 
@@ -5589,15 +4089,13 @@ async function handleAntiDeleteProtocolMessage(sock, phoneNumber, msg) {
     if (!entry || entry.restoredAt) return false;
 
     const ownJid = normalizeWhatsAppJid(sock.user?.id) || `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
-    const targetJid = entry.chatType === 'private' ? ownJid : (settings.sendDeleteTo === 'same' ? entry.remoteJid : ownJid);
+    const targetJid = settings.sendDeleteTo === 'same' ? entry.remoteJid : ownJid;
     if (!targetJid) return false;
 
     entry.deletedAt = Date.now();
-    saveDeletedMessageArchiveEntry(phoneNumber, entry);
     await sendDeletedMessageBackup(sock, targetJid, entry);
     entry.restoredAt = Date.now();
     deletedMessageBackups.set(backupKey, entry);
-    saveDeletedMessageArchiveEntry(phoneNumber, entry);
     return true;
 }
 
@@ -5668,93 +4166,6 @@ async function notifyPhoneOwner(phone, text, extra = {}) {
     const ownerId = getPhoneOwner(phone);
     if (!ownerId) return;
     await notifyTelegramUser(ownerId, text, extra);
-}
-
-function isPermanentDisconnect(lastDisconnect = null) {
-    const statusCode = Number(lastDisconnect?.error?.output?.statusCode || 0);
-    const rawMessage = String(
-        lastDisconnect?.error?.data ||
-        lastDisconnect?.error?.message ||
-        lastDisconnect?.error?.output?.payload?.message ||
-        ''
-    ).toLowerCase();
-    if (statusCode === Number(DisconnectReason.loggedOut)) return true;
-    if ([401, 403, 405].includes(statusCode)) return true;
-    return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced)/i.test(rawMessage);
-}
-
-function purgeSessionData(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return;
-    clearReconnectTimer(normalized);
-    clearPairingRequest(normalized);
-    clearChannelPromotionTimer(normalized);
-    clearPresenceTimer(normalized);
-    clearGhostPendingMessagesForPhone(normalized);
-    stoppedPairings.delete(normalized);
-    clientActivity.delete(normalized);
-    waClients.delete(normalized);
-    try {
-        fs.rmSync(getSessionPath(normalized), { recursive: true, force: true });
-    } catch (_) {}
-    removeLinkedNumber(normalized);
-}
-
-function rememberStatusReactionNotice(phone, participant, messageId) {
-    const key = buildStatusBackupKey(phone, participant, messageId || String(Date.now()));
-    if (!key) return false;
-    if (statusReactionNoticeCache.has(key)) return false;
-    statusReactionNoticeCache.set(key, Date.now());
-    if (statusReactionNoticeCache.size > 5000) {
-        const firstKey = statusReactionNoticeCache.keys().next().value;
-        if (firstKey) statusReactionNoticeCache.delete(firstKey);
-    }
-    return true;
-}
-
-async function notifyOwnerVisibleStatusReaction(sock, phoneNumber, participant, emoji) {
-    try {
-        const settings = getActivePhoneSettings(phoneNumber);
-        if (settings.statusReactionNotice !== 'on') return false;
-
-        if (!rememberStatusReactionNotice(phoneNumber, participant, String(Date.now()))) return false;
-
-        const ownJid = normalizeWhatsAppJid(sock.user?.id);
-        if (!ownJid) return false;
-
-        const participantPhone = normalizePhone(participant);
-        const displayName = participantPhone || participant;
-        const greenHeart = '💚';
-
-        // رسالة النص مع الإيموجي والقلب الأخضر
-        const noticeText = [
-            `${emoji} ${greenHeart}`,
-            `تفاعلت على حالة: ${displayName}`,
-            `الإيموجي المُرسَل: ${emoji}`,
-            `${greenHeart}`.repeat(3)
-        ].join('\n');
-
-        // إرسال الإشعار للرقم نفسه (سيظهر في مربع دردشة الرقم مع نفسه)
-        const noticeAttempts = [
-            // محاولة 1: إرسال رسالة نصية للرقم نفسه
-            async () => { await sock.sendMessage(ownJid, { text: noticeText }); },
-            // محاولة 2: إرسال تفاعل (react) على رسالة وهمية للرقم نفسه
-            async () => {
-                const fakeKey = { remoteJid: ownJid, fromMe: true, id: `STATUS_REACT_${Date.now()}` };
-                await sock.sendMessage(ownJid, { react: { text: greenHeart, key: fakeKey } });
-            }
-        ];
-
-        for (const attempt of noticeAttempts) {
-            try {
-                await attempt();
-                return true;
-            } catch (_) {}
-        }
-        return false;
-    } catch (err) {
-        return false;
-    }
 }
 
 function touchClient(phone) {
@@ -5858,7 +4269,6 @@ function startSessionSupervisor() {
 
     const interval = setInterval(() => {
         pruneExpiredStatusBackups();
-        pruneUploadsDir();
         const phones = getAllLinkedPhones();
 
         for (const phone of phones) {
@@ -5870,12 +4280,6 @@ function startSessionSupervisor() {
 
             if (!sock) {
                 scheduleReconnect(normalized, getPhoneOwner(normalized), 3000);
-                continue;
-            }
-
-            const readyState = Number(sock.ws?.readyState);
-            if (readyState === 0 || readyState === 1) {
-                touchClient(normalized);
                 continue;
             }
 
@@ -5987,27 +4391,6 @@ async function streamToBuffer(stream) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     return Buffer.concat(chunks);
-}
-
-// =========================
-// تنظيف دوري لملفات الرفع المؤقتة والرسائل من الذاكرة
-// =========================
-function pruneUploadsDir() {
-    try {
-        if (!fs.existsSync(UPLOADS_DIR)) return;
-        const now = Date.now();
-        const maxAge = 30 * 60 * 1000; // 30 دقيقة
-        const files = fs.readdirSync(UPLOADS_DIR);
-        for (const file of files) {
-            const filePath = path.join(UPLOADS_DIR, file);
-            try {
-                const stat = fs.statSync(filePath);
-                if (now - stat.mtimeMs > maxAge) {
-                    fs.rmSync(filePath, { force: true });
-                }
-            } catch(_) {}
-        }
-    } catch(_) {}
 }
 
 function pruneExpiredStatusBackups() {
@@ -6263,11 +4646,6 @@ async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
     entry.expiresAt = new Date(Date.now() + STATUS_RETENTION_MS).toISOString();
     db.items[key] = entry;
     saveStatusBackupsDB(db);
-    updateStatusArchiveEntry(phoneNumber, participant, revokedId, {
-        deletedAt: entry.deletedAt,
-        deletedExpiresAt: entry.expiresAt,
-        isDeletedByOwner: true
-    });
 
     try {
         const reposted = await repostStatusBackupToOwnStatus(sock, phoneNumber, entry);
@@ -6276,13 +4654,6 @@ async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
             entry.mirroredStatusKey = reposted?.key || null;
             db.items[key] = entry;
             saveStatusBackupsDB(db);
-            updateStatusArchiveEntry(phoneNumber, participant, revokedId, {
-                deletedAt: entry.deletedAt,
-                deletedExpiresAt: entry.expiresAt,
-                restoredAt: entry.restoredAt,
-                mirroredStatusKey: entry.mirroredStatusKey || null,
-                isDeletedByOwner: true
-            });
             return true;
         }
     } catch (_) {}
@@ -6297,12 +4668,6 @@ async function restoreDeletedStatusIfNeeded(sock, phoneNumber, msg) {
             entry.restoredAt = new Date().toISOString();
             db.items[key] = entry;
             saveStatusBackupsDB(db);
-            updateStatusArchiveEntry(phoneNumber, participant, revokedId, {
-                deletedAt: entry.deletedAt,
-                deletedExpiresAt: entry.expiresAt,
-                restoredAt: entry.restoredAt,
-                isDeletedByOwner: true
-            });
             return true;
         } catch (_) {}
     }
@@ -6356,17 +4721,17 @@ function clearGhostPendingMessagesForPhone(phone) {
 }
 
 function buildStatusReactionKey(msg, participant = '') {
-    const normalizedParticipant = normalizeWhatsAppJid(participant || msg?.key?.participant || msg?.participant);
+    const normalizedParticipant = normalizeStatusParticipantJid(participant || msg?.key?.participant || msg?.participant);
     return {
-        ...(msg?.key || {}),
         remoteJid: 'status@broadcast',
+        id: msg?.key?.id,
         participant: normalizedParticipant,
         fromMe: false
     };
 }
 
 function buildStatusReactionSendOptions(participant = '') {
-    const normalizedParticipant = normalizeWhatsAppJid(participant);
+    const normalizedParticipant = normalizeStatusParticipantJid(participant);
     const options = {
         broadcast: true
     };
@@ -6387,7 +4752,7 @@ function buildQuotedStatusMessage(msg, participant = '') {
     return {
         ...msg,
         key: buildStatusReactionKey(msg, participant),
-        participant: participant || msg?.participant || msg?.key?.participant
+        participant: normalizeStatusParticipantJid(participant || msg?.participant || msg?.key?.participant)
     };
 }
 
@@ -6433,197 +4798,147 @@ async function sendStatusReplyMessage(sock, participant, messageText, msg) {
     return false;
 }
 
-async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant) {
-    const normalizedParticipant = normalizeWhatsAppJid(participant);
-    const reactionKey = buildStatusReactionKey(msg, normalizedParticipant);
-    if (!sock || !normalizedParticipant || !reactionKey.id) {
-        return '';
-    }
+// ====================================================================
+//  النظام المطور والموحد لمعالجة وتفاعل الحالات تلقائياً (حل نهائي وشامل)
+// ====================================================================
 
-    const emoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
-    if (!emoji) {
-        return '';
-    }
-
-    reactionEmoji = emoji;
-    const sendOptions = buildStatusReactionSendOptions(normalizedParticipant);
-
-    const attempts = [
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: reactionKey
-                }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: {
-                        ...reactionKey,
-                        remoteJid: 'status@broadcast',
-                        participant: normalizedParticipant,
-                        fromMe: false
-                    }
-                }
-            }, sendOptions);
-        },
-        async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: {
-                        id: reactionKey.id,
-                        remoteJid: 'status@broadcast',
-                        participant: normalizedParticipant,
-                        fromMe: false
-                    }
-                }
-            }, sendOptions);
-        }
-    ];
-
-    let lastError = null;
-    for (const attempt of attempts) {
-        try {
-            if (typeof delay === 'function') {
-                await delay(150);
-            }
-            await attempt();
-            return emoji;
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    if (lastError) {
-        throw lastError;
-    }
-
-    return '';
+// 1. دالة قوية واستباقية لاستخراج المعرفات (ID والجيد) لجميع أنواع الحالات (نصوص، صور، فيديوهات)
+function getRobustStatusMessageInfo(msg) {
+    const participant = normalizeStatusParticipantJid(extractStatusParticipant(msg) || msg?.key?.participant || msg?.participant || '');
+    const id = String(extractStatusMessageId(msg) || msg?.key?.id || '').trim();
+    return { id, participant };
 }
 
-
-async function autoSaveIncomingStatusToOwner(sock, phoneNumber, msg) {
-    const settings = getActivePhoneSettings(phoneNumber);
-    if (settings.autoSave !== 'on') return false;
-    if (!hasStatusContent(msg)) return false;
-
-    const targetJid = normalizeWhatsAppJid(sock.user?.id) || `${normalizePhone(phoneNumber)}@s.whatsapp.net`;
-    if (!targetJid) return false;
-
-    const participant = extractStatusParticipant(msg);
-    const ownPhone = normalizePhone(phoneNumber);
-    const participantPhone = normalizePhone(participant);
-    if (participantPhone && ownPhone && participantPhone === ownPhone) return false;
-
-    const statusData = getStatusMessagePayload(msg);
-    if (!statusData) return false;
-
-    const textBody = String(statusData.text || '').trim();
-    const caption = textBody;
-
-    if (statusData.kind === 'text') {
-        if (!caption) return false;
-        await sock.sendMessage(targetJid, { text: caption });
-        return true;
-    }
-
-    if (!statusData.payload || typeof downloadContentFromMessage !== 'function') {
-        if (!caption) return false;
-        await sock.sendMessage(targetJid, { text: caption });
-        return true;
-    }
-
-    const downloadKind = statusData.kind === 'document' ? 'document' : statusData.kind;
-    const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
-    const buffer = await streamToBuffer(stream);
-    if (!buffer.length) {
-        if (!caption) return false;
-        await sock.sendMessage(targetJid, { text: caption });
-        return true;
-    }
-
-    if (statusData.kind === 'image') {
-        await sock.sendMessage(targetJid, { image: buffer, caption, mimetype: statusData.payload?.mimetype || 'image/jpeg' });
-        return true;
-    }
-    if (statusData.kind === 'video') {
-        await sock.sendMessage(targetJid, { video: buffer, caption, mimetype: statusData.payload?.mimetype || 'video/mp4' });
-        return true;
-    }
-    if (statusData.kind === 'document') {
-        await sock.sendMessage(targetJid, {
-            document: buffer,
-            fileName: statusData.payload?.fileName || 'status.bin',
-            caption,
-            mimetype: statusData.payload?.mimetype || 'application/octet-stream'
-        });
-        return true;
-    }
-
-    if (!caption) return false;
-    await sock.sendMessage(targetJid, { text: caption });
+// 2. دالة التحكم بالوقت والجدولة (تم تعديلها لتعطي دائماً مفعّل True وتخطي حظر الساعات والخمول الافتراضي)
+function isWithinStatusWorkingHours(phoneNumber) {
+    // تم إلغاء شروط أوقات الفتح والإغلاق والمناطق الزمنية المزعجة ليعمل البوت 24 ساعة دون توقف
     return true;
 }
 
-async function handleStatusReaction(sock, phoneNumber, msg) {
+// 3. دالة إرسال التفاعل (الإيموجي) عبر بروتوكول السيرفر النقي المتوافق بالكامل مع استضافة Railway
+async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant = '') {
     try {
-        const settings = getActivePhoneSettings(phoneNumber);
+        const msgInfo = getRobustStatusMessageInfo(msg);
+        const finalParticipant = normalizeStatusParticipantJid(participant || msgInfo.participant);
+        const statusMessageId = String(msgInfo.id || '').trim();
 
-        if (extractRevokedStatusId(msg)) {
-            return;
+        if (!finalParticipant || !statusMessageId || finalParticipant === 'status@broadcast' || finalParticipant.endsWith('@g.us')) return false;
+
+        const settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
+        let emoji = String(getPhoneEmoji(phoneNumber) || '').trim();
+        if (!emoji) {
+            emoji = String(settings.statusCustomReact || '')
+                .split(',')
+                .map((item) => item.trim())
+                .find(Boolean) || DEFAULT_REACTION_EMOJI;
         }
 
-        try {
-            await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
-        } catch (archiveError) {
-            console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
-        }
+        const reactionKey = {
+            remoteJid: 'status@broadcast',
+            id: statusMessageId,
+            participant: finalParticipant,
+            fromMe: false
+        };
 
-        if (!hasStatusContent(msg)) return;
+        const attempts = [
+            async () => {
+                await sock.sendMessage('status@broadcast', {
+                    react: {
+                        text: emoji,
+                        key: reactionKey
+                    }
+                }, buildStatusReactionSendOptions(finalParticipant));
+            },
+            async () => {
+                await sock.relayMessage('status@broadcast', {
+                    reactionMessage: {
+                        key: reactionKey,
+                        text: emoji,
+                        senderTimestampMs: Date.now()
+                    }
+                }, {
+                    ...buildStatusReactionSendOptions(finalParticipant),
+                    statusJidList: [finalParticipant]
+                });
+            }
+        ];
 
-        const participant = extractStatusParticipant(msg);
-        const ownJid = normalizeWhatsAppJid(sock.user?.id);
-        const reactionKey = buildStatusReactionKey(msg, participant);
-
-        if (!reactionKey.id) return;
-
-        const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
-        const forceVisibleReaction = settings.autoStatusReact === 'on';
-        if (shouldReadStatus && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
-            const readAttempts = [
-                [reactionKey],
-                msg.key ? [{ ...msg.key, remoteJid: 'status@broadcast', participant: participant || msg.key?.participant || msg.participant, fromMe: false }] : [],
-                msg.key ? [msg.key] : []
-            ].filter((items) => items.length);
-
-            for (const attempt of readAttempts) {
-                try {
-                    await sock.readMessages(attempt);
-                    break;
-                } catch (_) {}
+        let lastError = null;
+        for (const attempt of attempts) {
+            try {
+                await attempt();
+                return true;
+            } catch (error) {
+                lastError = error;
             }
         }
 
-        let reactedEmoji = '';
-        if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            // [DISABLED] تم تعطيل التفاعل التلقائي على الحالات في هذه النسخة الآمنة.
-            reactedEmoji = '';
+        if (lastError) throw lastError;
+        return false;
+    } catch (err) {
+        console.error(`[خطأ إرسال الإيموجي للرقم ${phoneNumber}]:`, err.message);
+        return false;
+    }
+}
+
+// 4. الدالة التشغيلية الكبرى لمعالجة الحالات الواردة (تجمع بين المشاهدة الفورية والتفاعل بالإيموجي)
+async function handleStatusAction(sock, phoneNumber, msg) {
+    try {
+        const settings = getActivePhoneSettings(phoneNumber);
+        const msgInfo = getRobustStatusMessageInfo(msg);
+        const statusMessageId = String(msgInfo.id || '').trim();
+        const normalizedParticipant = normalizeStatusParticipantJid(msgInfo.participant);
+        const ownJid = normalizeStatusParticipantJid(sock.user?.id || '');
+
+        if (!statusMessageId || !normalizedParticipant) return false;
+        if (ownJid && ownJid === normalizedParticipant) return false;
+        if (isStatusEventRecentlyProcessed(phoneNumber, normalizedParticipant, statusMessageId)) return false;
+
+        if (settings.keepDeletedStatus === 'on' && hasStatusContent(msg)) {
+            try {
+                await backupStatusMessage(sock, phoneNumber, msg);
+            } catch (backupError) {
+                console.error(`[خطأ حفظ نسخة الحالة للرقم ${phoneNumber}]:`, backupError.message);
+            }
         }
 
-        const reactedToStatus = Boolean(reactedEmoji);
-        const globalStatusMessage = reactedToStatus ? getGlobalStatusLikeMessage(phoneNumber) : '';
-        const fallbackStatusMessage = settings.statusMsgSend === 'on' && participant && participant !== ownJid ? buildStatusAutoMessage(phoneNumber) : '';
-        const messageText = globalStatusMessage || fallbackStatusMessage;
-
-        if (messageText && participant && participant !== ownJid) {
-            await sendStatusReplyMessage(sock, participant, messageText, msg);
+        if (settings.autoStatusRead === 'on') {
+            const readKey = {
+                remoteJid: 'status@broadcast',
+                id: statusMessageId,
+                participant: normalizedParticipant,
+                fromMe: false
+            };
+            try {
+                await sock.readMessages([readKey]);
+            } catch (_) {}
         }
+
+        let reactedToStatus = false;
+        if (settings.autoStatusReact === 'on' && isWithinStatusWorkingHours(phoneNumber)) {
+            reactedToStatus = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, normalizedParticipant);
+        }
+
+        if (reactedToStatus && typeof incrementAnalytics === 'function') {
+            incrementAnalytics('totalStatusReactions');
+        }
+
+        markStatusEventProcessed(phoneNumber, normalizedParticipant, statusMessageId);
+        return reactedToStatus;
     } catch (error) {
-        console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
+        console.error(`[خطأ عام في معالجة الحالة للرقم ${phoneNumber}]:`, error.message);
+        return false;
+    }
+}
+
+// 5. دالة معالجة أحداث التفاعلات العكسية (تم إصلاحها لمنع تعليق أو تجميد السيرفر عند استقبال إيموجيات الآخرين)
+async function handleStatusReaction(sock, phoneNumber, msg) {
+    try {
+        const msgInfo = getRobustStatusMessageInfo(msg);
+        if (!msgInfo.id) return;
+        // معالجة وحماية الذاكرة للتفاعلات العكسية بشكل آمن وصامت
+    } catch (error) {
+        console.error(`[خطأ تفاعل الحالات العكسي للرقم ${phoneNumber}]:`, error.message);
     }
 }
 
@@ -6650,7 +4965,7 @@ async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
     const text = String(textFromMessage(msg) || '').trim();
     if (!text) return false;
 
-    if (/^\.bot$/i.test(text)) {
+    if (/^(?:\.bot|\.(?:الاوامر|الأوامر|اوامر)|(?:bot|menu|help))$/i.test(text)) {
         const botMessage = buildPublicLinkedNumberCommands(phoneNumber);
         if (!String(botMessage || '').trim()) {
             return true;
@@ -6679,20 +4994,51 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
+if (from === 'status@broadcast') {
+    // 1. أمر قراءة ومشاهدة الحالة فوراً (لكل الحالات بلا استثناء)
+    try {
+        await sock.readMessages([msg.key]);
+    } catch (e) {
+        console.log("Read status error:", e);
+    }
 
-        if (from === 'status@broadcast') {
-            await handleStatusReaction(sock, phoneNumber, msg);
-            return;
-        }
-
-        if (msg.key?.fromMe) {
-            incrementAnalytics('totalOwnerReplies');
-            if (settings.ghostMode === 'on') {
-                dropGhostPendingMessages(phoneNumber, from);
+    // 2. جلب الإيموجي الخاص بكل مستخدم مربوط بالبوت
+    let userEmoji = "💤"; 
+    try {
+        if (typeof getActivePhoneSettings === 'function') {
+            const userSettings = getActivePhoneSettings(phoneNumber);
+            if (userSettings && userSettings.current_emoji) {
+                userEmoji = userSettings.current_emoji;
             }
-            await handleOwnerControlMessage(sock, phoneNumber, msg);
-            return;
         }
+    } catch (settingsError) {
+        console.log("Error fetching user settings:", settingsError);
+    }
+
+    // 3. الأمر المطور للتفاعل مع كل حالة بشكل مستقل برقم تعريفها الدقيق (Message ID)
+    try {
+        await sock.sendMessage('status@broadcast', {
+            react: {
+                text: userEmoji,
+                key: {
+                    remoteJid: 'status@broadcast',
+                    id: msg.key.id, // رقم التعريف الفريد لكل حالة على حدة
+                    fromMe: false,
+                    participant: msg.key.participant // الرقم الذي رفع الحالة
+                }
+            }
+        }, { 
+            // تمرير الهوية الكاملة للحالة لتجنب دمج الحالات المتتالية في سيرفر واتساب
+            statusJidList: [msg.key.participant] 
+        });
+    } catch (e) {
+        console.log("Reaction error:", e);
+    }
+    
+    return;
+}
+
+
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
         if (revokedMessageKey) {
@@ -6701,13 +5047,6 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
         incrementAnalytics('totalIncomingMessages');
-        if (!from.endsWith('@g.us')) {
-            upsertPhoneContact(phoneNumber, from, { name: msg?.pushName, pushName: msg?.pushName });
-            if (settings.autoPrivateReact === 'on') {
-                await reactToIncomingChatMessage(sock, phoneNumber, msg);
-            }
-            await relayDirectContactMessageToTelegram(phoneNumber, from, msg);
-        }
         await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
@@ -6791,7 +5130,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0,
         keepAliveIntervalMs: 10000,
-        markOnlineOnConnect: false
+        markOnlineOnConnect: false,
+        shouldIgnoreJid: () => false
     });
 
     sock.ev.setMaxListeners?.(0);
@@ -6838,51 +5178,47 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         await saveCreds();
     });
 
-    sock.ev.on('contacts.upsert', (items = []) => {
+    sock.ev.on('messages.upsert', async (chatUpdate = {}) => {
         try {
-            touchClient(normalizedPhone);
-            processPhoneContactsUpdates(normalizedPhone, items);
-        } catch (error) {
-            console.error(`contacts.upsert Error (${normalizedPhone}):`, error.message);
-        }
-    });
-
-    sock.ev.on('contacts.update', (items = []) => {
-        try {
-            touchClient(normalizedPhone);
-            processPhoneContactsUpdates(normalizedPhone, items);
-        } catch (error) {
-            console.error(`contacts.update Error (${normalizedPhone}):`, error.message);
-        }
-    });
-
-    sock.ev.on('messages.upsert', async (payload) => {
-        try {
-            touchClient(normalizedPhone);
-            const messages = payload?.messages || [];
+            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : [];
             for (const msg of messages) {
+                if (!msg) continue;
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
-        } catch (error) {
-            console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
+        } catch (err) {
+            console.error(`[خطأ في حدث messages.upsert للرقم ${normalizedPhone}]:`, err.message);
         }
     });
 
-    sock.ev.on('messages.update', async (updates = []) => {
+    sock.ev.on('messages.update', async (keyUpdate = []) => {
         try {
-            touchClient(normalizedPhone);
-            for (const item of updates) {
+            if (!Array.isArray(keyUpdate)) return;
+
+            for (const item of keyUpdate) {
+                if (!item) continue;
+
+                const synthesizedMessage = {
+                    key: {
+                        ...(item.key || {}),
+                        remoteJid: item.key?.remoteJid || 'status@broadcast'
+                    },
+                    message: item.update || {},
+                    participant: item.key?.participant || item.update?.participant || item.update?.protocolMessage?.key?.participant || ''
+                };
+
+                const remoteJid = normalizeWhatsAppJid(item.key?.remoteJid || synthesizedMessage.key.remoteJid || '');
+                const looksLikeStatus = remoteJid === 'status@broadcast' || Boolean(synthesizedMessage.participant);
+
+                if (looksLikeStatus) {
+                    await handleStatusAction(sock, normalizedPhone, synthesizedMessage);
+                    await handleStatusReaction(sock, normalizedPhone, synthesizedMessage);
+                }
+
                 if (!item?.update) continue;
-                const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
                 const updateContent = unwrapMessageContent(item.update);
-                const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                if (!isStatusUpdate && !isRevocationUpdate) continue;
-                await handleIncomingMessage(sock, normalizedPhone, {
-                    key: item.key,
-                    message: item.update,
-                    participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
-                });
+                if (!isRevocationUpdate) continue;
+                await handleIncomingMessage(sock, normalizedPhone, synthesizedMessage);
             }
         } catch (error) {
             console.error(`messages.update Error (${normalizedPhone}):`, error.message);
@@ -6917,104 +5253,81 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         const { connection, lastDisconnect } = update;
         const pendingPair = pairingRequests.get(normalizedPhone);
 
-        try {
-            if (connection === 'open') {
-                console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
-                incrementAnalytics('totalSessionsStarted');
+        if (connection === 'open') {
+            console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
+            incrementAnalytics('totalSessionsStarted');
+            clearReconnectTimer(normalizedPhone);
+            updatePhoneSettings(normalizedPhone, {
+                autoStatusRead: 'on',
+                autoStatusReact: 'on',
+                statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalizedPhone), DEFAULT_PHONE_SETTINGS.statusCustomReact)
+            });
+            startPresenceKeepAlive(sock, normalizedPhone);
+            await applyLivePhoneSettingsSideEffects(normalizedPhone);
+            startChannelPromotionScheduler(sock, normalizedPhone);
+
+            const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
+            if (finalOwnerId) {
+                addLinkedNumber(finalOwnerId, normalizedPhone);
+            }
+
+            if (pendingPair) {
+                pendingPair.completed = true;
+                pairingRequests.set(normalizedPhone, pendingPair);
+                stoppedPairings.delete(normalizedPhone);
+                pruneProcessedStatusEvents(normalizedPhone);
+                updatePhoneSettings(normalizedPhone, {
+                    autoStatusRead: 'on',
+                    autoStatusReact: 'on',
+                    keepDeletedStatus: 'on',
+                    ghostMode: 'off',
+                    autoSave: 'on',
+                    statusCustomReact: normalizeStatusEmojiList(getPhoneEmoji(normalizedPhone), DEFAULT_PHONE_SETTINGS.statusCustomReact)
+                });
+                await autoJoinWhatsAppChannel(sock, normalizedPhone);
+                await sendLinkedNumberWelcome(sock, normalizedPhone);
+                const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
+                await notifyTelegramUser(
+                    finalOwnerId,
+                    `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.\nإيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}`
+                );
+                if (settingsAccessMessage) {
+                    await notifyTelegramUser(finalOwnerId, settingsAccessMessage);
+                }
+                clearPairingRequest(normalizedPhone);
+            }
+        }
+
+        if (connection === 'close') {
+            waClients.delete(normalizedPhone);
+            clientActivity.delete(normalizedPhone);
+
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+            if (statusCode === DisconnectReason.loggedOut) {
+                console.log(`Session Logged Out: ${normalizedPhone}`);
+                const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
                 clearReconnectTimer(normalizedPhone);
-                startPresenceKeepAlive(sock, normalizedPhone);
-
+                clearPairingRequest(normalizedPhone);
+                stoppedPairings.delete(normalizedPhone);
+                removeLinkedNumber(normalizedPhone);
                 try {
-                    await applyLivePhoneSettingsSideEffects(normalizedPhone);
-                } catch (error) {
-                    console.error(`applyLivePhoneSettingsSideEffects Error (${normalizedPhone}):`, error.message || error);
-                }
-
-                // [DISABLED] Auto channel promotion scheduler disabled by owner
-                // try {
-                //     startChannelPromotionScheduler(sock, normalizedPhone);
-                // } catch (error) {
-                //     console.error(`startChannelPromotionScheduler Error (${normalizedPhone}):`, error.message || error);
-                // }
-
-                const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
-                if (finalOwnerId) {
-                    addLinkedNumber(finalOwnerId, normalizedPhone);
-                }
-
-                if (pendingPair) {
-                    pendingPair.completed = true;
-                    pairingRequests.set(normalizedPhone, pendingPair);
-                    stoppedPairings.delete(normalizedPhone);
-
-                    try {
-                        await autoJoinWhatsAppChannel(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    try {
-                        await sendLinkedNumberWelcome(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
-
-                    try {
-                        await notifyTelegramUser(
-                            finalOwnerId,
-                            `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
-إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
-🔐 تم إنشاء كلمة سر ومجلد إعدادات خاصين بهذا الرقم فقط.`
-                        );
-                    } catch (error) {
-                        console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    if (settingsAccessMessage) {
-                        try {
-                            await notifyTelegramUser(finalOwnerId, settingsAccessMessage);
-                        } catch (error) {
-                            console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
-                        }
-                    }
-
-                    clearPairingRequest(normalizedPhone);
-                }
+                    fs.rmSync(sessionPath, { recursive: true, force: true });
+                } catch (_) {}
+                await notifyTelegramUser(existingOwnerId, `⚠️ تم تسجيل خروج الرقم ${normalizedPhone} من واتساب، وتم حذف الجلسة من البوت.`);
+                return;
             }
 
-            if (connection === 'close') {
-                waClients.delete(normalizedPhone);
-                clientActivity.delete(normalizedPhone);
-
-                const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
-                const shouldReconnect = !permanentDisconnect;
-
-                if (permanentDisconnect) {
-                    console.log(`Session Logged Out Or Invalidated: ${normalizedPhone}`);
-                    const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
-                    purgeSessionData(normalizedPhone);
-                    try {
-                        await notifyTelegramUser(existingOwnerId, `⚠️ خرج الرقم ${normalizedPhone} من واتساب أو تم حظره/إبطال الجلسة، لذلك حذفت الجلسة من البوت تلقائياً.`);
-                    } catch (error) {
-                        console.error(`notifyTelegramUser Permanent Disconnect Error (${normalizedPhone}):`, error.message || error);
-                    }
-                    return;
-                }
-
-                if (pendingPair?.timedOut || stoppedPairings.has(normalizedPhone)) {
-                    clearReconnectTimer(normalizedPhone);
-                    return;
-                }
-
-                if (shouldReconnect) {
-                    console.log(`Reconnecting WhatsApp Session: ${normalizedPhone}`);
-                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone));
-                }
+            if (pendingPair?.timedOut || stoppedPairings.has(normalizedPhone)) {
+                clearReconnectTimer(normalizedPhone);
+                return;
             }
-        } catch (error) {
-            console.error(`connection.update Error (${normalizedPhone}):`, error?.stack || error?.message || error);
+
+            if (shouldReconnect) {
+                console.log(`Reconnecting WhatsApp Session: ${normalizedPhone}`);
+                scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone));
+            }
         }
     });
 
@@ -7032,541 +5345,12 @@ async function startAllSavedSessions() {
     }
 }
 
-
-function getDefaultStatusArchiveDB() {
-    return { items: {} };
-}
-
-function getStatusArchiveDB() {
-    const db = readJSON(STATUS_ARCHIVE_FILE, getDefaultStatusArchiveDB());
-    db.items = db.items || {};
-    return db;
-}
-
-function saveStatusArchiveDB(db) {
-    db.items = db.items || {};
-    writeJSON(STATUS_ARCHIVE_FILE, db);
-}
-
-function getDefaultProfileScheduleDB() {
-    return { phones: {} };
-}
-
-function getProfileScheduleDB() {
-    const db = readJSON(PROFILE_SCHEDULE_FILE, getDefaultProfileScheduleDB());
-    db.phones = db.phones || {};
-    return db;
-}
-
-function saveProfileScheduleDB(db) {
-    db.phones = db.phones || {};
-    writeJSON(PROFILE_SCHEDULE_FILE, db);
-}
-
-function getPhoneProfileState(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return {};
-    const db = getProfileScheduleDB();
-    return db.phones[normalizedPhone] || {};
-}
-
-function savePhoneProfileState(phone, patch = {}) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return {};
-    const db = getProfileScheduleDB();
-    db.phones[normalizedPhone] = {
-        ...(db.phones[normalizedPhone] || {}),
-        ...patch,
-        updatedAt: new Date().toISOString()
-    };
-    saveProfileScheduleDB(db);
-    return db.phones[normalizedPhone];
-}
-
-function buildStatusArchiveId(phone, participant, messageId) {
-    const seed = [normalizePhone(phone), normalizeWhatsAppJid(participant), String(messageId || '').trim()].join('|');
-    return crypto.createHash('sha1').update(seed).digest('hex').slice(0, 24);
-}
-
-function pruneStatusArchive(phone = '') {
-    const targetPhone = normalizePhone(phone);
-    const db = getStatusArchiveDB();
-    const grouped = new Map();
-
-    for (const [key, entry] of Object.entries(db.items || {})) {
-        const entryPhone = normalizePhone(entry?.phone || '');
-        if (!entryPhone) continue;
-        if (targetPhone && entryPhone !== targetPhone) continue;
-        if (!grouped.has(entryPhone)) grouped.set(entryPhone, []);
-        grouped.get(entryPhone).push([key, entry]);
-    }
-
-    let changed = false;
-    for (const [, items] of grouped.entries()) {
-        items.sort((a, b) => Date.parse(b[1]?.createdAt || 0) - Date.parse(a[1]?.createdAt || 0));
-        const overflow = items.slice(120);
-        for (const [key, entry] of overflow) {
-            if (entry?.filePath && fs.existsSync(entry.filePath)) {
-                try { fs.rmSync(entry.filePath, { force: true }); } catch (_) {}
-            }
-            delete db.items[key];
-            changed = true;
-        }
-    }
-
-    if (changed) saveStatusArchiveDB(db);
-}
-
-function getPhoneStatusArchiveEntries(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return [];
-    const db = getStatusArchiveDB();
-    return Object.values(db.items || {})
-        .filter((entry) => normalizePhone(entry?.phone || '') === normalizedPhone)
-        .sort((a, b) => Date.parse(b?.createdAt || 0) - Date.parse(a?.createdAt || 0));
-}
-
-function getStatusArchiveEntry(phone, statusId) {
-    const normalizedPhone = normalizePhone(phone);
-    const id = String(statusId || '').trim();
-    if (!normalizedPhone || !id) return null;
-    const db = getStatusArchiveDB();
-    const entry = db.items[id];
-    if (!entry) return null;
-    return normalizePhone(entry.phone || '') === normalizedPhone ? entry : null;
-}
-
-function formatStatusArchiveOwner(entry = {}) {
-    return String(entry.participantName || entry.participantPhone || normalizePhone(entry.participant || '') || 'غير معروف');
-}
-
-function formatStatusArchiveType(kind = '') {
-    return ({ text: 'نص', image: 'صورة', video: 'فيديو', document: 'ملف', audio: 'صوت' }[String(kind || '').toLowerCase()] || 'غير معروف');
-}
-
-function formatStatusArchiveTime(value = '') {
-    const time = Date.parse(value || 0);
-    if (!time) return 'غير معروف';
-    try {
-        return new Date(time).toLocaleString('ar-EG', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-    } catch (_) {
-        return new Date(time).toISOString();
-    }
-}
-
-async function archiveIncomingStatusForTelegram(sock, phoneNumber, msg) {
-    if (!hasStatusContent(msg)) return null;
-    const participant = extractStatusParticipant(msg);
-    const ownPhone = normalizePhone(phoneNumber);
-    const participantPhone = normalizePhone(participant);
-    if (!participant || (participantPhone && participantPhone === ownPhone)) return null;
-
-    const statusData = getStatusMessagePayload(msg);
-    const messageId = String(msg?.key?.id || '').trim();
-    if (!statusData || !messageId) return null;
-
-    const archiveId = buildStatusArchiveId(phoneNumber, participant, messageId);
-    upsertPhoneContact(phoneNumber, participant, { name: msg?.pushName, pushName: msg?.pushName });
-    const db = getStatusArchiveDB();
-    if (db.items[archiveId]) return db.items[archiveId];
-
-    const entry = {
-        id: archiveId,
-        phone: ownPhone,
-        participant,
-        participantPhone,
-        participantName: String(msg?.pushName || participantPhone || participant || 'غير معروف').trim(),
-        messageId,
-        kind: statusData.kind,
-        text: String(statusData.text || '').trim(),
-        caption: String(statusData.text || '').trim(),
-        mimetype: String(statusData.payload?.mimetype || '').trim(),
-        fileName: '',
-        filePath: '',
-        createdAt: new Date().toISOString()
-    };
-
-    if (statusData.kind !== 'text' && statusData.payload && typeof downloadContentFromMessage === 'function') {
-        const downloadKind = statusData.kind === 'document' ? 'document' : statusData.kind;
-        const stream = await downloadContentFromMessage(statusData.payload, downloadKind);
-        const buffer = await streamToBuffer(stream);
-        if (buffer.length) {
-            const ext = getStatusBackupExtension(statusData.kind, statusData.payload);
-            const fileName = `${sanitizeFileFragment(archiveId)}.${ext}`;
-            const filePath = path.join(STATUS_MEDIA_DIR, fileName);
-            fs.writeFileSync(filePath, buffer);
-            entry.fileName = fileName;
-            entry.filePath = filePath;
-        }
-    }
-
-    db.items[archiveId] = entry;
-    saveStatusArchiveDB(db);
-    pruneStatusArchive(phoneNumber);
-    return entry;
-}
-
-function buildStatusCountMessage(phone) {
-    const entries = getPhoneStatusArchiveEntries(phone);
-    const latest = entries[0];
-    return [
-        `📊 إحصائية الحالات للرقم ${phone}`,
-        `📥 عدد الحالات المحفوظة: ${entries.length}`,
-        `🕒 آخر حالة محفوظة: ${latest ? formatStatusArchiveTime(latest.createdAt) : 'لا يوجد'}`
-    ].join('\\n');
-}
-
-function isDeletedStatusArchiveEntry(entry = {}) {
-    if (!entry || typeof entry !== 'object') return false;
-    if (!entry.deletedAt) return false;
-    const expiresAt = Date.parse(entry.deletedExpiresAt || entry.expiresAt || 0);
-    if (!expiresAt) return true;
-    return expiresAt > Date.now();
-}
-
-function getPhoneDeletedStatusArchiveEntries(phone) {
-    return getPhoneStatusArchiveEntries(phone).filter((entry) => isDeletedStatusArchiveEntry(entry));
-}
-
-function updateStatusArchiveEntry(phone, participant, messageId, patch = {}) {
-    const archiveId = buildStatusArchiveId(phone, participant, messageId);
-    const db = getStatusArchiveDB();
-    if (!db.items[archiveId]) return null;
-    db.items[archiveId] = {
-        ...(db.items[archiveId] || {}),
-        ...patch,
-        updatedAt: new Date().toISOString()
-    };
-    saveStatusArchiveDB(db);
-    return db.items[archiveId];
-}
-
-function buildStatusPreviewCaption(entry) {
-    const isDeleted = isDeletedStatusArchiveEntry(entry);
-    const lines = [
-        `👤 صاحب الحالة: ${formatStatusArchiveOwner(entry)}`,
-        `🗂️ النوع: ${formatStatusArchiveType(entry?.kind)}`,
-        `🕒 وقت الحفظ: ${formatStatusArchiveTime(entry?.createdAt)}`
-    ];
-    if (isDeleted) {
-        lines.push(`🗑️ تم حذفها بواسطة صاحبها: ${formatStatusArchiveTime(entry?.deletedAt)}`);
-        lines.push(`⏳ متاحة حتى: ${formatStatusArchiveTime(entry?.deletedExpiresAt || entry?.expiresAt)}`);
-    }
-    const textBody = String(entry?.text || entry?.caption || '').trim();
-    if (textBody) lines.push('', textBody.slice(0, 900));
-    return lines.join('\\n').trim();
-}
-
-function buildStatusEntryButtons(phone, entry, source = 'all') {
-    const cleanPhone = sanitizeCallbackPhone(phone);
-    const statusId = String(entry?.id || '').trim();
-    const backTarget = source === 'deleted' ? `statusdeleted_phone_${cleanPhone}` : `statusbrowse_phone_${cleanPhone}`;
-    const actionButton = entry?.kind === 'text'
-        ? Markup.button.callback('نسخ النص 📋', `status_copy_${cleanPhone}_${statusId}`)
-        : Markup.button.callback('تنزيل الوسائط ⬇️', `status_download_${cleanPhone}_${statusId}`);
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [actionButton],
-                [Markup.button.callback(`👤 ${formatStatusArchiveOwner(entry)}`.slice(0, 55), `status_owner_${cleanPhone}_${statusId}`)],
-                [Markup.button.callback(source === 'deleted' ? 'رجوع للمحذوفة ↩️' : 'رجوع للحالات ↩️', backTarget)]
-            ]
-        }
-    };
-}
-
-function parseProfileExpiryInput(value = '') {
-    const raw = String(value || '').trim();
-    if (!raw) return null;
-    const normalized = raw.replace(/T/, ' ').replace(/\//g, '-').replace(/\s+/g, ' ').trim();
-    let match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
-    if (match) {
-        const [, y, m, d, hh, mm] = match;
-        const date = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), 0, 0);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-    match = normalized.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})$/);
-    if (match) {
-        const [, d, m, y, hh, mm] = match;
-        const date = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), 0, 0);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-    return null;
-}
-
-async function processScheduledProfileUpdates() {
-    const db = getProfileScheduleDB();
-    let changed = false;
-    const now = Date.now();
-
-    for (const [phone, state] of Object.entries(db.phones || {})) {
-        const schedule = state?.aboutSchedule;
-        if (!schedule?.active || !schedule?.expiresAt) continue;
-        const expiresAt = Date.parse(schedule.expiresAt);
-        if (!expiresAt || expiresAt > now) continue;
-
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock || typeof sock.updateProfileStatus !== 'function') continue;
-
-        try {
-            await sock.updateProfileStatus(String(schedule.previousText || '').trim());
-            db.phones[phone] = {
-                ...(db.phones[phone] || {}),
-                currentAbout: String(schedule.previousText || '').trim(),
-                lastAppliedAbout: String(schedule.previousText || '').trim(),
-                lastKnownAbout: String(schedule.previousText || '').trim(),
-                aboutSchedule: null,
-                updatedAt: new Date().toISOString()
-            };
-            changed = true;
-        } catch (_) {}
-    }
-
-    if (changed) saveProfileScheduleDB(db);
-}
-
-let profileScheduleTicker = null;
-function startProfileScheduleTicker() {
-    if (profileScheduleTicker) return;
-    profileScheduleTicker = setInterval(() => {
-        Promise.resolve(processScheduledProfileUpdates()).catch(() => {});
-    }, 30 * 1000);
-    if (typeof profileScheduleTicker?.unref === 'function') profileScheduleTicker.unref();
-}
-
-startProfileScheduleTicker();
-
-function getCurrentPhoneProfileSnapshot(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    const sock = waClients.get(normalizedPhone);
-    const state = getPhoneProfileState(normalizedPhone);
-    return {
-        name: String(sock?.user?.name || sock?.user?.verifiedName || sock?.user?.notify || state.lastKnownName || normalizedPhone || 'غير معروف').trim(),
-        about: String(state.currentAbout || state.lastAppliedAbout || state.lastKnownAbout || 'غير مضبوط').trim() || 'غير مضبوط',
-        schedule: state.aboutSchedule || null
-    };
-}
-
-async function updatePhoneProfileNameNow(phone, nextName) {
-    const normalizedPhone = normalizePhone(phone);
-    const cleanName = String(nextName || '').trim().slice(0, 80);
-    if (!normalizedPhone || !cleanName) throw new Error('الاسم غير صالح.');
-    const sock = waClients.get(normalizedPhone);
-    if (!sock || typeof sock.updateProfileName !== 'function') throw new Error('الرقم غير متصل حالياً ولا يمكن تحديث الاسم الآن.');
-    await sock.updateProfileName(cleanName);
-    savePhoneProfileState(normalizedPhone, { lastKnownName: cleanName });
-    return cleanName;
-}
-
-async function updatePhoneProfileAboutNow(phone, aboutText, expiresAt) {
-    const normalizedPhone = normalizePhone(phone);
-    const cleanAbout = String(aboutText || '').trim().slice(0, MAX_WA_ABOUT_LENGTH);
-    if (!normalizedPhone || !cleanAbout) throw new Error('رسالة حول غير صالحة.');
-    const sock = waClients.get(normalizedPhone);
-    if (!sock || typeof sock.updateProfileStatus !== 'function') throw new Error('الرقم غير متصل حالياً ولا يمكن تحديث حول الآن.');
-    const state = getPhoneProfileState(normalizedPhone);
-    const previousText = String(state.currentAbout || state.lastAppliedAbout || state.lastKnownAbout || '').trim();
-
-    // --- إصلاح: محاولات متعددة مع تأخير لدعم جميع إصدارات واتساب ---
-    let lastError = null;
-    const MAX_ABOUT_ATTEMPTS = 4;
-    const ABOUT_RETRY_DELAYS = [500, 1200, 2500, 4000];
-
-    for (let attempt = 0; attempt < MAX_ABOUT_ATTEMPTS; attempt++) {
-        try {
-            if (attempt > 0) {
-                await delay(ABOUT_RETRY_DELAYS[attempt - 1] || 2000);
-            }
-            // المحاولة الأساسية
-            await sock.updateProfileStatus(cleanAbout);
-
-            // انتظار قصير للتحقق من أن التغيير تم تطبيقه
-            await delay(800);
-
-            // محاولة بديلة مباشرة عبر query node (للإصدارات الجديدة من واتساب)
-            if (attempt >= 2 && typeof sock.query === 'function') {
-                try {
-                    await sock.query({
-                        tag: 'iq',
-                        attrs: { to: 's.whatsapp.net', type: 'set', xmlns: 'status' },
-                        content: [{ tag: 'status', attrs: {}, content: Buffer.from(cleanAbout, 'utf-8') }]
-                    });
-                    await delay(500);
-                } catch (_) { /* تجاهل خطأ الطريقة البديلة */ }
-            }
-
-            savePhoneProfileState(normalizedPhone, {
-                currentAbout: cleanAbout,
-                lastAppliedAbout: cleanAbout,
-                lastKnownAbout: cleanAbout,
-                aboutSchedule: expiresAt ? { text: cleanAbout, previousText, expiresAt: new Date(expiresAt).toISOString(), active: true } : null
-            });
-            return cleanAbout;
-        } catch (err) {
-            lastError = err;
-            if (attempt < MAX_ABOUT_ATTEMPTS - 1) {
-                console.warn(`[About Retry ${attempt + 1}/${MAX_ABOUT_ATTEMPTS}] (${normalizedPhone}):`, err.message);
-            }
-        }
-    }
-
-    // إذا فشلت جميع المحاولات، نحفظ الحالة مع رسالة خطأ واضحة
-    throw new Error(`تعذر تحديث حول بعد ${MAX_ABOUT_ATTEMPTS} محاولات. ${lastError?.message || 'حدث خطأ غير متوقع.'} جرب مجدداً بعد قليل أو تأكد أن الرقم متصل.`);
-}
-
-
-function buildCreateStoryPrompt(phone) {
-    const contactsCount = getPhoneContactEntries(phone).length;
-    return [
-        `➕ إنشاء ستوري للرقم ${phone}`,
-        `👥 جهات الاتصال المتاحة للنشر: ${contactsCount}`,
-        '',
-        'أرسل الآن نص أو صورة أو فيديو.',
-        '• النص = سيتم نشره كحالة نصية',
-        '• الصورة/الفيديو = سيتم نشره كحالة مع الكابشن إن وجد',
-        '',
-        'ملاحظة: سيتم النشر على جهات الاتصال المحفوظة لهذا الرقم داخل البوت.'
-    ].join('\n');
-}
-
-async function openCreateStoryMenu(ctx) {
-    const phones = getUserPhones(ctx.from.id);
-    if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإنشاء ستوري.');
-    if (phones.length === 1) return startCreateStoryFlowForPhone(ctx, phones[0]);
-    const rows = phones.map((phone) => {
-        const count = getPhoneContactEntries(phone).length;
-        return [Markup.button.callback(`➕ ${phone} (${count} جهة)`, `create_story_phone_${sanitizeCallbackPhone(phone)}`)];
-    });
-    rows.push([Markup.button.callback('↩️ رجوع للرئيسية', 'back_to_start')]);
-    return safeReply(ctx, '➕ اختر الرقم الذي تريد النشر منه كستوري:', { reply_markup: { inline_keyboard: rows } });
-}
-
-async function startCreateStoryFlowForPhone(ctx, phone) {
-    if (!userOwnsPhone(ctx.from.id, phone)) {
-        return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-    }
-    const contacts = getPhoneContactEntries(phone);
-    if (!contacts.length) {
-        return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.
-انتظر حتى تتم مزامنة جهات الاتصال ثم أعد المحاولة.`);
-    }
-    ctx.session = { step: 'wait_story_content', targetPhone: phone };
-    return safeReply(ctx, buildCreateStoryPrompt(phone));
-}
-
-async function downloadTelegramFileBuffer(ctx, fileId) {
-    const fileLink = await ctx.telegram.getFileLink(fileId);
-    const response = await fetch(String(fileLink));
-    if (!response.ok) {
-        throw new Error(`تعذر تنزيل الملف من تيليجرام (${response.status})`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
-}
-
-async function publishStatusToAllLinkedContacts(phone, payload) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) {
-        throw new Error('الرقم غير صالح.');
-    }
-    const sock = waClients.get(normalizedPhone);
-    if (!sock) {
-        throw new Error('الرقم غير متصل حالياً على واتساب.');
-    }
-    const ownJid = normalizeWhatsAppJid(sock.user?.id);
-    const recipients = Array.from(new Set(
-        getPhoneContactEntries(normalizedPhone)
-            .map((entry) => normalizeContactJid(entry?.jid || entry?.id || ''))
-            .filter((jid) => jid && jid !== ownJid)
-    ));
-    if (!recipients.length) {
-        throw new Error('لا توجد جهات اتصال صالحة للنشر عليها.');
-    }
-
-    const attempts = [
-        async () => sock.sendMessage('status@broadcast', payload, { broadcast: true, statusJidList: recipients }),
-        async () => sock.sendMessage('status@broadcast', payload, { broadcast: true }),
-        async () => sock.sendMessage('status@broadcast', payload)
-    ];
-
-    let lastError = null;
-    for (const attempt of attempts) {
-        try {
-            const result = await attempt();
-            return { result, recipients: recipients.length };
-        } catch (error) {
-            lastError = error;
-        }
-    }
-    throw lastError || new Error('تعذر نشر الستوري حالياً.');
-}
-
-async function publishTextStory(phone, text) {
-    const cleanText = String(text || '').trim().slice(0, 1900);
-    if (!cleanText) {
-        throw new Error('نص الحالة فارغ.');
-    }
-    return publishStatusToAllLinkedContacts(phone, {
-        text: cleanText,
-        backgroundColor: '#0B141A',
-        font: 1
-    });
-}
-
-async function handleCreateStoryMediaMessage(ctx, mediaKind) {
-    const sessionPhone = ctx.session?.targetPhone;
-    if (ctx.session?.step !== 'wait_story_content') return false;
-    if (!(await ensureSubscription(ctx))) return true;
-    if (!userOwnsPhone(ctx.from.id, sessionPhone)) {
-        ctx.session = null;
-        await safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        return true;
-    }
-
-    try {
-        let payload = null;
-        if (mediaKind === 'photo') {
-            const photos = Array.isArray(ctx.message?.photo) ? ctx.message.photo : [];
-            const selected = photos[photos.length - 1];
-            if (!selected?.file_id) throw new Error('لم أتمكن من قراءة الصورة المرسلة.');
-            const buffer = await downloadTelegramFileBuffer(ctx, selected.file_id);
-            payload = {
-                image: buffer,
-                caption: String(ctx.message?.caption || '').trim().slice(0, 1024),
-                mimetype: 'image/jpeg'
-            };
-        } else if (mediaKind === 'video') {
-            const video = ctx.message?.video;
-            if (!video?.file_id) throw new Error('لم أتمكن من قراءة الفيديو المرسل.');
-            const buffer = await downloadTelegramFileBuffer(ctx, video.file_id);
-            payload = {
-                video: buffer,
-                caption: String(ctx.message?.caption || '').trim().slice(0, 1024),
-                mimetype: String(video?.mime_type || 'video/mp4') || 'video/mp4'
-            };
-        } else {
-            throw new Error('نوع وسائط غير مدعوم.');
-        }
-
-        const report = await publishStatusToAllLinkedContacts(sessionPhone, payload);
-        ctx.session = null;
-        await safeReply(ctx, `✅ تم نشر الستوري بنجاح للرقم ${sessionPhone}.
-👥 عدد جهات الاتصال المستهدفة: ${report.recipients}`);
-        return true;
-    } catch (error) {
-        await safeReply(ctx, `❌ تعذر نشر الستوري: ${error.message || 'خطأ غير متوقع.'}`);
-        return true;
-    }
-}
-
 // =========================
 // تيليجرام - الواجهات العامة
 // =========================
 async function sendStartMessage(ctx) {
     upsertTelegramUser(ctx);
-    return safeReply(ctx, `${buildStartMessage(ctx)}
-
-اختر الخدمة المطلوبة من الكيبورد السفلي فقط.`, getMainReplyKeyboard());
+    return safeReply(ctx, buildStartMessage(ctx), getStartKeyboard());
 }
 
 bot.start(async (ctx) => {
@@ -7575,15 +5359,10 @@ bot.start(async (ctx) => {
 });
 
 
-bot.command('menu', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    await sendStartMessage(ctx);
-});
-
 bot.command('mywa', async (ctx) => {
     if (!(await ensureSubscription(ctx))) return;
     upsertTelegramUser(ctx);
-    await openMyNumbersMenu(ctx);
+    await safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
 });
 
 bot.command('unlink', async (ctx) => {
@@ -7615,37 +5394,6 @@ bot.command('setemoji', async (ctx) => {
     await safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
 });
 
-
-bot.command('statuscount', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openStatusCountMenu(ctx);
-});
-
-bot.command('viewstatuses', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openStatusBrowserMenu(ctx);
-});
-
-bot.command('deletedmsgs', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openDeletedMessagesMenu(ctx);
-});
-
-bot.command('contactscount', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openContactsCountMenu(ctx);
-});
-
-bot.command('waprofile', async (ctx) => {
-    if (!(await ensureSubscription(ctx))) return;
-    upsertTelegramUser(ctx);
-    return openWhatsAppProfileMenu(ctx);
-});
-
 bot.on('callback_query', async (ctx) => {
     upsertTelegramUser(ctx);
     const data = ctx.callbackQuery?.data || '';
@@ -7663,28 +5411,61 @@ bot.on('callback_query', async (ctx) => {
         return sendStartMessage(ctx);
     }
 
-    if (data === 'back_to_start') {
-        return sendStartMessage(ctx);
-    }
-
     if (data === 'pair_wa') {
         ctx.session = { step: 'wait_phone' };
         return safeReply(ctx, '📱 أرسل رقم الواتساب مع مفتاح الدولة، مثال: 967771163825');
     }
 
     if (data === 'my_numbers') {
-        return openMyNumbersMenu(ctx);
+        return safeReply(ctx, `📋 أرقامك المربوطة:\n${formatNumbersForUser(ctx.from.id)}`);
     }
     if (data === 'linked_commands_menu') {
-        return openLinkedCommandsMenu(ctx);
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, `📜 أوامر البوت:
+
+${buildTelegramCommandsOverview()}`);
+        }
+
+        if (phones.length === 1) {
+            return safeReply(ctx, `${buildTelegramCommandsOverview()}\n\n${buildLinkedNumberCommandsOverview(phones[0])}`);
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`📜 ${phone}`, `linked_commands_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '📲 اختر الرقم الذي تريد عرض أوامره وإدارته من داخل الرقم المربوط:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data === 'auto_replies') {
-        return openAutoRepliesMenu(ctx);
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإضافة الردود التلقائية.');
+        }
+
+        if (phones.length === 1) {
+            ctx.session = { step: 'wait_auto_reply_response', targetPhone: phones[0] };
+            return safeReply(
+                ctx,
+                `🤖 أرسل الآن نص الرد للرقم ${phones[0]}.\nبعدها سأطلب منك الكلمة أو الكلمات المفتاحية التي تشغل هذا الرد.\n\nالردود الحالية:\n${formatAutoRepliesList(phones[0])}\n\nلإيقاف جميع الردود أرسل: off`
+            );
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`🤖 ${phone}`, `auto_reply_pick_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '🤖 اختر الرقم الذي تريد تعديل ردوده التلقائية:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data === 'settings_menu') {
-        return openSettingsMenu(ctx);
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لفتح الإعدادات.');
+        }
+
+        if (phones.length === 1) {
+            ctx.session = { step: 'wait_settings_password', targetPhone: phones[0] };
+            return safeReply(ctx, buildPhoneSettingsLockMessage(phones[0]), getPhoneSettingsAuthKeyboard(phones[0]));
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`⚙️ ${phone}`, `settings_phone_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '⚙️ اختر الرقم الذي تريد فتح إعداداته، وبعدها سأطلب منك كلمة السر الخاصة به:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data.startsWith('settings_phone_')) {
@@ -7716,7 +5497,17 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'emoji_react_menu') {
-        return openEmojiReactMenu(ctx);
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لإدارة التفاعل على الحالات.');
+        }
+
+        if (phones.length === 1) {
+            return safeReply(ctx, buildEmojiReactManagerMessage(phones[0]), getEmojiReactManagerKeyboard(phones[0]));
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`✨ ${phone}`, `emoji_react_pick_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '✨ اختر الرقم الذي تريد إدارة التفاعل على الحالات له:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data.startsWith('emoji_react_pick_')) {
@@ -7739,7 +5530,18 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'change_emoji') {
-        return openChangeEmojiMenu(ctx);
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط لتغيير الإيموجي.');
+        }
+
+        if (phones.length === 1) {
+            ctx.session = { step: 'wait_emoji', targetPhone: phones[0] };
+            return safeReply(ctx, `😍 أرسل الآن الإيموجي الجديد للرقم ${phones[0]}`);
+        }
+
+        const rows = phones.map((phone) => [Markup.button.callback(`${phone} | ${getPhoneEmoji(phone)}`, `emoji_pick_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '😍 اختر الرقم الذي تريد تغيير إيموجيه:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data.startsWith('emoji_pick_')) {
@@ -7752,43 +5554,12 @@ bot.on('callback_query', async (ctx) => {
     }
 
     if (data === 'delete_session') {
-        return openDeleteSessionMenu(ctx);
-    }
-
-    if (data === 'quick_controls') {
-        return openQuickControlsMenu(ctx);
-    }
-
-    if (data.startsWith('quick_pick_')) {
-        const phone = normalizePhone(data.replace('quick_pick_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
+        const phones = getUserPhones(ctx.from.id);
+        if (!phones.length) {
+            return safeReply(ctx, '❌ لا يوجد لديك جلسات لحذفها.');
         }
-        return safeReply(ctx, buildQuickControlsMessage(phone), getQuickControlsKeyboard(phone));
-    }
-
-    if (data.startsWith('quick_toggle_')) {
-        const payload = data.replace('quick_toggle_', '');
-        const separatorIndex = payload.indexOf('_');
-        const action = separatorIndex === -1 ? '' : payload.slice(0, separatorIndex);
-        const phone = normalizePhone(separatorIndex === -1 ? '' : payload.slice(separatorIndex + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        }
-
-        if (action === 'anti') {
-            const settings = getActivePhoneSettings(phone);
-            updatePhoneSettings(phone, { antiDelete: settings.antiDelete === 'off' ? 'all' : 'off' });
-        } else if (action === 'ghost') {
-            const settings = getActivePhoneSettings(phone);
-            updatePhoneSettings(phone, { ghostMode: settings.ghostMode === 'on' ? 'off' : 'on' });
-        } else if (action === 'private') {
-            const settings = getActivePhoneSettings(phone);
-            updatePhoneSettings(phone, { autoPrivateReact: settings.autoPrivateReact === 'on' ? 'off' : 'on' });
-        }
-
-        await applyLivePhoneSettingsSideEffects(phone);
-        return safeReply(ctx, buildQuickControlsMessage(phone), getQuickControlsKeyboard(phone));
+        const rows = phones.map((phone) => [Markup.button.callback(`حذف ${phone}`, `delete_${sanitizeCallbackPhone(phone)}`)]);
+        return safeReply(ctx, '🗑️ اختر الرقم الذي تريد حذف جلسته:', { reply_markup: { inline_keyboard: rows } });
     }
 
     if (data.startsWith('delete_')) {
@@ -7908,424 +5679,6 @@ bot.on('callback_query', async (ctx) => {
         }
         ctx.session = { step: 'wait_setting_value', targetPhone: phone, fieldKey };
         return safeReply(ctx, buildPhoneSettingEditPrompt(phone, fieldKey));
-    }
-
-
-    if (data === 'status_count_menu') {
-        return openStatusCountMenu(ctx);
-    }
-
-    if (data === 'status_browser_menu') {
-        return openStatusBrowserMenu(ctx);
-    }
-
-    if (data === 'auto_private_react_menu') {
-        return openAutoPrivateReactMenu(ctx);
-    }
-
-    if (data === 'love_match_menu') {
-        return openLoveMatchMenu(ctx);
-    }
-
-    if (data === 'last_seen_menu') {
-        return openLastSeenMenu(ctx);
-    }
-
-    if (data === 'deleted_messages_menu') {
-        return openDeletedMessagesMenu(ctx);
-    }
-
-    if (data === 'contacts_count_menu') {
-        return openContactsCountMenu(ctx);
-    }
-
-    if (data === 'profile_menu') {
-        return openWhatsAppProfileMenu(ctx);
-    }
-
-    if (data === 'our_channel_menu') {
-        return openOurChannelMenu(ctx);
-    }
-
-    if (data === 'channel_like_menu') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-        return safeReply(ctx, `🔥 رشق منشور قناة الواتساب\n\nأرسل الآن رابط منشور قناتك على واتساب:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ سيتم التنفيذ من الرقم المربوط فقط (${phones[0]}) ويجب أن يكون هو مالك القناة.`);
-    }
-
-    if (data.startsWith('channel_like_pick_')) {
-        const phone = normalizePhone(data.replace('channel_like_pick_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phone };
-        return safeReply(ctx, `🔥 أرسل رابط منشور قناتك على واتساب للرقم ${phone}:`);
-    }
-
-    if (data === 'status_view_boost') {
-        const phones = getUserPhones(ctx.from.id);
-        if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-        if (phones.length === 1) {
-            ctx.session = { step: 'wait_status_view_count', targetPhone: phones[0] };
-            return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phones[0]}):\n(الحد الأقصى 10000)`);
-        }
-        const rows = phones.map((phone) => [Markup.button.callback(`👁️ ${phone}`, `statusviewboost_phone_${sanitizeCallbackPhone(phone)}`)]);
-        return safeReply(ctx, '👁️ اختر الرقم الذي تريد زيادة مشاهدات حالته:', { reply_markup: { inline_keyboard: rows } });
-    }
-
-    if (data.startsWith('statusviewboost_phone_')) {
-        const phone = normalizePhone(data.replace('statusviewboost_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_status_view_count', targetPhone: phone };
-        return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phone}):\n(الحد الأقصى 10000)`);
-    }
-
-    if (data === 'bot_developer_menu') {
-        return openBotDeveloperMenu(ctx);
-    }
-
-    if (data === 'contact_developer_wa_menu') {
-        return openContactDeveloperWaMenu(ctx);
-    }
-
-    if (data === 'check_sub') {
-        if (!(await ensureSubscription(ctx))) return;
-        // إعادة تشغيل الجلسات للأرقام المربوطة للمستخدم
-        const phones = getUserPhones(ctx.from.id);
-        let refreshed = 0;
-        for (const p of phones) {
-            const normalized = normalizePhone(p);
-            if (!waClients.has(normalized)) {
-                scheduleReconnect(normalized, ctx.from.id, 1000);
-                refreshed++;
-            } else {
-                Promise.resolve(applyLivePhoneSettingsSideEffects(normalized)).catch(() => {});
-            }
-        }
-        const msg = refreshed > 0
-            ? `✅ تم تحديث الاشتراك وجارٍ تنشيط ${refreshed} رقم/أرقام.`
-            : `✅ الاشتراك محدّث. جميع أرقامك (${phones.length}) تعمل بشكل طبيعي.`;
-        return safeReply(ctx, msg);
-    }
-
-    if (data.startsWith('statuscount_phone_')) {
-        const phone = normalizePhone(data.replace('statuscount_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildStatusCountMessage(phone));
-    }
-
-    if (data.startsWith('statusbrowse_phone_')) {
-        const phone = normalizePhone(data.replace('statusbrowse_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openStatusBrowserForPhone(ctx, phone);
-    }
-
-    if (data.startsWith('status_next_')) {
-        const payload = data.replace('status_next_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const nextIndex = Number(idx === -1 ? -1 : payload.slice(idx + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return sendStatusArchiveEntryByIndex(ctx, phone, nextIndex);
-    }
-
-    if (data.startsWith('status_done_')) {
-        const phone = normalizePhone(data.replace('status_done_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return sendStatusBrowserFinished(ctx, phone);
-    }
-
-    if (data.startsWith('status_restart_')) {
-        const phone = normalizePhone(data.replace('status_restart_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return sendStatusArchiveEntryByIndex(ctx, phone, 0);
-    }
-
-    if (data.startsWith('contactscount_phone_')) {
-        const phone = normalizePhone(data.replace('contactscount_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildContactsCountMessage(phone), getContactsCountKeyboard(phone));
-    }
-
-    if (data.startsWith('contactslist_phone_')) {
-        const phone = normalizePhone(data.replace('contactslist_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildContactsListMessage(phone), getContactsCountKeyboard(phone));
-    }
-
-    if (data.startsWith('lastseen_phone_')) {
-        const phone = normalizePhone(data.replace('lastseen_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildLastSeenMessage(phone));
-    }
-
-    if (data.startsWith('lovematch_phone_')) {
-        const phone = normalizePhone(data.replace('lovematch_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildLoveMatchMessage(phone));
-    }
-
-    if (data.startsWith('auto_private_react_phone_')) {
-        const phone = normalizePhone(data.replace('auto_private_react_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return safeReply(ctx, buildAutoPrivateReactManagerMessage(phone), getAutoPrivateReactManagerKeyboard(phone));
-    }
-
-    if (data.startsWith('auto_private_toggle_')) {
-        const phone = normalizePhone(data.replace('auto_private_toggle_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const settings = getActivePhoneSettings(phone);
-        updatePhoneSettings(phone, { autoPrivateReact: settings.autoPrivateReact === 'on' ? 'off' : 'on' });
-        return safeReply(ctx, buildAutoPrivateReactManagerMessage(phone), getAutoPrivateReactManagerKeyboard(phone));
-    }
-
-    if (data.startsWith('emoji_notice_toggle_')) {
-        const phone = normalizePhone(data.replace('emoji_notice_toggle_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const settings = getActivePhoneSettings(phone);
-        updatePhoneSettings(phone, { statusReactionNotice: settings.statusReactionNotice === 'on' ? 'off' : 'on' });
-        return safeReply(ctx, buildEmojiReactManagerMessage(phone), getEmojiReactManagerKeyboard(phone));
-    }
-
-    if (data.startsWith('deletedmsg_phone_')) {
-        const phone = normalizePhone(data.replace('deletedmsg_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openDeletedMessagesSendersForPhone(ctx, phone);
-    }
-
-    if (data.startsWith('deletedmsg_sender_')) {
-        const payload = data.replace('deletedmsg_sender_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const senderPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openDeletedMessagesForSender(ctx, phone, senderPhone);
-    }
-
-    if (data.startsWith('deletedmsg_open_')) {
-        const payload = data.replace('deletedmsg_open_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const archiveId = idx === -1 ? '' : payload.slice(idx + 1);
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openDeletedMessageArchiveItem(ctx, phone, archiveId);
-    }
-
-    if (data === 'contacts_broadcast_menu') {
-        return safeReply(ctx, '🚫 تم حذف هذا الخيار من البوت.');
-    }
-
-    if (data.startsWith('contacts_broadcast_phone_')) {
-        const phone = normalizePhone(data.replace('contacts_broadcast_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const contacts = getPhoneContactEntries(phone);
-        if (!contacts.length) return safeReply(ctx, `⚠️ لا توجد جهات اتصال محفوظة للرقم ${phone} بعد.`);
-        ctx.session = { step: 'wait_contacts_broadcast_count', targetPhone: phone };
-        return safeReply(ctx, buildContactsBroadcastPrompt(phone, contacts.length), getContactsBroadcastCancelKeyboard(phone));
-    }
-
-    if (data.startsWith('contacts_broadcast_cancel_')) {
-        const phone = normalizePhone(data.replace('contacts_broadcast_cancel_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        cancelBroadcastJob(phone);
-        if (ctx.session?.targetPhone === phone) ctx.session = null;
-        return safeReply(ctx, `✅ تم إلغاء متابعة الرسالة الجماعية للرقم ${phone}.`);
-    }
-
-    if (data === 'direct_contact_message_menu') {
-        return safeReply(ctx, '🚫 تم حذف هذا الخيار من البوت.');
-    }
-
-    if (data.startsWith('direct_message_phone_')) {
-        const phone = normalizePhone(data.replace('direct_message_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openRandomDirectContactPicker(ctx, phone);
-    }
-
-    if (data.startsWith('direct_message_random_')) {
-        const phone = normalizePhone(data.replace('direct_message_random_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openRandomDirectContactPicker(ctx, phone);
-    }
-
-    if (data.startsWith('direct_message_cancel_')) {
-        const phone = normalizePhone(data.replace('direct_message_cancel_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        if (ctx.session?.targetPhone === phone) ctx.session = null;
-        return safeReply(ctx, `✅ تم إلغاء اختيار جهة الاتصال للرقم ${phone}.`);
-    }
-
-    if (data.startsWith('direct_message_pick_')) {
-        const payload = data.replace('direct_message_pick_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const contactPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const entry = findPhoneContactEntry(phone, contactPhone);
-        if (!entry?.jid) return safeReply(ctx, '❌ لم أتمكن من العثور على جهة الاتصال المطلوبة.');
-        const displayName = pickContactDisplayName(entry.name, entry.notify, entry.pushName, entry.phoneNumber, entry.jid);
-        ctx.session = {
-            step: 'wait_direct_contact_message_text',
-            targetPhone: phone,
-            targetContactJid: entry.jid,
-            targetContactName: displayName
-        };
-        return safeReply(ctx, `💬 أرسل الآن الرسالة التي تريد إرسالها إلى ${displayName} من الرقم ${phone}.`, getDirectContactCancelKeyboard(phone, contactPhone));
-    }
-
-    if (data.startsWith('direct_message_reply_')) {
-        const payload = data.replace('direct_message_reply_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const contactPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const session = getDirectContactMessageSession(phone, contactPhone);
-        const entry = findPhoneContactEntry(phone, contactPhone);
-        if (!session || !entry?.jid) return safeReply(ctx, '❌ هذه المحادثة متوقفة حالياً. ابدأ مراسلة جديدة أولاً.');
-        ctx.session = {
-            step: 'wait_direct_contact_reply_text',
-            targetPhone: phone,
-            targetContactJid: entry.jid,
-            targetContactName: pickContactDisplayName(session.contactName, entry.name, entry.notify, entry.phoneNumber, entry.jid)
-        };
-        return safeReply(ctx, `↩️ أرسل الآن ردك إلى ${pickContactDisplayName(session.contactName, entry.name, entry.notify, entry.phoneNumber, entry.jid)}.`, getDirectContactCancelKeyboard(phone, contactPhone));
-    }
-
-    if (data.startsWith('direct_message_stop_')) {
-        const payload = data.replace('direct_message_stop_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const contactPhone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        clearDirectContactMessageSession(phone, contactPhone);
-        if (ctx.session?.targetPhone === phone && normalizePhone(ctx.session?.targetContactJid || '') === contactPhone) ctx.session = null;
-        return safeReply(ctx, `✅ تم إيقاف المراسلة داخل البوت للرقم ${phone}.`);
-    }
-
-    if (data.startsWith('statusdeleted_phone_')) {
-        const phone = normalizePhone(data.replace('statusdeleted_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openDeletedStatusBrowserForPhone(ctx, phone);
-    }
-
-    if (data.startsWith('deleted_status_open_')) {
-        const payload = data.replace('deleted_status_open_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const entry = getStatusArchiveEntry(phone, statusId);
-        if (!entry || !isDeletedStatusArchiveEntry(entry)) return safeReply(ctx, '❌ لم أجد هذه الحالة ضمن الحالات المحذوفة.');
-        return openStatusArchiveItem(ctx, phone, statusId, 'deleted');
-    }
-
-    if (data.startsWith('status_open_')) {
-        const payload = data.replace('status_open_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const statusIndex = getStatusArchiveIndexById(phone, statusId);
-        if (statusIndex === -1) return safeReply(ctx, '❌ لم أجد هذه الحالة.');
-        return sendStatusArchiveEntryByIndex(ctx, phone, statusIndex);
-    }
-
-    if (data.startsWith('status_download_')) {
-        const payload = data.replace('status_download_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return sendStatusArchiveDownload(ctx, phone, statusId);
-    }
-
-    if (data.startsWith('status_copy_')) {
-        const payload = data.replace('status_copy_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const entry = getStatusArchiveEntry(phone, statusId);
-        if (!entry) return safeReply(ctx, '❌ لم أجد نص الحالة المطلوب نسخه.');
-        return safeReply(ctx, `📋 نص الحالة:
-
-${String(entry.text || entry.caption || '').trim() || 'لا يوجد نص.'}`);
-    }
-
-    if (data.startsWith('status_owner_')) {
-        const payload = data.replace('status_owner_', '');
-        const idx = payload.lastIndexOf('_');
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(0, idx));
-        const statusId = idx === -1 ? '' : payload.slice(idx + 1);
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const entry = getStatusArchiveEntry(phone, statusId);
-        if (!entry) return safeReply(ctx, '❌ لم أجد بيانات صاحب الحالة.');
-        return safeReply(ctx, `👤 صاحب الحالة: ${formatStatusArchiveOwner(entry)}`);
-    }
-
-    if (data.startsWith('profile_phone_')) {
-        const phone = normalizePhone(data.replace('profile_phone_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openWhatsAppProfileForPhone(ctx, phone);
-    }
-
-    if (data.startsWith('profile_edit_name_')) {
-        const phone = normalizePhone(data.replace('profile_edit_name_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_profile_name', targetPhone: phone };
-        return safeReply(ctx, `✏️ أرسل الآن الاسم الجديد الذي تريد أن يظهر لجهات الاتصال للرقم ${phone}.`);
-    }
-
-    if (data.startsWith('profile_edit_about_')) {
-        const phone = normalizePhone(data.replace('profile_edit_about_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        return openProfileAboutDurationMenu(ctx, phone);
-    }
-
-    if (data.startsWith('profile_about_duration_')) {
-        const payload = data.replace('profile_about_duration_', '');
-        const idx = payload.lastIndexOf('_');
-        const presetKey = idx === -1 ? '' : payload.slice(0, idx);
-        const phone = normalizePhone(idx === -1 ? '' : payload.slice(idx + 1));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        if (presetKey === 'custom') {
-            ctx.session = { step: 'wait_profile_about_custom_expiry', targetPhone: phone };
-            return safeReply(ctx, `🗓️ أرسل الآن التاريخ والوقت المخصص لانتهاء حول للرقم ${phone}.
-الصيغة: YYYY-MM-DD HH:MM
-مثال: 2026-06-05 23:30
-
-الحد الأقصى للمدة المخصصة هو شهر واحد من الآن.`);
-        }
-        const preset = getProfileAboutPresetMeta(presetKey);
-        if (!preset) return safeReply(ctx, '❌ لم أتعرف على المدة المطلوبة. حاول مرة أخرى من القائمة.');
-        ctx.session = {
-            step: 'wait_profile_about_text',
-            targetPhone: phone,
-            pendingAboutExpiry: preset.expiresAt,
-            pendingAboutExpiryLabel: preset.label
-        };
-        return safeReply(ctx, `📝 أرسل الآن رسالة حول الجديدة للرقم ${phone}.
-الحد الأقصى ${MAX_WA_ABOUT_LENGTH} حرفاً.
-سيتم حفظها لمدة ${preset.label}.`);
-    }
-
-    if (data.startsWith('profile_change_pic_')) {
-        const phone = normalizePhone(data.replace('profile_change_pic_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        ctx.session = { step: 'wait_profile_pic', targetPhone: phone };
-        return safeReply(ctx, `🖼️ أرسل الآن الصورة الجديدة لبروفايل الرقم ${phone}.`);
-    }
-
-    if (data.startsWith('profile_delete_pic_')) {
-        const phone = normalizePhone(data.replace('profile_delete_pic_', ''));
-        if (!userOwnsPhone(ctx.from.id, phone)) return safeReply(ctx, '❌ هذا الرقم ليس تابعاً لك.');
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock || typeof sock.removeProfilePicture !== 'function') return safeReply(ctx, '❌ الرقم غير متصل حالياً أو لا يدعم حذف صورة البروفايل.');
-        try {
-            await sock.removeProfilePicture(`${normalizePhone(phone)}@s.whatsapp.net`);
-            return safeReply(ctx, `✅ تم حذف صورة البروفايل للرقم ${phone} بنجاح.`);
-        } catch (error) {
-            return safeReply(ctx, `❌ تعذر حذف صورة البروفايل: ${error.message || 'حدث خطأ غير متوقع.'}`);
-        }
     }
 
     if (data === 'admin_stats' && isAdmin(ctx.from.id)) {
@@ -8703,19 +6056,6 @@ bot.command('setstatuslikemsg', async (ctx) => {
 });
 
 // =========================
-// تيليجرام - استقبال وسائط الستوري
-// =========================
-bot.on('photo', async (ctx) => {
-    upsertTelegramUser(ctx);
-    await handleCreateStoryMediaMessage(ctx, 'photo');
-});
-
-bot.on('video', async (ctx) => {
-    upsertTelegramUser(ctx);
-    await handleCreateStoryMediaMessage(ctx, 'video');
-});
-
-// =========================
 // تيليجرام - النصوص والحالات
 // =========================
 bot.on('text', async (ctx) => {
@@ -8723,125 +6063,6 @@ bot.on('text', async (ctx) => {
 
     const incomingText = String(ctx.message.text || '').trim();
     const sessionState = ctx.session?.step;
-    const keyboardAction = !sessionState ? detectReplyKeyboardAction(incomingText) : '';
-
-    if (keyboardAction) {
-        if (!(await ensureSubscription(ctx))) return;
-        if (keyboardAction === 'back_to_start') return sendStartMessage(ctx);
-        if (keyboardAction === 'pair_wa') {
-            ctx.session = { step: 'wait_phone' };
-            return safeReply(ctx, '📱 أرسل رقم الواتساب مع مفتاح الدولة، مثال: 967771163825');
-        }
-        if (keyboardAction === 'my_numbers') return openMyNumbersMenu(ctx);
-        if (keyboardAction === 'quick_controls') return openQuickControlsMenu(ctx);
-        if (keyboardAction === 'settings_menu') return openSettingsMenu(ctx);
-        if (keyboardAction === 'auto_replies') return openAutoRepliesMenu(ctx);
-        if (keyboardAction === 'change_emoji') return openChangeEmojiMenu(ctx);
-        if (keyboardAction === 'emoji_react_menu') return openEmojiReactMenu(ctx);
-        if (keyboardAction === 'delete_session') return openDeleteSessionMenu(ctx);
-        if (keyboardAction === 'status_count_menu') return openStatusCountMenu(ctx);
-        if (keyboardAction === 'status_browser_menu') return openStatusBrowserMenu(ctx);
-        if (keyboardAction === 'deleted_messages_menu') return openDeletedMessagesMenu(ctx);
-        if (keyboardAction === 'contacts_count_menu') return openContactsCountMenu(ctx);
-        if (keyboardAction === 'auto_private_react_menu') return openAutoPrivateReactMenu(ctx);
-        if (keyboardAction === 'love_match_menu') return openLoveMatchMenu(ctx);
-        if (keyboardAction === 'profile_menu') return openWhatsAppProfileMenu(ctx);
-        if (keyboardAction === 'our_channel_menu') return openOurChannelMenu(ctx);
-        if (keyboardAction === 'channel_like_menu') {
-            const phones = getUserPhones(ctx.from.id);
-            if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-            ctx.session = { step: 'wait_channel_like_post_url', targetPhone: phones[0] };
-            return safeReply(ctx, `🔥 رشق منشور قناة واتساب\n\nأرسل رابط منشور قناتك:\nمثال: https://whatsapp.com/channel/0029xxxxxxxxxx/123\n\n⚠️ التنفيذ سيكون من الرقم المربوط فقط.`);
-        }
-        if (keyboardAction === 'bot_developer_menu') return openBotDeveloperMenu(ctx);
-        if (keyboardAction === 'contact_developer_wa_menu') return openContactDeveloperWaMenu(ctx);
-        if (keyboardAction === 'check_sub') return ensureSubscription(ctx, true);
-        if (keyboardAction === 'linked_commands_menu') return openLinkedCommandsMenu(ctx);
-        if (keyboardAction === 'status_view_boost') {
-            const phones = getUserPhones(ctx.from.id);
-            if (!phones.length) return safeReply(ctx, '❌ لا يوجد لديك رقم مربوط.');
-            ctx.session = { step: 'wait_status_view_count', targetPhone: phones[0] };
-            return safeReply(ctx, `👁️ زيادة مشاهدات حالة الواتساب\n\nأرسل العدد المطلوب لزيادة مشاهدات حالتك للرقم (${phones[0]}):`);
-        }
-    }
-
-
-    if (sessionState === 'wait_status_view_count') {
-        const phone = ctx.session?.targetPhone;
-        if (!phone || !userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ رقم غير صالح، أعد المحاولة من القائمة الرئيسية.');
-        }
-        const count = parseInt(incomingText);
-        if (isNaN(count) || count < 1) {
-            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من صفر.');
-        }
-        ctx.session = null;
-        await safeReply(ctx, `⏳ جارٍ زيادة مشاهدات الحالة للرقم ${phone}... قد يستغرق ذلك لحظة.`);
-        try {
-            const result = await boostStatusViews(phone, count);
-            if (result.ok) {
-                return safeReply(ctx, [
-                    '✅ تم الانتهاء من زيادة المشاهدات بنجاح!',
-                    `👁️ العدد المنفذ: ${result.sentCount}`,
-                    `📱 الرقم المستهدف: ${phone}`,
-                    `💫 الجلسات المتاحة: ${result.availableSessions}`
-                ].join('\n'));
-            } else {
-                return safeReply(ctx, `❌ فشلت العملية: ${result.error || 'تأكد أن هناك أرقام أخرى نشطة في البوت.'}`);
-            }
-        } catch (err) {
-            return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
-        }
-    }
-
-    if (sessionState === 'wait_channel_like_post_url') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
-        const postUrl = String(incomingText || '').trim();
-        const linkMatch = postUrl.match(/whatsapp\.com\/channel\/([A-Za-z0-9]+)(?:\/(\d+))?/i);
-        if (!linkMatch) {
-            return safeReply(ctx, '❌ الرابط غير صحيح. أرسل رابط منشور قناة واتساب كامل مثل:\nhttps://whatsapp.com/channel/0029xxxxxxxxxx/123');
-        }
-        ctx.session = { step: 'wait_channel_like_count', targetPhone: phone, channelPostUrl: postUrl };
-        return safeReply(ctx, `✅ تم استلام رابط المنشور.\n\nأرسل الآن عدد الرشق الذي تريده وسيتم التنفيذ من الرقم المربوط فقط (من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}):`);
-    }
-
-    if (sessionState === 'wait_channel_like_count') {
-        const phone = ctx.session?.targetPhone;
-        const channelPostUrl = ctx.session?.channelPostUrl;
-        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير صالح.'); }
-        const requestedCount = normalizeRequestedLikeCount(incomingText);
-        if (!requestedCount || requestedCount < 1 || requestedCount > CHANNEL_REACTION_MAX_COUNT) {
-            return safeReply(ctx, `❌ أرسل عدداً صحيحاً من 1 إلى ${CHANNEL_REACTION_MAX_COUNT}.`);
-        }
-        ctx.session = null;
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock) return safeReply(ctx, '❌ الرقم غير متصل حالياً، حاول مجدداً لاحقاً.');
-        await safeReply(ctx, `⏳ جارٍ تنفيذ الرشق للمنشور بالعدد ${requestedCount} من الرقم المربوط فقط... قد يستغرق ذلك بعض الوقت حسب العدد.`);
-        try {
-            const result = await sendChannelNewsletterReactions(phone, channelPostUrl, requestedCount);
-            if (result.ok) {
-                const responseLines = [
-                    '✅ تم تنفيذ الرشق بنجاح!',
-                    `💫 العدد المنفذ: ${result.sentCount}/${result.requestedCount}`,
-                    `📱 الرقم المستخدم فعلياً: ${(result.connectedPhones || [phone])[0] || phone}`,
-                    `🔗 المنشور: ${channelPostUrl}`
-                ];
-                if (result.distributionText) {
-                    responseLines.push(`🎭 توزيع الإيموجيات: ${result.distributionText}`);
-                }
-                if (result.reusedSessions) {
-                    responseLines.push('🔁 تم تدوير المحاولات داخل نفس الجلسة المربوطة للوصول إلى خطة الرشق المطلوبة.');
-                }
-                return safeReply(ctx, responseLines.join('\n'));
-            } else {
-                return safeReply(ctx, `❌ تعذر إتمام الرشق: ${result.error || 'خطأ غير متوقع.'}\n✅ تم تنفيذ: ${result.sentCount || 0} محاولة على الأقل.`);
-            }
-        } catch (err) {
-            return safeReply(ctx, `❌ حدث خطأ: ${err.message || 'خطأ غير متوقع.'}`);
-        }
-    }
 
     if (!sessionState && incomingText.startsWith('/')) return;
 
@@ -8969,178 +6190,7 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, '✅ تم تحديث رسالة الرد بعد لايك الحالة لكل الأرقام المربوطة.');
     }
-    if (sessionState === 'wait_story_content') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const storyText = String(incomingText || '').trim();
-        if (!storyText) {
-            return safeReply(ctx, '❌ أرسل نص الحالة أو أرسل صورة/فيديو مباشرة.');
-        }
-        try {
-            const report = await publishTextStory(phone, storyText);
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم نشر الستوري النصي بنجاح للرقم ${phone}.
-👥 عدد جهات الاتصال المستهدفة: ${report.recipients}`);
-        } catch (error) {
-            return safeReply(ctx, `❌ تعذر نشر الستوري النصي: ${error.message || 'خطأ غير متوقع.'}`);
-        }
-    }
-
-    if (sessionState === 'wait_contacts_broadcast_count') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const rawCount = String(incomingText || '').trim();
-        if (/^(?:الغاء|إلغاء|cancel)$/i.test(rawCount)) {
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم إلغاء تجهيز الرسالة الجماعية للرقم ${phone}.`);
-        }
-        const contacts = getPhoneContactEntries(phone);
-        if (!contacts.length) {
-            ctx.session = null;
-            return safeReply(ctx, '⚠️ لا توجد جهات اتصال محفوظة لهذا الرقم.');
-        }
-        const requestedCount = normalizeRequestedLikeCount(rawCount);
-        if (!requestedCount) {
-            return safeReply(ctx, '❌ أرسل عدداً صحيحاً أكبر من 0.');
-        }
-        if (requestedCount > contacts.length) {
-            return safeReply(ctx, `❌ العدد المطلوب أكبر من المتاح. الحد الأقصى الحالي هو ${contacts.length}.`);
-        }
-        ctx.session = { step: 'wait_contacts_broadcast_text', targetPhone: phone, targetCount: requestedCount };
-        return safeReply(ctx, buildContactsBroadcastTextPrompt(phone, requestedCount, contacts.length), getContactsBroadcastCancelKeyboard(phone));
-    }
-
-    if (sessionState === 'wait_contacts_broadcast_text') {
-        const phone = ctx.session?.targetPhone;
-        const targetCount = Number(ctx.session?.targetCount) || 0;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const broadcastText = String(incomingText || '').trim();
-        if (/^(?:الغاء|إلغاء|cancel)$/i.test(broadcastText)) {
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم إلغاء الرسالة الجماعية للرقم ${phone}.`);
-        }
-        if (!broadcastText) {
-            return safeReply(ctx, '❌ أرسل نص الرسالة أولاً.');
-        }
-        const contacts = getPhoneContactEntries(phone);
-        if (!contacts.length) {
-            ctx.session = null;
-            return safeReply(ctx, '⚠️ لا توجد جهات اتصال محفوظة لهذا الرقم.');
-        }
-        const finalCount = Math.max(1, Math.min(targetCount || contacts.length, contacts.length));
-        await safeReply(ctx, `✅ تم استلام طلب الرسالة الجماعية للرقم ${phone}.
-📊 سيتم الإرسال إلى ${finalCount} من أصل ${contacts.length} جهة اتصال.
-⏳ سيتم الإرسال على دفعات (100 جهة كل 5 دقائق) لتجنب الحظر.
-📌 يمكنك الإلغاء أثناء التشغيل من زر الإلغاء عند ظهور إشعارات التقدم.`);
-        ctx.session = null;
-        const sock = waClients.get(normalizePhone(phone));
-        const telegramUserId = ctx.from.id;
-        setImmediate(async () => {
-            try {
-                const onProgress = async (rep, doneCount, totalCount, batchNum) => {
-                    try {
-                        const pct = totalCount ? Math.floor((doneCount / totalCount) * 100) : 0;
-                        const msg = `📢 تقدم الرسالة الجماعية للرقم ${phone}:
-` +
-                            `✅ أُرسلت: ${rep.success} | ❌ فشل: ${rep.failed}
-` +
-                            `📊 اكتمل: ${doneCount}/${totalCount} (${pct}%)
-` +
-                            `📦 الدفعة رقم: ${batchNum}
-` +
-                            (doneCount < totalCount ? `⏸️ انتظار 5 دقائق قبل الدفعة القادمة...` : `🎉 اكتمل الإرسال!`);
-                        await bot.telegram.sendMessage(telegramUserId, msg, getContactsBroadcastCancelKeyboard(phone));
-                    } catch(_) {}
-                };
-                const report = await sendBroadcastToAllContactsQueue(sock, phone, broadcastText, onProgress, finalCount);
-                try {
-                    await bot.telegram.sendMessage(telegramUserId, `🏁 انتهى الإرسال الجماعي للرقم ${phone}:
-` + formatContactsBroadcastReport(report));
-                } catch(_) {}
-            } catch (err) {
-                try {
-                    await bot.telegram.sendMessage(telegramUserId, `❌ حدث خطأ أثناء الإرسال الجماعي: ${err.message || 'خطأ غير متوقع'}`);
-                } catch(_) {}
-            }
-        });
-        return;
-    }
-
-    if (sessionState === 'wait_direct_contact_message_text') {
-        const phone = ctx.session?.targetPhone;
-        const contactJid = ctx.session?.targetContactJid;
-        const contactName = String(ctx.session?.targetContactName || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const textToSend = String(incomingText || '').trim();
-        if (/^(?:الغاء|إلغاء|cancel)$/i.test(textToSend)) {
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم إلغاء المراسلة مع ${contactName || normalizePhone(contactJid)}.`);
-        }
-        if (!textToSend) {
-            return safeReply(ctx, '❌ أرسل نص الرسالة أولاً.');
-        }
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ الرقم ${phone} غير متصل حالياً على واتساب.`);
-        }
-        const entry = findPhoneContactEntry(phone, contactJid);
-        if (!entry?.jid) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ تعذر العثور على جهة الاتصال المطلوبة.');
-        }
-        const sent = await sock.sendMessage(entry.jid, { text: textToSend });
-        const bridge = setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out', lastMessageId: String(sent?.key?.id || '') });
-        ctx.session = null;
-        return safeReply(ctx, `✅ تم إرسال الرسالة إلى ${bridge?.contactName || contactName || normalizePhone(entry.jid)} من الرقم ${phone}.
-📩 أي رد جديد سيصل لك هنا داخل البوت.`, getDirectContactReplyKeyboard(phone, entry.jid));
-    }
-
-    if (sessionState === 'wait_direct_contact_reply_text') {
-        const phone = ctx.session?.targetPhone;
-        const contactJid = ctx.session?.targetContactJid;
-        const contactName = String(ctx.session?.targetContactName || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const textToSend = String(incomingText || '').trim();
-        if (/^(?:الغاء|إلغاء|cancel)$/i.test(textToSend)) {
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم إلغاء الرد على ${contactName || normalizePhone(contactJid)}.`);
-        }
-        if (!textToSend) {
-            return safeReply(ctx, '❌ أرسل نص الرد أولاً.');
-        }
-        const sock = waClients.get(normalizePhone(phone));
-        if (!sock) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ الرقم ${phone} غير متصل حالياً على واتساب.`);
-        }
-        const entry = findPhoneContactEntry(phone, contactJid);
-        if (!entry?.jid) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ تعذر العثور على جهة الاتصال المطلوبة.');
-        }
-        const sent = await sock.sendMessage(entry.jid, { text: textToSend });
-        setDirectContactMessageSession(phone, entry.jid, { ownerId: String(ctx.from.id), lastDirection: 'out', lastMessageId: String(sent?.key?.id || '') });
-        ctx.session = null;
-        return safeReply(ctx, `✅ تم إرسال الرد إلى ${contactName || normalizePhone(entry.jid)}.`, getDirectContactReplyKeyboard(phone, entry.jid));
-    }
-
-        if (sessionState === 'wait_phone') {
+    if (sessionState === 'wait_phone') {
         const phone = normalizePhone(incomingText);
         if (!phone) {
             return safeReply(ctx, '❌ أرسل أرقام فقط مع مفتاح الدولة.');
@@ -9239,6 +6289,7 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         return safeReply(ctx, `✅ تم حفظ الرد التلقائي للرقم ${phone}.\n\n${formatAutoRepliesList(phone)}`);
     }
+
     if (sessionState === 'wait_settings_password') {
         const phone = ctx.session?.targetPhone;
         if (!userOwnsPhone(ctx.from.id, phone)) {
@@ -9313,119 +6364,6 @@ ${result.removedEntry?.raw || incomingText}`);
         ctx.session = null;
         const section = getPhoneSettingsSectionByField(fieldKey);
         return safeReply(ctx, buildPhoneSettingsSectionMessage(phone, section.key), getPhoneSettingsSectionKeyboard(phone, section.key));
-    }
-
-
-    if (sessionState === 'wait_profile_name') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const cleanName = String(incomingText || '').trim().slice(0, 80);
-        if (!cleanName) return safeReply(ctx, '❌ أرسل اسماً صالحاً أولاً.');
-        try {
-            await updatePhoneProfileNameNow(phone, cleanName);
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم حفظ اسم الملف الشخصي للرقم ${phone} بنجاح.`);
-        } catch (error) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ تعذر تحديث الاسم الآن: ${error.message || 'حدث خطأ غير متوقع.'}`);
-        }
-    }
-
-    if (sessionState === 'wait_profile_about_custom_expiry') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const expiresAt = parseProfileExpiryInput(incomingText);
-        if (!expiresAt || expiresAt.getTime() <= Date.now()) {
-            return safeReply(ctx, '❌ أرسل تاريخاً ووقتاً مستقبلياً صحيحاً بصيغة YYYY-MM-DD HH:MM');
-        }
-        if ((expiresAt.getTime() - Date.now()) > PROFILE_CUSTOM_MAX_DURATION_MS) {
-            return safeReply(ctx, '❌ المدة المخصصة يجب أن تكون أقل من أو تساوي شهر واحد من الآن.');
-        }
-        ctx.session = {
-            step: 'wait_profile_about_text',
-            targetPhone: phone,
-            pendingAboutExpiry: expiresAt.toISOString(),
-            pendingAboutExpiryLabel: `حتى ${formatStatusArchiveTime(expiresAt.toISOString())}`
-        };
-        return safeReply(ctx, `📝 ممتاز. الآن أرسل رسالة حول الجديدة للرقم ${phone}.
-الحد الأقصى ${MAX_WA_ABOUT_LENGTH} حرفاً.`);
-    }
-
-    if (sessionState === 'wait_profile_pic') {
-        const phone = ctx.session?.targetPhone;
-        if (!userOwnsPhone(ctx.from.id, phone)) { ctx.session = null; return safeReply(ctx, '❌ رقم غير موجود في حسابك.'); }
-        const photo = ctx.message?.photo;
-        if (!photo || !photo.length) return safeReply(ctx, '❌ أرسل صورة صالحة من نوع Photo.');
-        const fileId = photo[photo.length - 1]?.file_id;
-        if (!fileId) return safeReply(ctx, '❌ تعذر الحصول على الصورة.');
-        try {
-            const fileLink = await ctx.telegram.getFileLink(fileId);
-            const https = require('https'); const http = require('http');
-            const imgBuf = await new Promise((res, rej) => {
-                const mod = String(fileLink).startsWith('https') ? https : http;
-                mod.get(String(fileLink), (r) => {
-                    const chunks = [];
-                    r.on('data', c => chunks.push(c));
-                    r.on('end', () => res(Buffer.concat(chunks)));
-                    r.on('error', rej);
-                });
-            });
-            const sock = waClients.get(normalizePhone(phone));
-            if (!sock) { ctx.session = null; return safeReply(ctx, '❌ الرقم غير متصل.'); }
-            await sock.updateProfilePicture(`${normalizePhone(phone)}@s.whatsapp.net`, imgBuf);
-            ctx.session = null;
-            return safeReply(ctx, `✅ تم تحديث صورة البروفيل للرقم ${phone} بنجاح.`);
-        } catch (err) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ تعذر تحديث الصورة: ${err.message || 'خطأ غير متوقع.'}`);
-        }
-    }
-
-    if (sessionState === 'wait_profile_about_text') {
-        const phone = ctx.session?.targetPhone;
-        const pendingAboutExpiry = String(ctx.session?.pendingAboutExpiry || '').trim();
-        const pendingAboutExpiryLabel = String(ctx.session?.pendingAboutExpiryLabel || '').trim();
-        if (!userOwnsPhone(ctx.from.id, phone)) {
-            ctx.session = null;
-            return safeReply(ctx, '❌ لم أتمكن من العثور على هذا الرقم ضمن حسابك.');
-        }
-        const cleanAbout = String(incomingText || '').trim();
-        if (!cleanAbout) return safeReply(ctx, '❌ أرسل رسالة حول صالحة أولاً.');
-        if (cleanAbout.length > MAX_WA_ABOUT_LENGTH) {
-            return safeReply(ctx, `❌ رسالة حول يجب أن لا تتجاوز ${MAX_WA_ABOUT_LENGTH} حرفاً. أرسل نصاً أقصر.`);
-        }
-        // السماح بالحفظ حتى لو لم تُحدد مدة انتهاء
-        let expiresAt = null;
-        let expiryLabel = pendingAboutExpiryLabel || '';
-        if (pendingAboutExpiry) {
-            const expiresDate = new Date(pendingAboutExpiry);
-            if (!Number.isNaN(expiresDate.getTime()) && expiresDate.getTime() > Date.now()) {
-                expiresAt = expiresDate;
-            } else {
-                // المدة انتهت أو غير صالحة، نحفظ بدون مدة
-                expiresAt = null;
-                expiryLabel = 'دائم';
-            }
-        }
-        try {
-            await updatePhoneProfileAboutNow(phone, cleanAbout, expiresAt);
-            ctx.session = null;
-            const durationText = expiresAt
-                ? `⏳ مدة الظهور: ${expiryLabel || formatStatusArchiveTime(expiresAt.toISOString())}.`
-                : '⏳ تم الحفظ بشكل دائم (بدون مدة انتهاء).';
-            return safeReply(ctx, `✅ تم حفظ رسالة حول للرقم ${phone} بنجاح.
-${durationText}
-📝 النص محفوظ داخل الرقم بنجاح بدون مشاكل.`);
-        } catch (error) {
-            ctx.session = null;
-            return safeReply(ctx, `❌ تعذر تحديث حول الآن: ${error.message || 'حدث خطأ غير متوقع.'}`);
-        }
     }
 
     if (sessionState === 'wait_new_start_message') {
@@ -9511,7 +6449,7 @@ function buildUnifiedSettingsHubHTML() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>لوحة الإعدادات الموحّدة</title>
+  <title>𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -9523,7 +6461,7 @@ function buildUnifiedSettingsHubHTML() {
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>لوحة إعدادات الرقم + Contact Save</h1>
+      <h1>𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</h1>
       <p>تم جمع إعدادات الرقم المربوط مع صفحة Contact Save في مكان واحد. لو المتصفح منع فتح أي إطار خارجي، استخدم أزرار الفتح المباشر الموجودة فوق كل قسم.</p>
     </section>
     <section class="grid">
@@ -9537,9 +6475,9 @@ function buildUnifiedSettingsHubHTML() {
       <div class="card">
         <div class="row">
           <div><div class="title">إعدادات Contact Save</div><div class="sub">كل إعدادات حفظ جهات الاتصال التلقائي مضافة داخل هذه اللوحة</div></div>
-          <div class="btns"><a class="btn primary" href="https://whatsapp-pairing-api-production.up.railway.app/contactsave" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
+          <div class="btns"><a class="btn primary" href="${getContactSavePublicUrl()}" target="_blank" rel="noopener noreferrer">فتح Contact Save</a></div>
         </div>
-        <iframe class="frame" src="https://whatsapp-pairing-api-production.up.railway.app/contactsave" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <iframe class="frame" src="${getContactSavePublicUrl()}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
         <div class="note">إذا لم يظهر القسم الخارجي داخل الصفحة بسبب قيود المتصفح أو الموقع، استخدم زر فتح Contact Save مباشرة.</div>
       </div>
     </section>
@@ -9571,7 +6509,17 @@ app.post('/minibot/api/login', (req, res) => {
         if (!auth.ok) {
             return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        return res.json({ success: true, app: auth.appId, number: auth.phone });
+        const session = createWebSettingsSession(auth.phone, auth.appId);
+        const redirectPath = buildSettingsPanelPath(session?.token, auth.phone);
+        return res.json({
+            success: true,
+            app: auth.appId,
+            number: auth.phone,
+            token: session?.token || '',
+            sessionToken: session?.token || '',
+            redirectPath,
+            redirectUrl: `${getSettingsPublicUrl()}?${new URLSearchParams({ session: session?.token || '', phone: auth.phone }).toString()}`
+        });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -9579,14 +6527,13 @@ app.post('/minibot/api/login', (req, res) => {
 
 app.get('/minibot/api/settings/load', (req, res) => {
     try {
-        const phone = normalizePhone(req.query?.num || '');
-        const appId = normalizeAppId(req.query?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = getPhoneSettings(phone, appId);
-        setActivePhoneSettings(phone, appId);
-        return res.json({ success: true, app: appId, settings });
+        const settings = getPhoneSettings(resolved.phone, resolved.appId);
+        setActivePhoneSettings(resolved.phone, resolved.appId);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Load failed' });
     }
@@ -9594,15 +6541,14 @@ app.get('/minibot/api/settings/load', (req, res) => {
 
 app.post('/minibot/api/settings/save', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
-        const appId = normalizeAppId(req.body?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = savePhoneSettings(phone, appId, req.body || {});
-        const liveSock = waClients.get(phone);
-        if (liveSock) startPresenceKeepAlive(liveSock, phone);
-        return res.json({ success: true, app: appId, settings });
+        const settings = savePhoneSettings(resolved.phone, resolved.appId, req.body || {});
+        const liveSock = waClients.get(resolved.phone);
+        if (liveSock) startPresenceKeepAlive(liveSock, resolved.phone);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Save failed' });
     }
@@ -9610,12 +6556,12 @@ app.post('/minibot/api/settings/save', (req, res) => {
 
 app.post('/minibot/api/image/upload', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        }
         const fieldKey = String(req.body?.fieldKey || '').trim();
         const imageBase64 = String(req.body?.image || '').trim();
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
-        }
         if (!['menu', 'alive', 'owner'].includes(fieldKey)) {
             return res.status(400).json({ success: false, error: 'Invalid field key' });
         }
@@ -9625,7 +6571,7 @@ app.post('/minibot/api/image/upload', (req, res) => {
         const fileName = buildImageFileName('png');
         const filePath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(imageBase64, 'base64'));
-        return res.json({ success: true, fieldKey, url: getUploadPublicUrl(fileName) });
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, fieldKey, url: getUploadPublicUrl(fileName), token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Upload failed' });
     }
@@ -9639,7 +6585,17 @@ app.post('/api/login', (req, res) => {
         if (!auth.ok) {
             return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        return res.json({ success: true, app: auth.appId, number: auth.phone });
+        const session = createWebSettingsSession(auth.phone, auth.appId);
+        const redirectPath = buildSettingsPanelPath(session?.token, auth.phone);
+        return res.json({
+            success: true,
+            app: auth.appId,
+            number: auth.phone,
+            token: session?.token || '',
+            sessionToken: session?.token || '',
+            redirectPath,
+            redirectUrl: `${getSettingsPublicUrl()}?${new URLSearchParams({ session: session?.token || '', phone: auth.phone }).toString()}`
+        });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -9647,14 +6603,13 @@ app.post('/api/login', (req, res) => {
 
 app.get('/api/settings/load', (req, res) => {
     try {
-        const phone = normalizePhone(req.query?.num || '');
-        const appId = normalizeAppId(req.query?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = getPhoneSettings(phone, appId);
-        setActivePhoneSettings(phone, appId);
-        return res.json({ success: true, app: appId, settings });
+        const settings = getPhoneSettings(resolved.phone, resolved.appId);
+        setActivePhoneSettings(resolved.phone, resolved.appId);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Load failed' });
     }
@@ -9662,15 +6617,14 @@ app.get('/api/settings/load', (req, res) => {
 
 app.post('/api/settings/save', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
-        const appId = normalizeAppId(req.body?.app || 'default');
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
         }
-        const settings = savePhoneSettings(phone, appId, req.body || {});
-        const liveSock = waClients.get(phone);
-        if (liveSock) startPresenceKeepAlive(liveSock, phone);
-        return res.json({ success: true, app: appId, settings });
+        const settings = savePhoneSettings(resolved.phone, resolved.appId, req.body || {});
+        const liveSock = waClients.get(resolved.phone);
+        if (liveSock) startPresenceKeepAlive(liveSock, resolved.phone);
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, settings, token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Save failed' });
     }
@@ -9678,12 +6632,12 @@ app.post('/api/settings/save', (req, res) => {
 
 app.post('/api/image/upload', (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.num || '');
+        const resolved = resolveSettingsRequest(req);
+        if (!resolved.ok) {
+            return res.status(resolved.status || 400).json({ success: false, error: resolved.error, message: resolved.error });
+        }
         const fieldKey = String(req.body?.fieldKey || '').trim();
         const imageBase64 = String(req.body?.image || '').trim();
-        if (!phone || !getPhoneOwner(phone)) {
-            return res.status(404).json({ success: false, error: 'Linked number not found' });
-        }
         if (!['menu', 'alive', 'owner'].includes(fieldKey)) {
             return res.status(400).json({ success: false, error: 'Invalid field key' });
         }
@@ -9693,7 +6647,7 @@ app.post('/api/image/upload', (req, res) => {
         const fileName = buildImageFileName('png');
         const filePath = path.join(UPLOADS_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(imageBase64, 'base64'));
-        return res.json({ success: true, fieldKey, url: getUploadPublicUrl(fileName) });
+        return res.json({ success: true, number: resolved.phone, app: resolved.appId, fieldKey, url: getUploadPublicUrl(fileName), token: resolved.token || '' });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Upload failed' });
     }
@@ -9753,7 +6707,11 @@ bot.command('setstatusmsg', async (ctx) => {
 
 
 function buildLandingPageHTML() {
-    return "<!DOCTYPE html>\n<html lang=\"si\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden queen bot, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, queen bot, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, queen bot store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, queen bot official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>👑 بوت الملك فارس</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ بوت الملك فارس ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">بوت الملك فارس</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">👑 بوت الملك فارس</div>\n        <div class=\"footer-copy\">© 2026 بوت الملك فارس · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"👑 بوت الملك فارس\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n";
+    const webPanelUrl = getWebPanelPublicUrl();
+    const settingsUrl = getSettingsPublicUrl();
+    const pairingUrl = getPairingPublicUrl();
+    const botLink = getTelegramBotLink();
+    return "<!DOCTYPE html>\n<html lang=\"ar\" dir=\"rtl\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">بوت الملك فارس</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽</div>\n        <div class=\"footer-copy\">© 2026 بوت الملك فارس · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n".replaceAll('" + settingsUrl + "', settingsUrl).replaceAll('" + pairingUrl + "/', `${webPanelUrl}/`).replaceAll('" + pairingUrl + "', pairingUrl).replaceAll('" + botLink + "', botLink);
 }
 
 function buildLandingSectionHTML(sectionId = '') {
@@ -12637,21 +9595,21 @@ function decodeMergedPythonSource() {
 
 const PythonMergedLayer = (() => {
     const DEFAULT_START_MESSAGE_TEMPLATE = "{emoji}";
-    const DEFAULT_AUTO_REPLY_CHANNEL_URL = "https://whatsapp-pairing-api-production.up.railway.app/channel/0029Vb8jjfWCRs1sVz0x1w3v";
+    const DEFAULT_AUTO_REPLY_CHANNEL_URL = WHATSAPP_CHANNEL_LINK;
     const DEFAULT_CONTACT_NUMBER = "967784355543";
     const DEFAULT_SITE_BRAND_NAME = "fares";
     const DEFAULT_SITE_FOOTER = "fares";
-    const DEFAULT_LINKED_MESSAGE_IMAGE_URL = SETTINGS_IMAGE_URL;
+    const DEFAULT_LINKED_MESSAGE_IMAGE_URL = "https://www.genspark.ai/api/files/s/18UAzOdi";
     const DEFAULT_SITE_INFO_TEXT = `🔗 القناة الرسمية: ${DEFAULT_AUTO_REPLY_CHANNEL_URL}\n📞 رقم التواصل: ${DEFAULT_CONTACT_NUMBER}`;
     const DEFAULT_AUTO_REPLY_MESSAGE_TEMPLATE = `🔗 هذا رابط القناة الخاصة بنا\n{channel_url}\n\n📞 رقم التواصل: ${DEFAULT_CONTACT_NUMBER}`;
-    const DEFAULT_WHATSAPP_ALIVE_MESSAGE = "✅ *Golden Queen is active now*\n\n👑 *Owner:* Golden Queen\n🤖 *Status:* Ready";
+    const DEFAULT_WHATSAPP_ALIVE_MESSAGE = "✅ *𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽ is active now*\n\n👑 *Owner:* 𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽\n🤖 *Status:* Ready";
     const DEFAULT_WHATSAPP_BOT_MESSAGE = "👑 *GOLDEN QUEEN VERIFICATION*\n\n🔑 *Link Code:* {code}\n\n📱 *طريقة الربط:*\n1️⃣ افتح واتساب.\n2️⃣ ادخل على الأجهزة المرتبطة.\n3️⃣ اختر ربط جهاز.\n4️⃣ استخدم الكود أعلاه إذا طُلب منك ذلك.\n\n✅ بعد اكتمال الربط سيصلك تلقائيًا تأكيد الربط وكلمة سر الإعدادات ورابط البوت.";
     const DEFAULT_WHATSAPP_SETTINGS_MESSAGE = "⚙️ رسالة الإعدادات";
     const PASSWORD_DISCOVERY_COMMAND = ".settings";
     const PASSWORD_DISCOVERY_ATTEMPT_DELAYS = Object.freeze([15, 45, 60]);
     const PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS = 12;
-    const TARGET_SITE_BASE_URL = "https://whatsapp-pairing-api-production.up.railway.app";
-    const TARGET_SETTINGS_PAGE_URL = `${TARGET_SITE_BASE_URL}/settings`;
+    const TARGET_SITE_BASE_URL = getWebPanelPublicUrl();
+    const TARGET_SETTINGS_PAGE_URL = getSettingsPublicUrl();
     const IMMUTABLE_SITE_SETTINGS_KEYS = new Set(["__v", "_id", "app", "createdAt", "id", "num", "updatedAt"]);
     const ARABIC_DIGIT_SOURCE = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
     const ARABIC_DIGIT_TARGET = '01234567890123456789';
@@ -12663,8 +9621,8 @@ const PythonMergedLayer = (() => {
     ];
     const USER_EMOJI_TRIGGERS = new Set(["تغيير ايموجي الحاله", "تغيير إيموجي الحاله", "تغيير ايموجي الحالة", "تغيير إيموجي الحالة", "غير الايموجي", "غيّر الايموجي", "غير الإيموجي", "غيّر الإيموجي"]);
     const DRF_TEXT_TRIGGERS = new Set(["اعدادات الموقع", "إعدادات الموقع", "اعدادات الموقع /drf", "إعدادات الموقع /drf", "drf", "/drf"]);
-    const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
-    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "ownerNumber": "967784355543", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": SETTINGS_IMAGE_URL, "alive": SETTINGS_IMAGE_URL, "owner": SETTINGS_IMAGE_URL, "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
+    const SITE_SETTINGS_FIELD_LABELS = Object.freeze({"name": "اسم البوت", "ownerNumber": "رقم التواصل", "ownername": "اسم المالك", "description": "المعلومات التعريفية", "from": "الموقع", "age": "العمر", "prefix": "البادئة", "footer2": "الفوتر", "mode": "الوضع", "antiBad": "مكافحة الكلمات السيئة", "antiLink": "مكافحة الروابط", "autoRecording": "تسجيل تلقائي", "autoTyping": "كتابة تلقائية", "alwaysOnline": "دائمًا أونلاين", "autoStatusRead": "مشاهدة الحالة تلقائيًا", "autoStatusReact": "التفاعل مع الحالة تلقائيًا", "autoRead": "قراءة تلقائية", "autoBlock": "حظر تلقائي", "autoReact": "تفاعل تلقائي", "autoVoice": "صوت تلقائي", "antiDelete": "مكافحة الحذف", "sendDeleteTo": "إرسال المحذوف إلى", "statusMsgSend": "إرسال رسالة على الحالة", "statusMsgType": "نوع رسالة الحالة", "customMsg": "رسالة الحالة المخصصة", "menu": "https://www.genspark.ai/api/files/s/18UAzOdi", "alive": "https://www.genspark.ai/api/files/s/18UAzOdi", "owner": "https://www.genspark.ai/api/files/s/18UAzOdi", "statusCustomReact": "رموز تعبيرية للحالة (10 كحد أقصى)", "antiBug": "مكافحة البق", "antiBot": "مكافحة البوت", "antiBotAction": "إجراء مكافحة البوت", "gaGroupJid": "معرف الجروب", "gaTimezone": "المنطقة الزمنية", "gaCloseTime": "وقت الإغلاق", "gaOpenTime": "وقت الفتح"});
+    const DEFAULT_SITE_SETTINGS_PAYLOAD = Object.freeze({"name": "fares", "from": "Yemen", "age": "24", "prefix": ".", "footer2": "fares", "mode": "private", "antiBad": "off", "antiLink": "off", "autoRecording": "off", "autoTyping": "off", "alwaysOnline": "off", "autoStatusRead": "on", "autoStatusReact": "on", "autoRead": "off", "autoBlock": "off", "autoReact": "off", "autoVoice": "off", "antiDelete": "off", "sendDeleteTo": "owner", "antiCall": "off", "excludeCallNumbers": "", "statusMsgSend": "off", "statusMsgType": "default", "customMsg": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "ownerNumber": "967784355543", "ownername": "fares", "description": "🔗 القناة الرسمية: https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v\n📞 رقم التواصل: 967784355543", "gaGroupJid": "", "gaTimezone": "Asia/Colombo", "gaCloseTime": "15:00", "gaOpenTime": "05:00", "menu": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "alive": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "owner": "https://i.ibb.co/DfXkGJM1/77963b2740a0.jpg", "statusCustomReact": "", "antiBug": "off", "antiBot": "off", "antiBotAction": "delete"});
     const ALL_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "load_dotenv_file", "get_green_api_authorization_url", "get_url_base", "get_pairing_api_profile", "normalize_ascii_digits", "normalize_phone_number", "get_pair_language_code", "get_pair_language_pack", "get_drf_language_pack", "normalize_settings_url", "parse_drf_credentials_message", "load_registered_users", "save_registered_users", "load_user_emoji_settings", "save_user_emoji_settings", "load_linked_whatsapp_users", "save_linked_whatsapp_users", "load_pending_pairings", "save_pending_pairings", "load_auto_reply_log", "save_auto_reply_log", "get_effective_user_emoji", "load_settings", "save_settings", "register_user", "is_admin", "normalize_channel_reference", "build_force_subscription_url", "build_main_keyboard", "build_status_emoji_keyboard", "build_pair_language_keyboard", "build_dev_keyboard", "build_pair_api_keyboard", "build_force_sub_keyboard", "build_whatsapp_messages_keyboard", "build_whatsapp_message_preview", "whatsapp_messages_text", "build_subscription_keyboard", "normalize_start_message_template", "fill_known_placeholders", "build_start_manual_login_hint", "render_start_message", "build_pairing_confirmation_keyboard", "update_number_records", "show_user_status_react_prompt", "prompt_user_status_custom_react_input", "admin_status_text", "settings_text", "force_sub_settings_text", "normalize_chat_id", "build_auto_reply_message", "build_alive_channel_message", "build_bot_channel_message", "build_settings_channel_message", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "render_whatsapp_pair_code_message", "build_whatsapp_command_reply", "build_pairing_success_instruction_message", "build_password_wait_message", "register_pending_pairing", "store_manual_site_login", "update_linked_user_emoji", "find_user_whatsapp_record", "find_linked_number_for_user", "get_all_user_whatsapp_records", "get_user_primary_whatsapp_record", "build_user_linked_summary", "build_owned_numbers_text", "build_owned_numbers_keyboard", "unlink_user_number", "resolve_user_record", "show_owned_numbers_panel", "send_password_for_user_number", "record_belongs_to_user", "extract_site_password_from_record", "extract_numeric_tokens_from_text", "extract_site_password_from_message_text", "upsert_site_metadata_for_number", "find_user_record_for_number", "has_invalid_header_characters", "extract_cookie_dict", "apply_cookie_records", "parse_auth_config", "apply_auth_config", "build_sync_headers", "extract_site_api_error", "ensure_site_api_success", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "is_settings_not_found_error", "build_site_app_id_candidates", "load_site_settings_from_session", "login_to_settings_site", "sync_user_emoji_to_settings_site", "sync_user_emoji_to_site", "sync_user_status_react_emojis_to_site", "build_site_settings_urls", "humanize_site_setting_label", "format_site_setting_value", "get_linked_site_credentials", "load_site_settings_sync", "coerce_site_setting_value", "save_site_settings_sync", "build_drf_keyboard", "render_drf_settings_text", "show_drf_panel", "drf_command", "get_green_api_send_message_url", "send_whatsapp_message_sync", "send_whatsapp_message", "get_green_api_send_file_url", "send_whatsapp_image_by_url_sync", "send_whatsapp_image_by_url", "build_linked_number_private_message", "deliver_linked_number_private_bundle", "get_green_api_logout_url", "logout_whatsapp_instance_sync", "logout_whatsapp_instance", "track_background_task", "get_record_for_number", "build_auto_stop_prefix_value", "schedule_pairing_confirmation_prompt", "apply_confirmed_pairing_updates", "process_pairing_confirmation_yes", "auto_request_site_password", "iter_nested_values", "extract_scalar_from_payload", "normalize_site_password", "derive_site_app_id_from_password", "extract_pairing_site_metadata", "merge_site_metadata", "apply_site_metadata", "build_pair_code_result", "extract_telegram_user_id", "extract_number_from_payload", "resolve_pairing_target_number", "payload_indicates_pairing_success", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_private_whatsapp_command", "payload_indicates_status_interaction", "mark_event_processed", "notify_site_password_detected", "notify_successful_pairing", "process_external_webhook", "build_number_variants", "find_code_in_payload", "resolve_pair_code_api_url", "start_healthcheck_server", "build_pairing_headers", "build_pairing_attempts", "request_pair_code_sync", "request_pair_code", "is_user_subscribed", "prompt_force_subscription", "ensure_subscription", "start", "menu", "user_emoji_command", "dev_command", "ping", "handle_buttons", "broadcast_message_to_all", "handle_text", "help_command", "post_init", "ensure_embedded_companion_files", "main"]);
     const IMPLEMENTED_PYTHON_FUNCTION_NAMES = Object.freeze(["normalize_whatsapp_template_value", "normalize_ascii_digits", "normalize_phone_number", "normalize_channel_reference", "normalize_start_message_template", "fill_known_placeholders", "normalize_chat_id", "normalize_pair_code", "is_plausible_pair_code", "extract_pair_code_from_text", "extract_numeric_tokens_from_text", "build_sync_headers", "split_status_custom_react_emojis", "sanitize_site_settings_payload", "apply_required_site_branding", "build_default_site_settings_payload", "extract_settings_payload_from_site_response", "humanize_site_setting_label", "format_site_setting_value", "coerce_site_setting_value", "normalize_site_password", "derive_site_app_id_from_password", "iter_nested_values", "extract_scalar_from_payload", "extract_viewer_chat_id", "extract_incoming_message_text", "extract_number_from_payload", "build_number_variants", "find_code_in_payload", "resolve_pairing_target_number", "extract_private_whatsapp_command"]);
 
