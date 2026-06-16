@@ -1,19 +1,66 @@
- const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    Browsers,
-    DisconnectReason,
-    delay,
-    downloadContentFromMessage
-} = require('@whiskeysockets/baileys');
-const { Telegraf, session, Markup } = require('telegraf');
-const pino = require('pino');
-const express = require('express');
+ // 1. الاستيرادات أولاً
+const { default: makeWASocket, useMultiFileAuthState, ... } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const { EventEmitter } = require('events');
+// ... بقية الاستيرادات (telegraf, express, إلخ)
+
+// 2. المجلدات والإعدادات
+const sessionsDir = path.join(__dirname, '.sessions');
+if (!fs.existsSync(sessionsDir)) {
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    console.log('تم إنشاء مجلد الجلسات: .sessions');
+}
+const mongoose = require('mongoose');
+
+// ربط البوت بقاعدة البيانات التي أعددناها
+mongoose.connect(process.env.MONGODB_URI)
+.then(() => console.log('✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
+.catch(err => console.error('❌ فشل الاتصال بقاعدة البيانات:', err));
+
+// ضع هذا الكود هنا بعد الاستيرادات
+async function getMongoAuthState(phone) {
+    const db = mongoose.connection.db;
+    const collection = db.collection('sessions');
+
+    const saveCreds = async (creds) => {
+        await collection.updateOne(
+            { _id: phone },
+            { $set: { creds } },
+            { upsert: true }
+        );
+    };
+
+    const getCreds = async () => {
+        const doc = await collection.findOne({ _id: phone });
+        return doc ? doc.creds : null;
+    };
+
+    const savedCreds = await getCreds();
+    return {
+        state: {
+            creds: savedCreds || {
+                noiseKey: require('@whiskeysockets/baileys').generateNoiseKey(),
+                signedIdentityKey: require('@whiskeysockets/baileys').generateCurve25519KeyPair(),
+                signedPreKey: require('@whiskeysockets/baileys').generateSignedKeyPair(require('@whiskeysockets/baileys').generateCurve25519KeyPair(), 1),
+                registrationId: Math.floor(Math.random() * 65536),
+                advSecretKey: require('crypto').randomBytes(32).toString('hex'),
+                processedHistoryMessages: [],
+                nextPreKeyId: 1,
+                firstUnuploadedPreKeyId: 1,
+                serverRegistration: null,
+                account: null,
+                me: null,
+                signalIdentities: [],
+                myAppStateKeyId: null
+            },
+            keys: {}
+        },
+        saveCreds
+    };
+}
+
+// 3. باقي إعدادات المتغيرات (const APP_PORT = ...)
+
 
 // الإعدادات الأساسية
 // =========================
@@ -5109,7 +5156,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     const sessionPath = getSessionPath(normalizedPhone);
     ensureDir(sessionPath);
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    // استبدل السطر المظلل بهذا السطر:
+const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
     const { version } = await fetchLatestBaileysVersion();
     const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
@@ -6821,7 +6869,7 @@ async function ensureWebQrSession(forceNew = false) {
     webQrSession.booting = new Promise(async (resolve) => {
         try {
             ensureDir(WEB_QR_SESSION_DIR);
-            const { state, saveCreds } = await useMultiFileAuthState(WEB_QR_SESSION_DIR);
+            const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
             const { version } = await fetchLatestBaileysVersion();
             const sock = makeWASocket({
                 version,
@@ -10170,5 +10218,8 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
+
+
+= */
 
 
