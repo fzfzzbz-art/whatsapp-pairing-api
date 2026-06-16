@@ -4997,37 +4997,42 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
+
+// استبدل الجزء الخاص بمعالجة الحالات في ملفك بهذا الكود:
 sock.ev.on('messages.upsert', async (chatUpdate) => {
     const msg = chatUpdate.messages[0];
-    if (!msg || !msg.key || msg.key.remoteJid !== 'status@broadcast') return;
+    if (!msg || !msg.key) return;
 
-    // استخدام "عدم الانتظار" (Fire and Forget) لتجنب تعليق طابور الحالات
-    (async () => {
-        try {
-            // قراءة الحالة
-            await sock.readMessages([msg.key]);
-            
-            // تأخير بسيط جداً (500ms) لضمان استقرار الخادم
-            await new Promise(resolve => setTimeout(resolve, 500));
+    // التأكد أنها حالة
+    if (msg.key.remoteJid === 'status@broadcast') {
+        const participant = msg.key.participant;
+        const msgId = msg.key.id;
 
-            // إرسال التفاعل
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: "💤",
-                    key: {
-                        remoteJid: 'status@broadcast',
-                        id: msg.key.id,
-                        fromMe: false,
-                        participant: msg.key.participant
+        // تنفيذ التفاعل لكل حالة بشكل مستقل تماماً
+        (async () => {
+            try {
+                // 1. المشاهدة فوراً
+                await sock.readMessages([msg.key]);
+                
+                // 2. إرسال التفاعل (بدون انتظار أو قيود)
+                await sock.sendMessage('status@broadcast', {
+                    react: {
+                        text: '💤',
+                        key: {
+                            remoteJid: 'status@broadcast',
+                            id: msgId,
+                            fromMe: false,
+                            participant: participant
+                        }
                     }
-                }
-            }, { statusJidList: [msg.key.participant] });
-            
-            console.log("تم التفاعل مع حالة بنجاح");
-        } catch (e) {
-            console.log("خطأ في معالجة الحالة:", e);
-        }
-    })(); // هذا القوس الفارغ هو السر في تشغيل الكود لكل حالة على حدة
+                }, { statusJidList: [participant] });
+
+                console.log(`تم التفاعل مع حالة: ${participant}`);
+            } catch (err) {
+                console.log(`خطأ في الحالة ${participant}:`, err.message);
+            }
+        })();
+    }
 });
 
 
