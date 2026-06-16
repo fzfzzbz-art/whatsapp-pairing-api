@@ -24,7 +24,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '👑';
+const DEFAULT_REACTION_EMOJI = '💤';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
