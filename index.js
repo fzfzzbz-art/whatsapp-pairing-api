@@ -1,103 +1,4 @@
- 'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { EventEmitter } = require('events');
-const { execSync } = require('child_process');
-
-const RUNTIME_DEPENDENCIES = [
-    { installName: '@whiskeysockets/baileys', loadNames: ['@whiskeysockets/baileys', 'baileys'] },
-    { installName: 'telegraf', loadNames: ['telegraf'] },
-    { installName: 'pino', loadNames: ['pino'] },
-    { installName: 'express', loadNames: ['express'] }
-];
-
-function tryRequire(loadNames = []) {
-    for (const moduleName of loadNames) {
-        try {
-            return require(moduleName);
-        } catch (error) {
-            if (error?.code !== 'MODULE_NOT_FOUND') throw error;
-            const missingTarget = typeof error?.message === 'string'
-                ? error.message.match(/'([^']+)'/)
-                : null;
-            if (missingTarget && missingTarget[1] !== moduleName) throw error;
-        }
-    }
-    return null;
-}
-
-function ensurePackageManifest(projectDir) {
-    const packageJsonPath = path.join(projectDir, 'package.json');
-    if (fs.existsSync(packageJsonPath)) return;
-    const packageJson = {
-        name: 'faresbot-runtime',
-        version: '1.0.0',
-        private: true
-    };
-    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
-}
-
-function installMissingDependencies(packageNames) {
-    const uniquePackages = [...new Set((packageNames || []).filter(Boolean))];
-    if (!uniquePackages.length) return;
-
-    const projectDir = __dirname;
-    ensurePackageManifest(projectDir);
-    console.log(`جاري تجهيز التبعيات المطلوبة... (${uniquePackages.join(', ')})`);
-
-    try {
-        execSync(`npm install --no-save ${uniquePackages.map((pkg) => `"${pkg}"`).join(' ')}`, {
-            cwd: projectDir,
-            stdio: 'inherit',
-            env: {
-                ...process.env,
-                NPM_CONFIG_AUDIT: 'false',
-                NPM_CONFIG_FUND: 'false',
-                NPM_CONFIG_UPDATE_NOTIFIER: 'false',
-                npm_config_loglevel: process.env.npm_config_loglevel || 'error'
-            }
-        });
-    } catch (err) {
-        console.log("خطأ أثناء تثبيت المكتبات تلقائياً:", err);
-    }
-}
-
-function loadRuntimeModules() {
-    const loaded = new Map();
-    const missing = [];
-
-    for (const dependency of RUNTIME_DEPENDENCIES) {
-        const requiredModule = tryRequire(dependency.loadNames);
-        if (requiredModule) {
-            loaded.set(dependency.installName, requiredModule);
-        } else {
-            missing.push(dependency.installName);
-        }
-    }
-
-    if (missing.length) {
-        installMissingDependencies(missing);
-        for (const dependency of RUNTIME_DEPENDENCIES) {
-            if (loaded.has(dependency.installName)) continue;
-            const requiredModule = tryRequire(dependency.loadNames);
-            if (!requiredModule) {
-                throw new Error(`تعذر تحميل المكتبة المطلوبة: ${dependency.installName}`);
-            }
-            loaded.set(dependency.installName, requiredModule);
-        }
-    }
-
-    return loaded;
-}
-
-const runtimeModules = loadRuntimeModules();
-const baileys = runtimeModules.get('@whiskeysockets/baileys');
-const { Telegraf, session, Markup } = runtimeModules.get('telegraf');
-const pino = runtimeModules.get('pino');
-const express = runtimeModules.get('express');
-const {
+ const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
@@ -105,9 +6,15 @@ const {
     DisconnectReason,
     delay,
     downloadContentFromMessage
-} = baileys;
+} = require('@whiskeysockets/baileys');
+const { Telegraf, session, Markup } = require('telegraf');
+const pino = require('pino');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { EventEmitter } = require('events');
 
-// =========================
 // الإعدادات الأساسية
 // =========================
 const APP_PORT = Number(process.env.PORT || 8080);
