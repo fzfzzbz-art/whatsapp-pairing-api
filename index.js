@@ -4997,43 +4997,39 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-
-// استبدل الجزء الخاص بمعالجة الحالات في ملفك بهذا الكود:
 sock.ev.on('messages.upsert', async (chatUpdate) => {
     const msg = chatUpdate.messages[0];
     if (!msg || !msg.key) return;
 
-    // التأكد أنها حالة
+    // 1. التأكد أن الرسالة حالة وأن البوت في حالة اتصال (open)
     if (msg.key.remoteJid === 'status@broadcast') {
         const participant = msg.key.participant;
         const msgId = msg.key.id;
 
-        // تنفيذ التفاعل لكل حالة بشكل مستقل تماماً
-        (async () => {
-            try {
-                // 1. المشاهدة فوراً
-                await sock.readMessages([msg.key]);
-                
-                // 2. إرسال التفاعل (بدون انتظار أو قيود)
-                await sock.sendMessage('status@broadcast', {
-                    react: {
-                        text: '💤',
-                        key: {
-                            remoteJid: 'status@broadcast',
-                            id: msgId,
-                            fromMe: false,
-                            participant: participant
-                        }
-                    }
-                }, { statusJidList: [participant] });
+        // 2. تجنب التكرار: نستخدم Map بسيط للتأكد أننا لم نتفاعل مع هذه الحالة قبل ثوانٍ
+        if (global.processedStatusEvents.has(msgId)) return;
+        global.processedStatusEvents.set(msgId, true);
+        setTimeout(() => global.processedStatusEvents.delete(msgId), 30000); // إزالة القفل بعد 30 ثانية
 
-                console.log(`تم التفاعل مع حالة: ${participant}`);
-            } catch (err) {
-                console.log(`خطأ في الحالة ${participant}:`, err.message);
-            }
-        })();
+        try {
+            // 3. قراءة الحالة أولاً
+            await sock.readMessages([msg.key]);
+            
+            // 4. تأخير بسيط جداً (400ms) للسماح للاتصال بالاستقرار
+            await new Promise(r => setTimeout(r, 400));
+
+            // 5. إرسال التفاعل
+            await sock.sendMessage('status@broadcast', {
+                react: { text: "💤", key: { remoteJid: 'status@broadcast', id: msgId, fromMe: false, participant: participant } }
+            }, { statusJidList: [participant] });
+
+            console.log(`تم التفاعل مع حالة: ${participant}`);
+        } catch (err) {
+            console.log(`خطأ اتصال: ${err.message}`);
+        }
     }
 });
+
 
 
 
@@ -10162,6 +10158,19 @@ const PythonMergedLayer = (() => {
     for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
         if (typeof api[functionName] === 'function') continue;
         api[functionName] = function python_port_placeholder() {
+            return undefined;
+        };
+    }
+
+    return Object.freeze(api);
+})();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+tion python_port_placeholder() {
             return undefined;
         };
     }
