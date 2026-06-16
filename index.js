@@ -10170,10 +10170,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
-tion python_port_placeholder() {
-            return undefined;
-        };
-    }
+
 
     return Object.freeze(api);
 })();
