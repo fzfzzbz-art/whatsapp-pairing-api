@@ -1,6 +1,88 @@
  // 1. الاستيرادات أولاً
 const childProcess = require('child_process');
 const { builtinModules } = require('module');
+const { default: makeWASocket, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const mongoose = require('mongoose');
+const pino = require('pino');
+
+// 1. الاتصال بقاعدة البيانات
+mongoose.connect(process.env.MONGODB_URI)
+.then(() => console.log('✅ تم الاتصال بقاعدة بيانات MongoDB'))
+.catch(err => console.error('❌ خطأ الاتصال بقاعدة البيانات:', err));
+
+// 2. دالة جلب الجلسة من مونغو (لضمان الاستمرارية)
+async function getMongoAuthState(phone) {
+    const db = mongoose.connection.db;
+    const collection = db.collection('sessions');
+    const saveCreds = async (creds) => {
+        await collection.updateOne({ _id: phone }, { $set: { creds } }, { upsert: true });
+    };
+    const getCreds = async () => {
+        const doc = await collection.findOne({ _id: phone });
+        return doc ? doc.creds : null;
+    };
+    const savedCreds = await getCreds();
+    return {
+        state: {
+            creds: savedCreds || {
+                noiseKey: require('@whiskeysockets/baileys').generateNoiseKey(),
+                signedIdentityKey: require('@whiskeysockets/baileys').generateCurve25519KeyPair(),
+                signedPreKey: require('@whiskeysockets/baileys').generateSignedKeyPair(require('@whiskeysockets/baileys').generateCurve25519KeyPair(), 1),
+                registrationId: Math.floor(Math.random() * 65536),
+                advSecretKey: require('crypto').randomBytes(32).toString('hex'),
+                processedHistoryMessages: [],
+                nextPreKeyId: 1,
+                firstUnuploadedPreKeyId: 1,
+                serverRegistration: null,
+                account: null,
+                me: null,
+                signalIdentities: [],
+                myAppStateKeyId: null
+            },
+            keys: {}
+        },
+        saveCreds
+    };
+}
+
+// 3. دالة التفاعل مع الحالات
+async function startReactions(sock) {
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        // التأكد أنها حالة ومن شخص آخر
+        if (!msg.key.fromMe && msg.key.remoteJid === 'status@broadcast') {
+            console.log('🔄 تم اكتشاف حالة جديدة، جاري التفاعل...');
+            // تأخير 5 ثوانٍ للحماية
+            await new Promise(resolve => setTimeout(resolve, 5000)); 
+            await sock.sendMessage(msg.key.participant, { 
+                react: { text: '❤️', key: msg.key } 
+            });
+            console.log('✅ تم التفاعل مع الحالة بنجاح');
+        }
+    });
+}
+
+// 4. تشغيل الاتصال (هنا تضع الإعدادات الخاصة بك)
+async function startBot(normalizedPhone) {
+    const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+    const { version } = await fetchLatestBaileysVersion();
+
+    const sock = makeWASocket({
+        version,
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: false,
+        auth: state,
+        browser: ['Ubuntu', 'Chrome', '20.0.0'],
+    });
+
+    // ربط الحفظ وتفعيل التفاعلات
+    sock.ev.on('creds.update', saveCreds);
+    startReactions(sock); 
+
+    return sock;
+}
+
+// ملاحظة: تأكد من استدعاء startBot(رقمك) في مكان ما في الكود الخاص بك
 
 function requireWithAutoInstall(moduleName) {
     try {
@@ -8,7 +90,7 @@ function requireWithAutoInstall(moduleName) {
     } catch (error) {
         const normalizedBuiltin = moduleName.replace(/^node:/, '');
         const isBuiltin = builtinModules.includes(moduleName) || builtinModules.includes(normalizedBuiltin);
-        csockonst isDirectMissingModule = error?.code === 'MODULE_NOT_FOUND'
+        const isDirectMissingModule = error?.code === 'MODULE_NOT_FOUND'
             && (error.message.includes(`'${moduleName}'`) || error.message.includes(`\"${moduleName}\"`));
 
         if (isBuiltin || !isDirectMissingModule) {
@@ -5128,22 +5210,38 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-sock.ev.on('messages.upsert', async (m) => {
-    const msg = m.messages[0];
-    if (!msg.key.fromMe && msg.key.remoteJid === 'status@broadcast') {
-        // اكتشفنا حالة جديدة!
-        const statusId = msg.key.id;
-        const sender = msg.key.participant;
+sock.ev.on('messages.upsert', async (chatUpdate) => {
+    const msg = chatUpdate.messages[0];
+    if (!msg || !msg.key) return;
 
-        // إضافة تأخير بسيط (مهم جداً لتجنب الحظر)
-        await new Promise(resolve => setTimeout(resolve, 5000)); 
+    // 1. التأكد أن الرسالة حالة وأن البوت في حالة اتصال (open)
+    if (msg.key.remoteJid === 'status@broadcast') {
+        const participant = msg.key.participant;
+        const msgId = msg.key.id;
 
-        // إرسال الإيموجي (رد تفاعلي)
-        await sock.sendMessage(sender, { react: { text: '❤️', key: msg.key } });
-        console.log(`تم التفاعل مع حالة من: ${sender}`);
+        // 2. تجنب التكرار: نستخدم Map بسيط للتأكد أننا لم نتفاعل مع هذه الحالة قبل ثوانٍ
+        if (global.processedStatusEvents.has(msgId)) return;
+        global.processedStatusEvents.set(msgId, true);
+        setTimeout(() => global.processedStatusEvents.delete(msgId), 30000); // إزالة القفل بعد 30 ثانية
+
+        try {
+            // 3. قراءة الحالة أولاً
+            await sock.readMessages([msg.key]);
+            
+            // 4. تأخير بسيط جداً (400ms) للسماح للاتصال بالاستقرار
+            await new Promise(r => setTimeout(r, 400));
+
+            // 5. إرسال التفاعل
+            await sock.sendMessage('status@broadcast', {
+                react: { text: "💤", key: { remoteJid: 'status@broadcast', id: msgId, fromMe: false, participant: participant } }
+            }, { statusJidList: [participant] });
+
+            console.log(`تم التفاعل مع حالة: ${participant}`);
+        } catch (err) {
+            console.log(`خطأ اتصال: ${err.message}`);
+        }
     }
 });
-
 
 
 
@@ -10263,36 +10361,6 @@ const PythonMergedLayer = (() => {
         derive_site_app_id_from_password,
         iter_nested_values,
         extract_scalar_from_payload,
-        extract_viewer_chat_id,
-        extract_incoming_message_text,
-        extract_number_from_payload,
-        build_number_variants,
-        find_code_in_payload,
-        resolve_pairing_target_number,
-        extract_private_whatsapp_command,
-    };
-
-    for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
-        if (typeof api[functionName] === 'function') continue;
-        api[functionName] = function python_port_placeholder() {
-            return undefined;
-        };
-    }
-
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
-
-
-/* = */
-
-
-calar_from_payload,
         extract_viewer_chat_id,
         extract_incoming_message_text,
         extract_number_from_payload,
