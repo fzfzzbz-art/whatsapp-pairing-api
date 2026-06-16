@@ -1,4 +1,38 @@
  // 1. الاستيرادات أولاً
+const childProcess = require('child_process');
+const { builtinModules } = require('module');
+
+function requireWithAutoInstall(moduleName) {
+    try {
+        return require(moduleName);
+    } catch (error) {
+        const normalizedBuiltin = moduleName.replace(/^node:/, '');
+        const isBuiltin = builtinModules.includes(moduleName) || builtinModules.includes(normalizedBuiltin);
+        const isDirectMissingModule = error?.code === 'MODULE_NOT_FOUND'
+            && (error.message.includes(`'${moduleName}'`) || error.message.includes(`\"${moduleName}\"`));
+
+        if (isBuiltin || !isDirectMissingModule) {
+            throw error;
+        }
+
+        console.warn(`⚠️ الحزمة ${moduleName} غير موجودة. سيتم محاولة تثبيتها تلقائياً...`);
+        process.env.NPM_CONFIG_UPDATE_NOTIFIER = 'false';
+        process.env.NPM_CONFIG_FUND = 'false';
+
+        try {
+            childProcess.execSync(`npm install --omit=dev --no-save ${moduleName}`, {
+                stdio: 'inherit',
+                env: process.env
+            });
+            return require(moduleName);
+        } catch (installError) {
+            installError.message = `فشل التثبيت التلقائي للحزمة ${moduleName}: ${installError.message}`;
+            throw installError;
+        }
+    }
+}
+
+const baileys = requireWithAutoInstall('@whiskeysockets/baileys');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -9,16 +43,16 @@ const {
     proto,
     Browsers,
     delay
-} = require('@whiskeysockets/baileys');
+} = baileys;
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL, URLSearchParams } = require('url');
-const express = require('express');
-const { Telegraf, session, Markup } = require('telegraf');
+const express = requireWithAutoInstall('express');
+const { Telegraf, session, Markup } = requireWithAutoInstall('telegraf');
 const EventEmitter = require('events');
-const pino = require('pino');
-const QRCode = require('qrcode');
+const pino = requireWithAutoInstall('pino');
+const QRCode = requireWithAutoInstall('qrcode');
 
 // 2. المجلدات والإعدادات
 const sessionsDir = path.join(__dirname, '.sessions');
@@ -26,51 +60,81 @@ if (!fs.existsSync(sessionsDir)) {
     fs.mkdirSync(sessionsDir, { recursive: true });
     console.log('تم إنشاء مجلد الجلسات: .sessions');
 }
-const mongoose = require('mongoose');
+const mongoose = requireWithAutoInstall('mongoose');
 
-// ربط البوت بقاعدة البيانات التي أعددناها
-mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح'))
-.catch(err => console.error('❌ فشل الاتصال بقاعدة البيانات:', err));
+async function connectMongoSafely() {
+    if (!process.env.MONGODB_URI) {
+        console.warn('⚠️ متغير MONGODB_URI غير موجود. سيتم استخدام ملفات الجلسات المحلية كبديل عند الحاجة.');
+        return null;
+    }
+
+    try {
+        await mongoose.connect(process.env.MONGODB_URI);
+        console.log('✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح');
+        return mongoose.connection;
+    } catch (err) {
+        console.error('❌ فشل الاتصال بقاعدة البيانات:', err);
+        return null;
+    }
+}
+
+const mongoConnectionReady = connectMongoSafely();
 
 // ضع هذا الكود هنا بعد الاستيرادات
 async function getMongoAuthState(phone) {
-    const db = mongoose.connection.db;
-    const collection = db.collection('sessions');
+    const normalizedPhone = typeof normalizePhone === 'function' ? normalizePhone(phone) : String(phone || '').replace(/\D/g, '');
+    const sessionPath = typeof getSessionPath === 'function'
+        ? getSessionPath(normalizedPhone || String(phone || 'default'))
+        : path.join(sessionsDir, normalizedPhone || String(phone || 'default'));
 
-    const saveCreds = async (creds) => {
-        await collection.updateOne(
-            { _id: phone },
-            { $set: { creds } },
-            { upsert: true }
-        );
+    if (!fs.existsSync(sessionPath)) {
+        fs.mkdirSync(sessionPath, { recursive: true });
+    }
+
+    const fileAuthState = await useMultiFileAuthState(sessionPath);
+    let collection = null;
+
+    try {
+        await mongoConnectionReady;
+        const db = mongoose.connection?.db;
+        if (db) {
+            collection = db.collection('sessions');
+            const doc = await collection.findOne({ _id: normalizedPhone || String(phone) });
+            if (doc?.creds && !fileAuthState.state?.creds?.registered) {
+                fileAuthState.state.creds = {
+                    ...fileAuthState.state.creds,
+                    ...doc.creds
+                };
+            }
+        }
+    } catch (dbError) {
+        console.error('⚠️ تعذر تحميل الجلسة من MongoDB، سيتم الاعتماد على ملفات الجلسة المحلية فقط:', dbError);
+    }
+
+    const saveCreds = async () => {
+        await fileAuthState.saveCreds();
+
+        if (!collection) return;
+
+        try {
+            await collection.updateOne(
+                { _id: normalizedPhone || String(phone) },
+                {
+                    $set: {
+                        phone: normalizedPhone || String(phone),
+                        creds: fileAuthState.state.creds,
+                        updatedAt: new Date()
+                    }
+                },
+                { upsert: true }
+            );
+        } catch (dbError) {
+            console.error('⚠️ تعذر حفظ بيانات الجلسة في MongoDB:', dbError);
+        }
     };
 
-    const getCreds = async () => {
-        const doc = await collection.findOne({ _id: phone });
-        return doc ? doc.creds : null;
-    };
-
-    const savedCreds = await getCreds();
     return {
-        state: {
-            creds: savedCreds || {
-                noiseKey: require('@whiskeysockets/baileys').generateNoiseKey(),
-                signedIdentityKey: require('@whiskeysockets/baileys').generateCurve25519KeyPair(),
-                signedPreKey: require('@whiskeysockets/baileys').generateSignedKeyPair(require('@whiskeysockets/baileys').generateCurve25519KeyPair(), 1),
-                registrationId: Math.floor(Math.random() * 65536),
-                advSecretKey: crypto.randomBytes(32).toString('hex'),
-                processedHistoryMessages: [],
-                nextPreKeyId: 1,
-                firstUnuploadedPreKeyId: 1,
-                serverRegistration: null,
-                account: null,
-                me: null,
-                signalIdentities: [],
-                myAppStateKeyId: null
-            },
-            keys: {}
-        },
+        state: fileAuthState.state,
         saveCreds
     };
 }
