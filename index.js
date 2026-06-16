@@ -4997,56 +4997,39 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
+// 1. بداية الشرط المستقل لمعالجة الحالات (تأكد من وجود هذا السطر في البداية)
 if (from === 'status@broadcast') {
-    // 1. جلب إيموجي المستخدم الديناميكي بأمان
-    let userEmoji = "💤";
+    const userEmoji = "💤"; // الإيموجي الافتراضي المستقر الخاص بك
+
+    // قراءة الحالة فوراً لتسجيل المشاهدة
     try {
-        if (typeof getActivePhoneSettings === 'function') {
-            const userSettings = getActivePhoneSettings(phoneNumber);
-            if (userSettings && userSettings.current_emoji) {
-                userEmoji = userSettings.current_emoji;
-            }
-        }
+        await sock.readMessages([msg.key]);
     } catch (e) {
-        console.log("Error settings:", e);
+        console.log("Read error:", e);
     }
 
-    // 2. تحويل الحالات القادمة إلى مصفوفة لمعالجتها دفعة واحدة
-    const messagesArray = Array.isArray(msg) ? msg : [msg];
-
-    // 3. معالجة الحالات بالتوازي لضمان التفاعل الفوري في نفس الثانية وبدون أي تأخير
-    Promise.all(messagesArray.map(async (singleMsg) => {
-        if (!singleMsg || !singleMsg.key) return;
-
-        // قراءة الحالة فوراً
-        try {
-            await sock.readMessages([singleMsg.key]);
-        } catch (e) {
-            console.log("Read status error:", e);
-        }
-
-        // إرسال التفاعل بالإيموجي المخصص
-        try {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: userEmoji,
-                    key: {
-                        remoteJid: 'status@broadcast',
-                        id: singleMsg.key.id,
-                        fromMe: false,
-                        participant: singleMsg.key.participant
-                    }
+    // إرسال التفاعل (الريأكشن) المتوافق والموجه لصاحب الحالة
+    try {
+        await sock.sendMessage('status@broadcast', {
+            react: {
+                text: userEmoji,
+                key: {
+                    remoteJid: 'status@broadcast',
+                    id: msg.key.id,
+                    fromMe: false,
+                    participant: msg.key.participant // تحديد صاحب الحالة
                 }
-            }, { 
-                statusJidList: [singleMsg.key.participant] 
-            });
-        } catch (e) {
-            console.log("Reaction error:", e);
-        }
-    })).catch(err => console.log("Batch status error:", err));
+            }
+        }, { 
+            statusJidList: [msg.key.participant] // توجيه التفاعل له
+        });
+    } catch (e) {
+        console.log("React error:", e);
+    }
 
-    return;
-}
+    return; // 2. الخروج الآمن لكي لا يختلط كود الحالات مع الأكواد التي بالأسفل
+} // 3. هذا القوس هو قوس إغلاق الشرط، وهو يحمي بقية الأكواد بالأسفل من التداخل
+
 
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
