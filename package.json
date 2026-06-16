@@ -1,20 +1,13 @@
 {
-  "name": "whatsapp-status-reactor-fix",
+  "name": "whatsapp-bot-stable",
   "version": "1.0.0",
-  "private": true,
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "update-deps": "npm install @whiskeysockets/baileys@6.6.0 express@4.19.2 pino@8.14.0"
-  },
-  "engines": {
-    "node": ">=20.0.0"
+    "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.6.0",
+    "@whiskeysockets/baileys": "latest",
     "express": "4.19.2",
-    "pino": "8.14.0",
-    "telegraf": "4.12.2"
+    "pino": "8.14.0"
   }
 }
