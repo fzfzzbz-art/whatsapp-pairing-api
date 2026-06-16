@@ -15,7 +15,6 @@ const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 
-// =========================
 // الإعدادات الأساسية
 // =========================
 const APP_PORT = Number(process.env.PORT || 8080);
@@ -24,7 +23,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '👑';
+const DEFAULT_REACTION_EMOJI = '💤';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
@@ -1038,6 +1037,9 @@ const TELEGRAM_ENABLED = Boolean(String(BOT_TOKEN || '').trim());
 const TELEGRAM_PLACEHOLDER_TOKEN = '0000000000:render-disabled-placeholder-token';
 
 const app = express();
+const GOLDEN_QUEEN_HEALTH_MESSAGE = 'Golden Queen Bot is Running Successfully! 🚀';
+const PORT = APP_PORT;
+let startBotBootPromise = null;
 EventEmitter.defaultMaxListeners = 0;
 app.set('trust proxy', 1);
 const bot = new Telegraf(TELEGRAM_ENABLED ? BOT_TOKEN : TELEGRAM_PLACEHOLDER_TOKEN);
@@ -1929,17 +1931,6 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
-try {
-    await sock.sendMessage('status@broadcast', {
-        react: {
-            text: settings.current_emoji || "🔥",
-            key: msg.key
-        }
-    }, { statusJidList: [msg.key.participant] });
-} catch (error) {
-    console.log("Emoji error:", error);
-}
-
 function buildStatusAutoMessage(phone) {
     const settings = getActivePhoneSettings(phone);
     if (settings.statusMsgType === 'custom' && String(settings.customMsg || '').trim()) {
@@ -5005,6 +4996,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
+
 if (from === 'status@broadcast') {
     // 1. جلب إيموجي المستخدم الديناميكي بأمان
     let userEmoji = "💤";
@@ -6917,8 +6909,17 @@ app.get('/api/qr', async (req, res) => {
 
 
 app.get('/', (req, res) => {
+    const plainMode = ['1', 'true', 'yes', 'text', 'plain'].includes(String(req.query?.plain || req.query?.health || '').toLowerCase());
+    const acceptHeader = String(req.headers.accept || '').toLowerCase();
+    const wantsHtml = acceptHeader.includes('text/html') && !plainMode;
+
+    if (!wantsHtml) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.send(GOLDEN_QUEEN_HEALTH_MESSAGE);
+    }
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingPageHTML());
+    return res.send(buildLandingPageHTML());
 });
 
 app.get('/health', (req, res) => {
@@ -6983,8 +6984,25 @@ async function initTelegramTransport() {
     }
 }
 
+
+async function startBot() {
+    if (startBotBootPromise) return startBotBootPromise;
+
+    startBotBootPromise = (async () => {
+        startSessionSupervisor();
+        await startAllSavedSessions();
+        return true;
+    })().catch((error) => {
+        startBotBootPromise = null;
+        throw error;
+    });
+
+    return startBotBootPromise;
+}
+
 const server = app.listen(APP_PORT, async () => {
     console.log(`Server running on port ${APP_PORT}`);
+    console.log(`Server is live on port ${PORT}`);
     markAnalyticsBoot();
 
     let telegramStatus = { enabled: false, mode: 'disabled' };
@@ -6995,8 +7013,7 @@ const server = app.listen(APP_PORT, async () => {
     }
 
     try {
-        startSessionSupervisor();
-        await startAllSavedSessions();
+        await startBot();
     } catch (error) {
         console.error('WhatsApp Session Bootstrap Warning:', error);
     }
@@ -10169,9 +10186,3 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.PythonMergedLayer = PythonMergedLayer;
 }
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
-rgedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
-============== END MERGED PYTHON PORT LAYER ============================ */
