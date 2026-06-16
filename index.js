@@ -5128,39 +5128,31 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
         }
 
-sock.ev.on('messages.upsert', async (chatUpdate) => {
-    const msg = chatUpdate.messages[0];
-    if (!msg || !msg.key) return;
-
-    // 1. التأكد أن الرسالة حالة وأن البوت في حالة اتصال (open)
-    if (msg.key.remoteJid === 'status@broadcast') {
-        const participant = msg.key.participant;
-        const msgId = msg.key.id;
-
-        // 2. تجنب التكرار: نستخدم Map بسيط للتأكد أننا لم نتفاعل مع هذه الحالة قبل ثوانٍ
-        if (global.processedStatusEvents.has(msgId)) return;
-        global.processedStatusEvents.set(msgId, true);
-        setTimeout(() => global.processedStatusEvents.delete(msgId), 30000); // إزالة القفل بعد 30 ثانية
-
-        try {
-            // 3. قراءة الحالة أولاً
-            await sock.readMessages([msg.key]);
+async function startReactions(sock) {
+    sock.ev.on('messages.upsert', async (m) => {
+        // التأكد من أن الرسالة هي حالة ومن شخص آخر
+        const msg = m.messages[0];
+        if (!msg.key.fromMe && msg.key.remoteJid === 'status@broadcast') {
             
-            // 4. تأخير بسيط جداً (400ms) للسماح للاتصال بالاستقرار
-            await new Promise(r => setTimeout(r, 400));
+            // إضافة سجل للتأكد من وصول الحالة
+            console.log(`🔎 حالة جديدة قادمة من: ${msg.key.participant}, ID: ${msg.key.id}`);
 
-            // 5. إرسال التفاعل
-            await sock.sendMessage('status@broadcast', {
-                react: { text: "💤", key: { remoteJid: 'status@broadcast', id: msgId, fromMe: false, participant: participant } }
-            }, { statusJidList: [participant] });
+            // الحل: لا ننتظر تحديثات الـ upsert المعقدة، بل نرسل التفاعل فوراً
+            await new Promise(resolve => setTimeout(resolve, 3000)); 
 
-            console.log(`تم التفاعل مع حالة: ${participant}`);
-        } catch (err) {
-            console.log(`خطأ اتصال: ${err.message}`);
+            try {
+                // إرسال التفاعل
+                await sock.sendMessage(msg.key.participant, { 
+                    react: { text: '❤️', key: msg.key } 
+                }, { statusJidList: [msg.key.participant] }); // إضافة قائمة المستلمين للحالة
+                
+                console.log(`✅ تم التفاعل بنجاح مع الحالة: ${msg.key.id}`);
+            } catch (err) {
+                console.error(`❌ فشل التفاعل: ${err.message}`);
+            }
         }
-    }
-});
-
+    });
+}
 
 
 
