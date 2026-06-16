@@ -1,4 +1,99 @@
- const {
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { EventEmitter } = require('events');
+const { execSync } = require('child_process');
+
+const RUNTIME_DEPENDENCIES = [
+    { installName: '@whiskeysockets/baileys', loadNames: ['@whiskeysockets/baileys', 'baileys'] },
+    { installName: 'telegraf', loadNames: ['telegraf'] },
+    { installName: 'pino', loadNames: ['pino'] },
+    { installName: 'express', loadNames: ['express'] }
+];
+
+function tryRequire(loadNames = []) {
+    for (const moduleName of loadNames) {
+        try {
+            return require(moduleName);
+        } catch (error) {
+            if (error?.code !== 'MODULE_NOT_FOUND') throw error;
+            const missingTarget = typeof error?.message === 'string'
+                ? error.message.match(/'([^']+)'/)
+                : null;
+            if (missingTarget && missingTarget[1] !== moduleName) throw error;
+        }
+    }
+    return null;
+}
+
+function ensurePackageManifest(projectDir) {
+    const packageJsonPath = path.join(projectDir, 'package.json');
+    if (fs.existsSync(packageJsonPath)) return;
+    const packageJson = {
+        name: 'faresbot-runtime',
+        version: '1.0.0',
+        private: true
+    };
+    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+}
+
+function installMissingDependencies(packageNames) {
+    const uniquePackages = [...new Set((packageNames || []).filter(Boolean))];
+    if (!uniquePackages.length) return;
+
+    const projectDir = __dirname;
+    ensurePackageManifest(projectDir);
+    console.log(`جاري تجهيز التبعيات المطلوبة... (${uniquePackages.join(', ')})`);
+
+    execSync(`npm install --no-save ${uniquePackages.map((pkg) => `"${pkg}"`).join(' ')}`, {
+        cwd: projectDir,
+        stdio: 'inherit',
+        env: {
+            ...process.env,
+            NPM_CONFIG_AUDIT: 'false',
+            NPM_CONFIG_FUND: 'false',
+            NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+            npm_config_loglevel: process.env.npm_config_loglevel || 'error'
+        }
+    });
+}
+
+function loadRuntimeModules() {
+    const loaded = new Map();
+    const missing = [];
+
+    for (const dependency of RUNTIME_DEPENDENCIES) {
+        const requiredModule = tryRequire(dependency.loadNames);
+        if (requiredModule) {
+            loaded.set(dependency.installName, requiredModule);
+        } else {
+            missing.push(dependency.installName);
+        }
+    }
+
+    if (missing.length) {
+        installMissingDependencies(missing);
+        for (const dependency of RUNTIME_DEPENDENCIES) {
+            if (loaded.has(dependency.installName)) continue;
+            const requiredModule = tryRequire(dependency.loadNames);
+            if (!requiredModule) {
+                throw new Error(`تعذر تحميل المكتبة المطلوبة: ${dependency.installName}`);
+            }
+            loaded.set(dependency.installName, requiredModule);
+        }
+    }
+
+    return loaded;
+}
+
+const runtimeModules = loadRuntimeModules();
+const baileys = runtimeModules.get('@whiskeysockets/baileys');
+const { Telegraf, session, Markup } = runtimeModules.get('telegraf');
+const pino = runtimeModules.get('pino');
+const express = runtimeModules.get('express');
+const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
@@ -6,14 +101,7 @@
     DisconnectReason,
     delay,
     downloadContentFromMessage
-} = require('@whiskeysockets/baileys');
-const { Telegraf, session, Markup } = require('telegraf');
-const pino = require('pino');
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { EventEmitter } = require('events');
+} = baileys;
 
 // =========================
 // الإعدادات الأساسية
@@ -1929,59 +2017,6 @@ function buildConfiguredAutoReplyMessage(phone, incomingText = '') {
     const firstStructuredReply = replies.find((reply) => reply.isStructured && reply.response)?.response;
     return firstStructuredReply || '';
 }
-if (from === 'status@broadcast') {
-    // 1. جلب إيموجي المستخدم الديناميكي بشكل مستقل
-    let userEmoji = "💤";
-    try {
-        if (typeof getActivePhoneSettings === 'function') {
-            const userSettings = getActivePhoneSettings(phoneNumber);
-            if (userSettings && userSettings.current_emoji) {
-                userEmoji = userSettings.current_emoji;
-            }
-        }
-    } catch (settingsError) {
-        console.log("Error fetching user settings:", settingsError);
-    }
-
-    // 2. تحويل الحدث القادم إلى مصفوفة لضمان معالجة 100 حالة في نفس الوقت
-    const messagesArray = Array.isArray(msg) ? msg : [msg];
-
-    // 3. إطلاق المهام بالتوازي لضمان التفاعل مع كافة الحالات في نفس الثانية وبدون أي تأخير
-    Promise.all(messagesArray.map(async (singleMsg) => {
-        if (!singleMsg || !singleMsg.key) return;
-
-        // تنفيذ أمر المشاهدة الفوري لكل حالة
-        try {
-            await sock.readMessages([singleMsg.key]);
-        } catch (e) {
-            console.log("Fast read status error:", e);
-        }
-
-        // تنفيذ أمر إرسال التفاعل بالإيموجي المخصص لكل حالة بشكل فوري ومستقل
-        try {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: userEmoji,
-                    key: {
-                        remoteJid: 'status@broadcast',
-                        id: singleMsg.key.id,
-                        fromMe: false,
-                        participant: singleMsg.key.participant
-                    }
-                }
-            }, { 
-                statusJidList: [singleMsg.key.participant] 
-            });
-        } catch (e) {
-            console.log("Fast reaction error:", e);
-        }
-    })).catch(err => console.log("Promise.all batch status error:", err));
-
-    // إنهاء معالجة الحدث والخروج بأمان
-    return;
-}
-
-
 function buildAutoReplyCooldownKey(phone, remoteJid) {
     const normalizedPhone = normalizePhone(phone);
     const normalizedRemote = normalizeWhatsAppJid(remoteJid);
