@@ -10172,11 +10172,3 @@ if (typeof module !== 'undefined' && module.exports) {
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
 
 
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
