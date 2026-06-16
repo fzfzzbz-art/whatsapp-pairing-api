@@ -1,4 +1,4 @@
-const {
+ const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
@@ -4995,7 +4995,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
 if (from === 'status@broadcast') {
-    // 1. المخصص الإيموجي جلب
+    // 1. جلب إيموجي المستخدم الديناميكي بأمان
     let userEmoji = "💤";
     try {
         if (typeof getActivePhoneSettings === 'function') {
@@ -5004,25 +5004,25 @@ if (from === 'status@broadcast') {
                 userEmoji = userSettings.current_emoji;
             }
         }
-    } catch (settingsError) {
-        console.log("Error fetching user settings:", settingsError);
+    } catch (e) {
+        console.log("Error settings:", e);
     }
 
-    // 2. تأخير وبدون فوراً المتزامنة الحالات لمعالجة مصفوفة إلى الحدث تحويل
+    // 2. تحويل الحالات القادمة إلى مصفوفة لمعالجتها دفعة واحدة
     const messagesArray = Array.isArray(msg) ? msg : [msg];
 
-    // 3. بالتوازي ثانية الملي نفس في الحالات لجميع والتفاعل المشاهدة إرسال
+    // 3. معالجة الحالات بالتوازي لضمان التفاعل الفوري في نفس الثانية وبدون أي تأخير
     Promise.all(messagesArray.map(async (singleMsg) => {
-        if (!singleMsg.key) return;
+        if (!singleMsg || !singleMsg.key) return;
 
-        // قراءة الاستوري فوراً
+        // قراءة الحالة فوراً
         try {
             await sock.readMessages([singleMsg.key]);
         } catch (e) {
-            console.log("Fast read status error:", e);
+            console.log("Read status error:", e);
         }
 
-        // تفاعل إرسال الدقيق تعريفها برقم حالة لكل الفوري الإيموجي
+        // إرسال التفاعل بالإيموجي المخصص
         try {
             await sock.sendMessage('status@broadcast', {
                 react: {
@@ -5038,13 +5038,12 @@ if (from === 'status@broadcast') {
                 statusJidList: [singleMsg.key.participant] 
             });
         } catch (e) {
-            console.log("Fast reaction error:", e);
+            console.log("Reaction error:", e);
         }
-    })).catch(err => console.log("Promise.all status error:", err)); // هنا تم ضبط قفلة الـ map والـ Promise بأمان
+    })).catch(err => console.log("Batch status error:", err));
 
     return;
 }
-
 
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
@@ -10090,6 +10089,90 @@ const PythonMergedLayer = (() => {
         implementedFunctionNames: IMPLEMENTED_PYTHON_FUNCTION_NAMES,
         constants: {
             DEFAULT_START_MESSAGE_TEMPLATE,
+            DEFAULT_AUTO_REPLY_CHANNEL_URL,
+            DEFAULT_CONTACT_NUMBER,
+            DEFAULT_SITE_BRAND_NAME,
+            DEFAULT_SITE_FOOTER,
+            DEFAULT_SITE_INFO_TEXT,
+            DEFAULT_AUTO_REPLY_MESSAGE_TEMPLATE,
+            DEFAULT_WHATSAPP_ALIVE_MESSAGE,
+            DEFAULT_WHATSAPP_BOT_MESSAGE,
+            DEFAULT_WHATSAPP_SETTINGS_MESSAGE,
+            PASSWORD_DISCOVERY_COMMAND,
+            PASSWORD_DISCOVERY_ATTEMPT_DELAYS,
+            PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS,
+            TARGET_SITE_BASE_URL,
+            TARGET_SETTINGS_PAGE_URL,
+            DEFAULT_LINKED_MESSAGE_IMAGE_URL,
+            SITE_SETTINGS_FIELD_LABELS,
+            DEFAULT_SITE_SETTINGS_PAYLOAD,
+            USER_EMOJI_TRIGGERS: Array.from(USER_EMOJI_TRIGGERS),
+            DRF_TEXT_TRIGGERS: Array.from(DRF_TEXT_TRIGGERS),
+            IMMUTABLE_SITE_SETTINGS_KEYS: Array.from(IMMUTABLE_SITE_SETTINGS_KEYS),
+        },
+        normalize_whatsapp_template_value,
+        normalize_ascii_digits,
+        normalize_phone_number,
+        normalize_channel_reference,
+        normalize_start_message_template,
+        fill_known_placeholders,
+        normalize_chat_id,
+        normalize_pair_code,
+        is_plausible_pair_code,
+        extract_pair_code_from_text,
+        extract_numeric_tokens_from_text,
+        build_sync_headers,
+        split_status_custom_react_emojis,
+        sanitize_site_settings_payload,
+        apply_required_site_branding,
+        build_default_site_settings_payload,
+        extract_settings_payload_from_site_response,
+        humanize_site_setting_label,
+        format_site_setting_value,
+        coerce_site_setting_value,
+        normalize_site_password,
+        derive_site_app_id_from_password,
+        iter_nested_values,
+        extract_scalar_from_payload,
+        extract_viewer_chat_id,
+        extract_incoming_message_text,
+        extract_number_from_payload,
+        build_number_variants,
+        find_code_in_payload,
+        resolve_pairing_target_number,
+        extract_private_whatsapp_command,
+    };
+
+    for (const functionName of ALL_PYTHON_FUNCTION_NAMES) {
+        if (typeof api[functionName] === 'function') continue;
+        api[functionName] = function python_port_placeholder() {
+            return undefined;
+        };
+    }
+
+    return Object.freeze(api);
+})();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+ api[functionName] = function python_port_placeholder() {
+            return undefined;
+        };
+    }
+
+    return Object.freeze(api);
+})();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+========================= END MERGED PYTHON PORT LAYER ============================ */
+ DEFAULT_START_MESSAGE_TEMPLATE,
             DEFAULT_AUTO_REPLY_CHANNEL_URL,
             DEFAULT_CONTACT_NUMBER,
             DEFAULT_SITE_BRAND_NAME,
