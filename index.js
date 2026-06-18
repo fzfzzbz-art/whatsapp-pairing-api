@@ -32,14 +32,19 @@ function requireWithAutoInstall(moduleName) {
     }
 }
 
+// استدعاء المكتبة أولاً
 const baileys = requireWithAutoInstall('@whiskeysockets/baileys');
+
+// استخراج الوظائف بطريقة آمنة
 const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
     DisconnectReason,
     downloadContentFromMessage,
-    jidNormalizedUser,
+    jidNormalizedUser
+} = baileys;
+
     proto,
     Browsers,
     delay
