@@ -1,4 +1,4 @@
-const statusHandler = require('./statusHandler'); 
+const statusHandler = require('./interactions');
 const childProcess = require('child_process');
 const { builtinModules } = require('module');
 
