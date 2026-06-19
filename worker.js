@@ -1,7 +1,8 @@
 "use strict";
 
-const { makeWASocket, useMultiFileAuthState, delay, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const fs = require('fs'); // استدعاء مكتبة النظام للتأكد من المجلدات
 const statusHandler = require('./interactions');
 
 function normalizeJid(jid = '') {
@@ -9,18 +10,26 @@ function normalizeJid(jid = '') {
 }
 
 async function startSession(phoneNumber) {
-    const { state, saveCreds } = await useMultiFileAuthState(`./data/${phoneNumber}`);
+    // التأكد من وجود مجلد البيانات
+    const sessionPath = `./data/${phoneNumber}`;
+    if (!fs.existsSync('./data')){
+        fs.mkdirSync('./data');
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: 'silent' })
+        logger: pino({ level: 'silent' }),
+        browser: ['Bot', 'Safari', '1.0.0'] // إضافة اسم متصفح لتجنب الحظر
     });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log(`❌ انقطع الاتصال، إعادة المحاولة...`);
             if (shouldReconnect) startSession(phoneNumber);
         } else if (connection === 'open') {
             console.log(`✅ الرقم متصل الآن [${phoneNumber}]`);
@@ -29,33 +38,28 @@ async function startSession(phoneNumber) {
 
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
-        if (!msg.message) return;
+        if (!msg.message || !msg.key || msg.key.fromMe) return;
 
-        // التحقق إذا كانت الرسالة حالة
         if (statusHandler.isStatusBroadcastMessage(msg, normalizeJid)) {
-            
-            // 1. المشاهدة (Read Status)
             try {
+                // 1. المشاهدة
                 await sock.readMessages([{
                     remoteJid: 'status@broadcast',
                     id: msg.key.id,
                     participant: msg.key.participant
                 }]);
+
+                // 2. التفاعل
+                const reacted = await statusHandler.sendStatusReactionWithFallbacks({
+                    sock: sock,
+                    msg: msg,
+                    emoji: '❤️',
+                    phoneNumber: phoneNumber
+                });
+
+                if (reacted) console.log("تمت المشاهدة والتفاعل بنجاح");
             } catch (err) {
-                console.error("خطأ في المشاهدة:", err);
-            }
-
-            // 2. التفاعل (Reaction)
-            // نستخدم دالة التفاعل مع تمرير المتغيرات الصحيحة
-            const reacted = await statusHandler.sendStatusReactionWithFallbacks({
-                sock: sock,
-                msg: msg,
-                emoji: '❤️',
-                phoneNumber: phoneNumber
-            });
-
-            if (reacted) {
-                console.log("تمت مشاهدة الحالة والتفاعل معها بنجاح");
+                console.error("خطأ أثناء معالجة الحالة:", err.message);
             }
         }
     });
