@@ -58,14 +58,3 @@ sock.ev.on('messages.upsert', async (m) => {
 });
 
     
-
-            if (!result?.ok) {
-                console.error(`فشل التفاعل مع حالة ${participant}:`, result?.error?.message || result?.error || 'unknown_error');
-            }
-        } catch (err) {
-            console.error(`خطأ في تفاعل الرقم ${phoneNumber}:`, err?.message || err);
-        }
-    });
-}
-
-module.exports = { startSession };
