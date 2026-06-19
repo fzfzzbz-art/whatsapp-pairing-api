@@ -10,7 +10,9 @@ async function startSession(phoneNumber) {
     // التأكد من وجود مجلد البيانات لضمان عدم حدوث خطأ
     if (!fs.existsSync('./data')) fs.mkdirSync('./data');
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { useMongoAuthState } = require('./mongo-auth');
+const { state, saveCreds } = await useMongoAuthState(phoneNumber);
+
 
     const sock = makeWASocket({
         auth: state,
