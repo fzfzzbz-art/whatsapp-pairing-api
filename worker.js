@@ -2,19 +2,13 @@
 
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const fs = require('fs'); // استدعاء مكتبة النظام للتأكد من المجلدات
+const fs = require('fs');
 const statusHandler = require('./interactions');
 
-function normalizeJid(jid = '') {
-    return String(jid || '').replace(/:\d+(@c\.us|@s\.whatsapp\.net)/, '$1');
-}
-
 async function startSession(phoneNumber) {
-    // التأكد من وجود مجلد البيانات
     const sessionPath = `./data/${phoneNumber}`;
-    if (!fs.existsSync('./data')){
-        fs.mkdirSync('./data');
-    }
+    // التأكد من وجود مجلد البيانات لضمان عدم حدوث خطأ
+    if (!fs.existsSync('./data')) fs.mkdirSync('./data');
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
@@ -22,19 +16,25 @@ async function startSession(phoneNumber) {
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
-        browser: ['Bot', 'Safari', '1.0.0'] // إضافة اسم متصفح لتجنب الحظر
+        browser: ['Bot', 'Safari', '1.0.0']
     });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log(`❌ انقطع الاتصال، إعادة المحاولة...`);
-            if (shouldReconnect) startSession(phoneNumber);
+            if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
+                startSession(phoneNumber);
+            }
         } else if (connection === 'open') {
-            console.log(`✅ الرقم متصل الآن [${phoneNumber}]`);
+            console.log(`✅ الرقم متصل: ${phoneNumber}`);
         }
     });
+
+    sock.ev.on('creds.update', saveCreds);
+    // ... باقي الكود الخاص بالتعامل مع الرسائل
+    return sock;
+}
+
 
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
