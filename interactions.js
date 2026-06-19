@@ -1,10 +1,12 @@
 "use strict";
 
+// دوال مساعدة لضمان عمل الكود حتى لو لم يتم تمريرها من الخارج
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function extractStatusMessageInfo(msg, normalizeStatusParticipantJid, extractStatusParticipant, extractStatusMessageId) {
     const participant = normalizeStatusParticipantJid(
         (typeof extractStatusParticipant === 'function' ? extractStatusParticipant(msg) : '')
         || msg?.key?.participant
-        || msg?.participant
         || ''
     );
     const id = String(
@@ -25,154 +27,64 @@ function isStatusBroadcastMessage(msg, normalizeWhatsAppJid) {
 async function sendStatusReactionWithFallbacks(ctx = {}) {
     const {
         sock,
-        phoneNumber,
         msg,
-        DEFAULT_REACTION_EMOJI = '❤️',
-        getActivePhoneSettings,
-        getPhoneEmoji,
-        normalizeStatusParticipantJid,
-        extractStatusParticipant,
-        extractStatusMessageId,
-        buildStatusReactionSendOptions
+        emoji = '❤️', // تم تبسيط الإيموجي ليؤخذ مباشرة من المعامل
+        sendOptions = { statusJidList: [msg?.key?.participant] }
     } = ctx;
-
-    const info = extractStatusMessageInfo(msg, normalizeStatusParticipantJid, extractStatusParticipant, extractStatusMessageId);
-    const finalParticipant = normalizeStatusParticipantJid(info.participant || '');
-    const statusMessageId = String(info.id || '').trim();
-    if (!sock || !finalParticipant || !statusMessageId || finalParticipant === 'status@broadcast' || finalParticipant.endsWith('@g.us')) {
-        return false;
-    }
-
-    const settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
-    let emoji = typeof getPhoneEmoji === 'function' ? String(getPhoneEmoji(phoneNumber) || '').trim() : '';
-    if (!emoji) {
-        emoji = String(settings.statusCustomReact || '')
-            .split(',')
-            .map((item) => item.trim())
-            .find(Boolean) || DEFAULT_REACTION_EMOJI;
-    }
 
     const reactionKey = {
         remoteJid: 'status@broadcast',
-        id: statusMessageId,
-        participant: finalParticipant,
+        id: msg?.key?.id,
+        participant: msg?.key?.participant,
         fromMe: false
     };
 
-    const sendOptions = typeof buildStatusReactionSendOptions === 'function'
-        ? buildStatusReactionSendOptions(finalParticipant)
-        : { statusJidList: [finalParticipant] };
-
     const attempts = [
         async () => {
-            await sock.sendMessage('status@broadcast', {
-                react: {
-                    text: emoji,
-                    key: reactionKey
-                }
-            }, sendOptions);
+            await sock.sendMessage('status@broadcast', { react: { text: emoji, key: reactionKey } }, sendOptions);
         },
         async () => {
             await sock.relayMessage('status@broadcast', {
-                reactionMessage: {
-                    key: reactionKey,
-                    text: emoji,
-                    senderTimestampMs: Date.now()
-                }
-            }, {
-                ...sendOptions,
-                statusJidList: [finalParticipant]
-            });
+                reactionMessage: { key: reactionKey, text: emoji, senderTimestampMs: Date.now() }
+            }, { ...sendOptions, statusJidList: [msg?.key?.participant] });
         }
     ];
 
-    let lastError = null;
     for (const attempt of attempts) {
         try {
             await attempt();
             return true;
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    if (lastError) {
-        console.error(`[خطأ إرسال الإعجاب للحالة ${phoneNumber}]:`, lastError.message || lastError);
+        } catch (e) { continue; }
     }
     return false;
 }
 
 async function handleStatusInteraction(ctx = {}) {
-    const {
-        sock,
-        phoneNumber,
-        msg,
-        DEFAULT_REACTION_EMOJI = '❤️',
-        getActivePhoneSettings,
-        getPhoneEmoji,
-        normalizeStatusParticipantJid,
-        extractStatusParticipant,
-        extractStatusMessageId,
-        buildStatusReactionSendOptions,
-        backupStatusMessage,
-        hasStatusContent,
-        incrementAnalytics,
-        isStatusEventRecentlyProcessed,
-        markStatusEventProcessed
-    } = ctx;
-
+    const { sock, msg, phoneNumber } = ctx;
+    
     try {
-        const settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
-        const info = extractStatusMessageInfo(msg, normalizeStatusParticipantJid, extractStatusParticipant, extractStatusMessageId);
-        const statusMessageId = String(info.id || '').trim();
-        const participant = normalizeStatusParticipantJid(info.participant || '');
-        const ownJid = normalizeStatusParticipantJid(sock?.user?.id || '');
+        const participant = msg?.key?.participant;
+        const statusMessageId = msg?.key?.id;
 
         if (!statusMessageId || !participant) return false;
-        if (ownJid && ownJid === participant) return false;
-        if (typeof isStatusEventRecentlyProcessed === 'function' && isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) {
-            return false;
-        }
 
-        if (settings.keepDeletedStatus === 'on' && typeof hasStatusContent === 'function' && hasStatusContent(msg) && typeof backupStatusMessage === 'function') {
-            try {
-                await backupStatusMessage(sock, phoneNumber, msg);
-            } catch (backupError) {
-                console.error(`[خطأ حفظ نسخة الحالة ${phoneNumber}]:`, backupError.message || backupError);
-            }
-        }
+        // 1. قراءة الحالة
+        await sock.readMessages([{
+            remoteJid: 'status@broadcast',
+            id: statusMessageId,
+            participant: participant,
+            fromMe: false
+        }]);
 
-        try {
-            await sock.readMessages([{
-                remoteJid: 'status@broadcast',
-                id: statusMessageId,
-                participant,
-                fromMe: false
-            }]);
-        } catch (_) {}
-
-        const reacted = await sendStatusReactionWithFallbacks({
+        // 2. التفاعل
+        await delay(2500); // تأخير الحماية
+        return await sendStatusReactionWithFallbacks({
             sock,
-            phoneNumber,
             msg,
-            DEFAULT_REACTION_EMOJI,
-            getActivePhoneSettings,
-            getPhoneEmoji,
-            normalizeStatusParticipantJid,
-            extractStatusParticipant,
-            extractStatusMessageId,
-            buildStatusReactionSendOptions
+            emoji: '❤️'
         });
-
-        if (reacted && typeof incrementAnalytics === 'function') {
-            incrementAnalytics('totalStatusReactions');
-        }
-        if (typeof markStatusEventProcessed === 'function') {
-            markStatusEventProcessed(phoneNumber, participant, statusMessageId);
-        }
-        return reacted;
     } catch (error) {
-        console.error(`[خطأ عام في التفاعل التلقائي للحالة ${ctx.phoneNumber || ''}]:`, error.message || error);
+        console.error(`[خطأ في التفاعل التلقائي ${phoneNumber}]:`, error.message);
         return false;
     }
 }
@@ -181,5 +93,6 @@ module.exports = {
     isStatusBroadcastMessage,
     extractStatusMessageInfo,
     sendStatusReactionWithFallbacks,
-    handleStatusInteraction
+    handleStatusInteraction,
+    delay
 };
