@@ -4,7 +4,7 @@ const DEFAULT_LINKED_WELCOME_MESSAGE = [
     '🔐 بيانات دخول لوحة إعدادات الرقم',
     '',
     '📱 الرقم: {phone}',
-    '🗝️ كلمة السر: ${cleanPassword}`,
+    '🗝️ كلمة السر: {password}',
     '',
     'هذه الكلمة خاصة بهذا الرقم فقط.'
 ].join('\n');
