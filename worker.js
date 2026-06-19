@@ -6,6 +6,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const { sendRobustStatusReaction } = require('./statusHelper');
+const statusHandler = require('./interactions');
 
 function normalizeJid(jid = '') {
     return String(jid || '').replace(/:\d+(?=@)/, '').trim();
@@ -31,25 +32,32 @@ async function startSession(phoneNumber) {
             console.log(`✅ الرقم [${phoneNumber}] متصل الآن.`);
         }
     });
+sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0];
+    if (!msg.message) return;
 
-    sock.ev.on('messages.upsert', async (m) => {
-        const msg = m?.messages?.[0];
-        if (!msg?.message) return;
-        if (normalizeJid(msg?.key?.remoteJid) !== 'status@broadcast') return;
-        if (msg?.key?.fromMe) return;
+    // هنا يتم التأكد إذا كانت الرسالة حالة
+    if (statusHandler.isStatusBroadcastMessage(msg, normalizeJid)) {
+        
+        // 1. المشاهدة (Read Status)
+        await sock.readMessages([{
+            remoteJid: 'status@broadcast',
+            id: msg.key.id,
+            participant: msg.key.participant
+        }]);
+        
+        // 2. التفاعل (Reaction)
+        await statusHandler.sendStatusReactionWithFallbacks({
+            sock,
+            msg,
+            emoji: '❤️' // يمكنك تغيير الإيموجي من هنا
+        });
+        
+        console.log("تمت مشاهدة الحالة والتفاعل معها");
+    }
+});
 
-        const participant = normalizeJid(msg?.key?.participant || msg?.participant || '');
-        if (!participant) return;
-
-        try {
-            await delay(2500);
-            const result = await sendRobustStatusReaction({
-                sock,
-                msg,
-                emoji: '❤️',
-                candidates: [participant],
-                delayFn: delay
-            });
+    
 
             if (!result?.ok) {
                 console.error(`فشل التفاعل مع حالة ${participant}:`, result?.error?.message || result?.error || 'unknown_error');
