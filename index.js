@@ -5076,25 +5076,35 @@ async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
     return false;
 }
 
+// استبدل الجزء الذي يحتوي على handleIncomingMessage بهذا الكود:
+
 async function handleIncomingMessage(sock, phoneNumber, msg) {
     try {
         if (!msg?.message) return;
         const from = normalizeWhatsAppJid(msg.key?.remoteJid);
         if (!from) return;
 
-        if (statusInteractionHelpers.isStatusBroadcastMessage(msg, normalizeWhatsAppJid)) {
-            await handleStatusAction(sock, phoneNumber, msg);
-            await handleStatusReaction(sock, phoneNumber, msg);
+        // التحقق من الحالات (Status) بطريقة مباشرة بدون استدعاءات خارجية مفقودة
+        if (msg.key.remoteJid === 'status@broadcast') {
+            // بما أننا نقلنا المنطق لـ statusHandler، نستدعيه مباشرة
+            await statusHandler(sock, msg);
             return;
         }
 
         const settings = getActivePhoneSettings(phoneNumber);
 
-        if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
-            await applyLivePhoneSettingsSideEffects(phoneNumber);
+        // باقي منطق البوت الخاص بك كما هو...
+        const revokedMessageKey = extractRevokedMessageKey(msg);
+        if (revokedMessageKey) {
+            await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
+            return;
         }
 
-        // تمت إزالة المستمع القديم المتداخل الخاص بالحالات لمنع التكرار وتعليق التفاعل.
+        // ... (ضع باقي الكود الأصلي الخاص بك هنا) ...
+    } catch (err) {
+        console.error("خطأ في معالجة الرسالة:", err);
+    }
+}
 
 
         const revokedMessageKey = extractRevokedMessageKey(msg);
