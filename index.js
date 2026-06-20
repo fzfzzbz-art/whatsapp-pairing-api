@@ -1,7 +1,7 @@
 const statusHandler = require('./interactions');
 const childProcess = require('child_process');
 const { builtinModules } = require('module');
-
+const commands = require('./commands');
 function requireWithAutoInstall(moduleName) {
     try {
         return require(moduleName);
