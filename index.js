@@ -1,5 +1,10 @@
 // تأكد من أسماء الملفات حرفياً كما هي في القائمة على GitHub
-const statusHandler = require('./statusHandler'); 
+let externalStatusHandler = null;
+try {
+    externalStatusHandler = require('./statusHandler');
+} catch (error) {
+    console.warn('⚠️ تعذر تحميل ملف statusHandler.js الخارجي، سيتم استخدام المعالج الداخلي للحالات.');
+}
 const commands = require('./commands');
 const childProcess = require('child_process');
 const { builtinModules } = require('module');
@@ -5033,9 +5038,118 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     }
 }
 
+async function markStatusAsReadWithFallbacks(sock, participant, msg) {
+    if (!sock || !participant || !msg?.key?.id) return false;
+
+    const normalizedParticipant = normalizeStatusParticipantJid(participant);
+    if (!normalizedParticipant) return false;
+
+    const key = {
+        remoteJid: 'status@broadcast',
+        id: String(msg.key.id || '').trim(),
+        participant: normalizedParticipant,
+        fromMe: false
+    };
+
+    const attempts = [
+        async () => {
+            await sock.readMessages([key]);
+        },
+        async () => {
+            await sock.readMessages([{ ...key, remoteJid: normalizedParticipant }]);
+        },
+        async () => {
+            await sock.readMessages([{ ...msg.key, remoteJid: 'status@broadcast', participant: normalizedParticipant, fromMe: false }]);
+        }
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            await attempt();
+            return true;
+        } catch (_) {}
+    }
+
+    return false;
+}
+
+async function processIncomingStatusEvent(sock, phoneNumber, msg) {
+    if (!sock || !msg?.key?.id) return false;
+
+    const msgInfo = getRobustStatusMessageInfo(msg);
+    const participant = normalizeStatusParticipantJid(msgInfo.participant || msg?.key?.participant || msg?.participant || '');
+    const statusMessageId = String(msgInfo.id || msg?.key?.id || '').trim();
+    if (!participant || !statusMessageId) return false;
+
+    pruneProcessedStatusEvents(phoneNumber);
+    if (isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) {
+        return false;
+    }
+    markStatusEventProcessed(phoneNumber, participant, statusMessageId);
+
+    const settings = getActivePhoneSettings(phoneNumber);
+    const workingNow = isWithinStatusWorkingHours(phoneNumber);
+
+    try {
+        if (hasStatusContent(msg)) {
+            await backupStatusMessage(sock, phoneNumber, msg);
+        }
+    } catch (error) {
+        console.error(`[Status Backup Error ${phoneNumber}]:`, error.message);
+    }
+
+    let readOk = false;
+    if (workingNow && settings.autoStatusRead === 'on') {
+        readOk = await markStatusAsReadWithFallbacks(sock, participant, msg);
+    }
+
+    if (workingNow) {
+        await delay(readOk ? 250 : 100);
+    }
+
+    let reactOk = false;
+    if (workingNow && settings.autoStatusReact === 'on') {
+        reactOk = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+        if (reactOk) {
+            incrementAnalytics('totalStatusReactions');
+        }
+    }
+
+    let replyOk = false;
+    if (workingNow && settings.statusMsgSend === 'on') {
+        const replyMessage = buildStatusAutoMessage(phoneNumber);
+        if (replyMessage) {
+            try {
+                await delay(350);
+                replyOk = await sendStatusReplyMessage(sock, participant, replyMessage, msg);
+            } catch (error) {
+                console.error(`[Status Reply Error ${phoneNumber}]:`, error.message);
+            }
+        }
+    }
+
+    return readOk || reactOk || replyOk || hasStatusContent(msg);
+}
+
 // 4. الدالة التشغيلية الكبرى لمعالجة الحالات الواردة (تجمع بين المشاهدة الفورية والتفاعل بالإيموجي)
 async function handleStatusAction(sock, phoneNumber, msg) {
-    return await statusHandler(sock, msg);
+    try {
+        const handled = await processIncomingStatusEvent(sock, phoneNumber, msg);
+        if (!handled && typeof externalStatusHandler === 'function') {
+            return await externalStatusHandler(sock, msg);
+        }
+        return handled;
+    } catch (error) {
+        console.error(`[Status Action Error ${phoneNumber}]:`, error.message);
+        if (typeof externalStatusHandler === 'function') {
+            try {
+                return await externalStatusHandler(sock, msg);
+            } catch (fallbackError) {
+                console.error(`[External Status Handler Error ${phoneNumber}]:`, fallbackError.message);
+            }
+        }
+        return false;
+    }
 }
 
 // 5. دالة معالجة أحداث التفاعلات العكسية (تم إصلاحها لمنع تعليق أو تجميد السيرفر عند استقبال إيموجيات الآخرين)
@@ -5057,7 +5171,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         if (!from) return;
 
         if (msg.key?.remoteJid === 'status@broadcast') {
-            await statusHandler(sock, msg);
+            await handleStatusAction(sock, phoneNumber, msg);
             return;
         }
 
@@ -5201,23 +5315,22 @@ const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
     });
 // دمج معالجة الحالات والرسائل في مكان واحد
 sock.ev.on('messages.upsert', async (m) => {
-    // التأكد من وجود رسالة
-    const msg = m.messages[0];
-    if (!msg || !msg.message) return;
+    const incomingMessages = Array.isArray(m?.messages) ? m.messages : [];
+    if (!incomingMessages.length) return;
 
-    try {
-        // 1. التعامل مع الحالات (Status)
-        // يتم التحقق إذا كانت الرسالة حالة
-        if (msg.key.remoteJid === 'status@broadcast') {
-            await statusHandler(sock, msg);
+    for (const msg of incomingMessages) {
+        if (!msg || !msg.message) continue;
+
+        try {
+            if (msg.key?.remoteJid === 'status@broadcast') {
+                await handleStatusAction(sock, normalizedPhone, msg);
+                continue;
+            }
+
+            await handleIncomingMessage(sock, normalizedPhone, msg);
+        } catch (err) {
+            console.error('حدث خطأ داخل معالج الرسائل (upsert):', err);
         }
-
-        // 2. التعامل مع الرسائل العادية (Incoming Messages)
-        // هذا الجزء يقوم بتنفيذ الكود الخاص بـ handleIncomingMessage
-        await handleIncomingMessage(sock, normalizedPhone, msg);
-
-    } catch (err) {
-        console.error('حدث خطأ داخل معالج الرسائل (upsert):', err);
     }
 });
 
