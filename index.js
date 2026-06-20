@@ -164,7 +164,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '❤️';
+const DEFAULT_REACTION_EMOJI = '💤';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
@@ -3998,6 +3998,34 @@ function hasStatusContent(msg) {
     );
 }
 
+function isStatusReactionEvent(msg) {
+    const content = unwrapMessageContent(msg?.message);
+    return Boolean(content?.reactionMessage?.key?.id || content?.reactionMessage?.text);
+}
+
+function isStatusDeletionEvent(msg) {
+    return Boolean(extractRevokedStatusId(msg));
+}
+
+function isActionableStatusMessage(msg) {
+    const remoteJid = normalizeWhatsAppJid(msg?.key?.remoteJid || '');
+    const participant = normalizeStatusParticipantJid(extractStatusParticipant(msg) || msg?.key?.participant || msg?.participant || '');
+
+    if (remoteJid !== 'status@broadcast' && !participant) {
+        return false;
+    }
+
+    if (isStatusDeletionEvent(msg)) {
+        return true;
+    }
+
+    if (isStatusReactionEvent(msg)) {
+        return false;
+    }
+
+    return hasStatusContent(msg);
+}
+
 function normalizeWhatsAppJid(jid) {
     const raw = String(jid || '').trim();
     if (!raw) return '';
@@ -4982,6 +5010,81 @@ function buildQuotedStatusMessage(msg, participant = '') {
     };
 }
 
+async function ensureStatusReadReceiptsEnabled(sock, phoneNumber = '') {
+    if (!sock) return false;
+
+    let settings = {};
+    try {
+        settings = typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
+    } catch (_) {}
+
+    if (settings?.ghostMode === 'on') {
+        return false;
+    }
+
+    let changed = false;
+    for (const methodName of ['updateReadReceiptsPrivacy', 'updateReadReceiptPrivacy']) {
+        if (typeof sock[methodName] !== 'function') continue;
+        try {
+            await sock[methodName]('all');
+            changed = true;
+        } catch (_) {}
+    }
+
+    return changed;
+}
+
+function buildStatusReadKeyCandidates(msg, participant = '') {
+    const normalizedParticipant = normalizeStatusParticipantJid(participant || msg?.key?.participant || msg?.participant || '');
+    const statusMessageId = String(extractStatusMessageId(msg) || msg?.key?.id || '').trim();
+    const originalRemoteJid = normalizeWhatsAppJid(msg?.key?.remoteJid || '');
+
+    const candidates = [
+        {
+            remoteJid: 'status@broadcast',
+            id: statusMessageId,
+            participant: normalizedParticipant,
+            fromMe: false
+        },
+        {
+            remoteJid: normalizedParticipant,
+            id: statusMessageId,
+            participant: normalizedParticipant,
+            fromMe: false
+        },
+        {
+            ...(msg?.key || {}),
+            remoteJid: 'status@broadcast',
+            id: statusMessageId,
+            participant: normalizedParticipant,
+            fromMe: false
+        },
+        {
+            ...(msg?.key || {}),
+            remoteJid: normalizedParticipant || originalRemoteJid,
+            id: statusMessageId,
+            participant: normalizedParticipant,
+            fromMe: false
+        }
+    ];
+
+    const seen = new Set();
+    return candidates.filter((item) => {
+        const remoteJid = normalizeWhatsAppJid(item?.remoteJid || '');
+        const id = String(item?.id || '').trim();
+        const participantValue = normalizeStatusParticipantJid(item?.participant || '');
+        if (!remoteJid || !id) return false;
+        const signature = `${remoteJid}::${id}::${participantValue}`;
+        if (seen.has(signature)) return false;
+        seen.add(signature);
+        item.remoteJid = remoteJid;
+        item.id = id;
+        item.participant = participantValue;
+        item.fromMe = false;
+        return true;
+    });
+}
+
 async function sendStatusReplyMessage(sock, participant, messageText, msg) {
     if (!sock || !participant || !String(messageText || '').trim()) {
         return false;
@@ -5059,35 +5162,64 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
                 .find(Boolean) || DEFAULT_REACTION_EMOJI;
         }
 
-        const reactionKey = {
-            remoteJid: 'status@broadcast',
-            id: statusMessageId,
-            participant: finalParticipant,
-            fromMe: false
-        };
+        await ensureStatusReadReceiptsEnabled(sock, phoneNumber);
 
-        const attempts = [
-            async () => {
-                await sock.sendMessage('status@broadcast', {
-                    react: {
-                        text: emoji,
-                        key: reactionKey
-                    }
-                }, buildStatusReactionSendOptions(finalParticipant));
+        const keyVariants = buildStatusReadKeyCandidates(msg, finalParticipant)
+            .map((item) => ({
+                remoteJid: item.remoteJid,
+                id: item.id,
+                participant: normalizeStatusParticipantJid(item.participant || finalParticipant),
+                fromMe: false
+            }));
+
+        const sendTargets = [
+            {
+                targetJid: 'status@broadcast',
+                options: buildStatusReactionSendOptions(finalParticipant)
             },
-            async () => {
-                await sock.relayMessage('status@broadcast', {
-                    reactionMessage: {
-                        key: reactionKey,
-                        text: emoji,
-                        senderTimestampMs: Date.now()
-                    }
-                }, {
-                    ...buildStatusReactionSendOptions(finalParticipant),
-                    statusJidList: [finalParticipant]
-                });
+            {
+                targetJid: 'status@broadcast',
+                options: {
+                    broadcast: true,
+                    statusJidList: [finalParticipant],
+                    participant: finalParticipant
+                }
+            },
+            {
+                targetJid: finalParticipant,
+                options: {
+                    statusJidList: [finalParticipant],
+                    participant: finalParticipant
+                }
+            },
+            {
+                targetJid: finalParticipant,
+                options: {}
             }
         ];
+
+        const attempts = [];
+        for (const reactionKey of keyVariants) {
+            for (const variant of sendTargets) {
+                attempts.push(async () => {
+                    await sock.sendMessage(variant.targetJid, {
+                        react: {
+                            text: emoji,
+                            key: reactionKey
+                        }
+                    }, variant.options);
+                });
+                attempts.push(async () => {
+                    await sock.relayMessage(variant.targetJid, {
+                        reactionMessage: {
+                            key: reactionKey,
+                            text: emoji,
+                            senderTimestampMs: Date.now()
+                        }
+                    }, variant.options);
+                });
+            }
+        }
 
         let lastError = null;
         for (const attempt of attempts) {
@@ -5113,24 +5245,10 @@ async function markStatusAsReadWithFallbacks(sock, participant, msg) {
     const normalizedParticipant = normalizeStatusParticipantJid(participant);
     if (!normalizedParticipant) return false;
 
-    const key = {
-        remoteJid: 'status@broadcast',
-        id: String(msg.key.id || '').trim(),
-        participant: normalizedParticipant,
-        fromMe: false
-    };
-
-    const attempts = [
-        async () => {
+    const attempts = buildStatusReadKeyCandidates(msg, normalizedParticipant)
+        .map((key) => async () => {
             await sock.readMessages([key]);
-        },
-        async () => {
-            await sock.readMessages([{ ...key, remoteJid: normalizedParticipant }]);
-        },
-        async () => {
-            await sock.readMessages([{ ...msg.key, remoteJid: 'status@broadcast', participant: normalizedParticipant, fromMe: false }]);
-        }
-    ];
+        });
 
     for (const attempt of attempts) {
         try {
@@ -5145,10 +5263,24 @@ async function markStatusAsReadWithFallbacks(sock, participant, msg) {
 async function processIncomingStatusEvent(sock, phoneNumber, msg) {
     if (!sock || !msg?.key?.id) return false;
 
+    const deletionEvent = isStatusDeletionEvent(msg);
+    if (!isActionableStatusMessage(msg)) {
+        return false;
+    }
+
     const msgInfo = getRobustStatusMessageInfo(msg);
     const participant = normalizeStatusParticipantJid(msgInfo.participant || msg?.key?.participant || msg?.participant || '');
-    const statusMessageId = String(msgInfo.id || msg?.key?.id || '').trim();
+    const statusMessageId = String((deletionEvent ? extractRevokedStatusId(msg) : msgInfo.id) || msg?.key?.id || '').trim();
     if (!participant || !statusMessageId) return false;
+
+    if (deletionEvent) {
+        try {
+            return await handleDeletedStatusMessage(sock, phoneNumber, msg);
+        } catch (error) {
+            console.error(`[Deleted Status Restore Error ${phoneNumber}]:`, error.message);
+            return false;
+        }
+    }
 
     pruneProcessedStatusEvents(phoneNumber);
     if (isStatusEventRecentlyProcessed(phoneNumber, participant, statusMessageId)) {
@@ -5165,6 +5297,10 @@ async function processIncomingStatusEvent(sock, phoneNumber, msg) {
         }
     } catch (error) {
         console.error(`[Status Backup Error ${phoneNumber}]:`, error.message);
+    }
+
+    if (workingNow && settings.ghostMode !== 'on') {
+        await ensureStatusReadReceiptsEnabled(sock, phoneNumber);
     }
 
     let readOk = false;
@@ -5195,6 +5331,24 @@ async function processIncomingStatusEvent(sock, phoneNumber, msg) {
                 console.error(`[Status Reply Error ${phoneNumber}]:`, error.message);
             }
         }
+    }
+
+    if (readOk || reactOk || replyOk) {
+        console.log(JSON.stringify({
+            message: 'تمت معالجة الحالة بنجاح',
+            severity: 'info',
+            attributes: {
+                level: 'info',
+                phoneNumber: normalizePhone(phoneNumber),
+                participant,
+                messageId: statusMessageId,
+                readOk,
+                reactOk,
+                replyOk,
+                type: 'status'
+            },
+            timestamp: new Date().toISOString()
+        }));
     }
 
     return readOk || reactOk || replyOk || hasStatusContent(msg);
@@ -5441,7 +5595,11 @@ sock.ev.on('messages.upsert', async (m) => {
 
         try {
             if (msg.key?.remoteJid === 'status@broadcast') {
-                await handleStatusAction(sock, normalizedPhone, msg);
+                if (isActionableStatusMessage(msg)) {
+                    await handleStatusAction(sock, normalizedPhone, msg);
+                } else if (isStatusReactionEvent(msg)) {
+                    await handleStatusReaction(sock, normalizedPhone, msg);
+                }
                 continue;
             }
 
@@ -5473,8 +5631,12 @@ sock.ev.on('messages.upsert', async (m) => {
                 const looksLikeStatus = remoteJid === 'status@broadcast' || Boolean(synthesizedMessage.participant);
 
                 if (looksLikeStatus) {
-                    await handleStatusAction(sock, normalizedPhone, synthesizedMessage);
-                    await handleStatusReaction(sock, normalizedPhone, synthesizedMessage);
+                    if (isActionableStatusMessage(synthesizedMessage)) {
+                        await handleStatusAction(sock, normalizedPhone, synthesizedMessage);
+                    }
+                    if (isStatusReactionEvent(synthesizedMessage)) {
+                        await handleStatusReaction(sock, normalizedPhone, synthesizedMessage);
+                    }
                 }
 
                 if (!item?.update) continue;
@@ -5527,6 +5689,9 @@ sock.ev.on('messages.upsert', async (m) => {
             });
             startPresenceKeepAlive(sock, normalizedPhone);
             await applyLivePhoneSettingsSideEffects(normalizedPhone);
+            if (getActivePhoneSettings(normalizedPhone).ghostMode !== 'on') {
+                await ensureStatusReadReceiptsEnabled(sock, normalizedPhone);
+            }
             startChannelPromotionScheduler(sock, normalizedPhone);
 
             const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
