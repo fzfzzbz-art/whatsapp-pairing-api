@@ -5067,22 +5067,18 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         const from = normalizeWhatsAppJid(msg.key?.remoteJid);
         if (!from) return;
 
-        // 1. معالجة الحالات (Status)
         if (msg.key.remoteJid === 'status@broadcast') {
             await statusHandler(sock, msg);
             return;
         }
 
         const settings = getActivePhoneSettings(phoneNumber);
-
-        // 2. معالجة الرسائل المحذوفة
         const revokedMessageKey = extractRevokedMessageKey(msg);
         if (revokedMessageKey) {
             await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
             return;
         }
 
-        // 3. التحليلات والعمليات الأساسية
         incrementAnalytics('totalIncomingMessages');
         await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
         
@@ -5103,11 +5099,11 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
                 await sock.readMessages([msg.key]);
             } catch (e) {}
         }
-
     } catch (err) {
         console.error("خطأ أثناء معالجة الرسالة:", err);
     }
 }
+
 
 
         incrementAnalytics('totalIncomingMessages');
