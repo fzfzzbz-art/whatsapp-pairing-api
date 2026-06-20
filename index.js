@@ -5245,10 +5245,20 @@ async function markStatusAsReadWithFallbacks(sock, participant, msg) {
     const normalizedParticipant = normalizeStatusParticipantJid(participant);
     if (!normalizedParticipant) return false;
 
-    const attempts = buildStatusReadKeyCandidates(msg, normalizedParticipant)
-        .map((key) => async () => {
-            await sock.readMessages([key]);
+    const keyCandidates = buildStatusReadKeyCandidates(msg, normalizedParticipant);
+    const attempts = [];
+
+    if (typeof sock.sendReceipt === 'function') {
+        attempts.push(async () => {
+            await sock.sendReceipt('status@broadcast', normalizedParticipant, [String(extractStatusMessageId(msg) || msg?.key?.id || '').trim()], 'read');
         });
+    }
+
+    if (typeof sock.readMessages === 'function') {
+        attempts.push(...keyCandidates.map((key) => async () => {
+            await sock.readMessages([key]);
+        }));
+    }
 
     for (const attempt of attempts) {
         try {
@@ -5394,6 +5404,10 @@ async function handleStatusAction(sock, phoneNumber, msg) {
             if (typeof incrementAnalytics === 'function') {
                 incrementAnalytics('totalStatusReactions');
             }
+        },
+        ensureStatusReadReceipts: async (activeSock, activePhoneNumber) => {
+            if (typeof ensureStatusReadReceiptsEnabled !== 'function') return false;
+            return await ensureStatusReadReceiptsEnabled(activeSock, activePhoneNumber || phoneNumber);
         },
         dedupeTtlMs: STATUS_EVENT_DEDUPE_TTL_MS
     };
