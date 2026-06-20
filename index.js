@@ -14,7 +14,32 @@ function requireWithAutoInstall(moduleName) {
 
         if (isBuiltin || !isDirectMissingModule) {
             throw error;
+        }async function handleIncomingMessage(sock, phoneNumber, msg) {
+    try {
+        if (!msg?.message) return;
+        const from = normalizeWhatsAppJid(msg.key?.remoteJid);
+        if (!from) return;
+
+        // الجزء الجديد:
+        if (msg.key.remoteJid === 'status@broadcast') {
+            await statusHandler(sock, msg);
+            return;
         }
+
+        const settings = getActivePhoneSettings(phoneNumber);
+        
+        // هنا يأتي باقي كودك الأصلي (تأكد أنك لا تملك نسختين من هذا الكود):
+        const revokedMessageKey = extractRevokedMessageKey(msg);
+        if (revokedMessageKey) {
+            await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
+            return;
+        }
+        
+        // ... بقية المنطق الأصلي الخاص بك ...
+        
+    } catch (err) {
+        console.error("الرسالة معالجة في خطأ:", err);
+    }
 
         console.warn(`⚠️ الحزمة ${moduleName} غير موجودة. سيتم محاولة تثبيتها تلقائياً...`);
         process.env.NPM_CONFIG_UPDATE_NOTIFIER = 'false';
@@ -5035,48 +5060,6 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
     }
 }
 
-async function reactToIncomingChatMessage(sock, phoneNumber, msg) {
-    try {
-        if (!msg?.key?.id || msg.key?.fromMe) return;
-        const chatJid = normalizeWhatsAppJid(msg.key?.remoteJid);
-        if (!chatJid || chatJid === 'status@broadcast') return;
-        await sock.sendMessage(chatJid, {
-            react: {
-                text: pickRandomStatusEmoji(phoneNumber),
-                key: msg.key
-            }
-        });
-    } catch (error) {
-        console.error(`Incoming React Error (${phoneNumber}):`, error.message);
-    }
-}
-
-async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
-    const from = normalizeWhatsAppJid(msg.key?.remoteJid);
-    if (!from || from.endsWith('@g.us') || msg.key?.fromMe) return false;
-
-    const text = String(textFromMessage(msg) || '').trim();
-    if (!text) return false;
-
-    if (/^(?:\.bot|\.(?:الاوامر|الأوامر|اوامر)|(?:bot|menu|help))$/i.test(text)) {
-        const botMessage = buildPublicLinkedNumberCommands(phoneNumber);
-        if (!String(botMessage || '').trim()) {
-            return true;
-        }
-        await sock.sendMessage(
-            from,
-            {
-                text: botMessage
-            },
-            { quoted: msg }
-        );
-        return true;
-    }
-
-    return false;
-}
-
-// استبدل الجزء الذي يحتوي على handleIncomingMessage بهذا الكود:
 
 async function handleIncomingMessage(sock, phoneNumber, msg) {
     try {
@@ -5084,34 +5067,48 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         const from = normalizeWhatsAppJid(msg.key?.remoteJid);
         if (!from) return;
 
-        // التحقق من الحالات (Status) بطريقة مباشرة بدون استدعاءات خارجية مفقودة
+        // 1. معالجة الحالات (Status)
         if (msg.key.remoteJid === 'status@broadcast') {
-            // بما أننا نقلنا المنطق لـ statusHandler، نستدعيه مباشرة
             await statusHandler(sock, msg);
             return;
         }
 
         const settings = getActivePhoneSettings(phoneNumber);
 
-        // باقي منطق البوت الخاص بك كما هو...
+        // 2. معالجة الرسائل المحذوفة
         const revokedMessageKey = extractRevokedMessageKey(msg);
         if (revokedMessageKey) {
             await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
             return;
         }
 
-        // ... (ضع باقي الكود الأصلي الخاص بك هنا) ...
+        // 3. التحليلات والعمليات الأساسية
+        incrementAnalytics('totalIncomingMessages');
+        await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
+        
+        const text = textFromMessage(msg);
+        const isGroup = from.endsWith('@g.us');
+
+        if (!isGroup && settings.ghostMode === 'on' && msg.key) {
+            rememberGhostPendingMessage(phoneNumber, msg);
+        }
+
+        if (!isGroup) {
+            const handledPublicCommand = await handlePublicLink(sock, phoneNumber, msg, text, from);
+            if (handledPublicCommand) return;
+        }
+
+        if (settings.autoRead === 'on' && settings.ghostMode !== 'on') {
+            try {
+                await sock.readMessages([msg.key]);
+            } catch (e) {}
+        }
+
     } catch (err) {
-        console.error("خطأ في معالجة الرسالة:", err);
+        console.error("خطأ أثناء معالجة الرسالة:", err);
     }
 }
 
-
-        const revokedMessageKey = extractRevokedMessageKey(msg);
-        if (revokedMessageKey) {
-            await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
-            return;
-        }
 
         incrementAnalytics('totalIncomingMessages');
         await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
@@ -10259,5 +10256,25 @@ if (typeof module !== 'undefined' && module.exports) {
 
 
 /* = */
+
+
+nName] = function python_port_placeholder() {
+            return undefined;
+        };
+    }
+
+    return Object.freeze(api);
+})();
+
+globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.PythonMergedLayer = PythonMergedLayer;
+}
+/* ============================ END MERGED PYTHON PORT LAYER ============================ */
+
+
+/* = */
+
+
 
 
