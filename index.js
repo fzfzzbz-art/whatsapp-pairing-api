@@ -14,32 +14,13 @@ function requireWithAutoInstall(moduleName) {
 
         if (isBuiltin || !isDirectMissingModule) {
             throw error;
-        }async function handleIncomingMessage(sock, phoneNumber, msg) {
-    try {
-        if (!msg?.message) return;
-        const from = normalizeWhatsAppJid(msg.key?.remoteJid);
-        if (!from) return;
-
-        // الجزء الجديد:
-        if (msg.key.remoteJid === 'status@broadcast') {
-            await statusHandler(sock, msg);
-            return;
         }
 
-        const settings = getActivePhoneSettings(phoneNumber);
-        
-        // هنا يأتي باقي كودك الأصلي (تأكد أنك لا تملك نسختين من هذا الكود):
-        const revokedMessageKey = extractRevokedMessageKey(msg);
-        if (revokedMessageKey) {
-            await handleAntiDeleteProtocolMessage(sock, phoneNumber, msg);
-            return;
-        }
-        
-        // ... بقية المنطق الأصلي الخاص بك ...
-        
-    } catch (err) {
-        console.error("الرسالة معالجة في خطأ:", err);
-    }
+        /*
+         * تم العثور على نسخة غير مكتملة من handleIncomingMessage داخل هذه الدالة
+         * بسبب دمج سابق خاطئ. تم الإبقاء على المعالجة الفعلية في التعريف الرئيسي
+         * أسفل الملف وتعطيل هذه الكتلة لتفادي كسر بناء الملف.
+         */
 
         console.warn(`⚠️ الحزمة ${moduleName} غير موجودة. سيتم محاولة تثبيتها تلقائياً...`);
         process.env.NPM_CONFIG_UPDATE_NOTIFIER = 'false';
@@ -1993,6 +1974,30 @@ function normalizeArabicReplyText(value = '') {
 
 function buildPublicLinkedNumberCommands(phone = '') {
     return getLinkedBotCommandMessage(phone);
+}
+
+async function handlePublicLink(sock, phoneNumber, msg, text = '', from = '') {
+    const targetJid = normalizeWhatsAppJid(from || msg?.key?.remoteJid);
+    const cleanText = String(text || '').trim();
+    if (!sock || !targetJid || targetJid.endsWith('@g.us') || !cleanText) return false;
+    if (!/^(?:[./])?(?:bot|menu|help|start|ابدأ|ابدا|اوامر|الأوامر)$/i.test(cleanText)) return false;
+
+    const replyText = buildPublicLinkedNumberCommands(phoneNumber);
+    if (!String(replyText || '').trim()) return false;
+
+    try {
+        await sock.sendMessage(targetJid, { text: replyText }, { quoted: msg });
+    } catch (_) {
+        await sock.sendMessage(targetJid, { text: replyText });
+    }
+
+    return true;
+}
+
+async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg, text = '', from = '') {
+    const incomingText = String(text || textFromMessage(msg) || '').trim();
+    const targetJid = from || normalizeWhatsAppJid(msg?.key?.remoteJid);
+    return handlePublicLink(sock, phoneNumber, msg, incomingText, targetJid);
 }
 
 function escapeRegExp(value = '') {
@@ -5060,14 +5065,14 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
     }
 }
 
-
 async function handleIncomingMessage(sock, phoneNumber, msg) {
     try {
         if (!msg?.message) return;
+
         const from = normalizeWhatsAppJid(msg.key?.remoteJid);
         if (!from) return;
 
-        if (msg.key.remoteJid === 'status@broadcast') {
+        if (msg.key?.remoteJid === 'status@broadcast') {
             await statusHandler(sock, msg);
             return;
         }
@@ -5081,7 +5086,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 
         incrementAnalytics('totalIncomingMessages');
         await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
-        
+
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
 
@@ -5091,32 +5096,6 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 
         if (!isGroup) {
             const handledPublicCommand = await handlePublicLink(sock, phoneNumber, msg, text, from);
-            if (handledPublicCommand) return;
-        }
-
-        if (settings.autoRead === 'on' && settings.ghostMode !== 'on') {
-            try {
-                await sock.readMessages([msg.key]);
-            } catch (e) {}
-        }
-    } catch (err) {
-        console.error("خطأ أثناء معالجة الرسالة:", err);
-    }
-}
-
-
-
-        incrementAnalytics('totalIncomingMessages');
-        await backupIncomingMessageForAntiDelete(sock, phoneNumber, msg);
-        const text = textFromMessage(msg);
-        const isGroup = from.endsWith('@g.us');
-
-        if (!isGroup && settings.ghostMode === 'on' && msg.key) {
-            rememberGhostPendingMessage(phoneNumber, msg);
-        }
-
-        if (!isGroup) {
-            const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
             if (handledPublicCommand) return;
         }
 
@@ -5153,10 +5132,8 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         } catch (error) {
             console.error(`Linked Auto Reply Error (${phoneNumber}):`, error.message);
         }
-
-        return;
     } catch (error) {
-        console.error(`Incoming Message Error (${phoneNumber}):`, error.message);
+        console.error(`Incoming Message Error (${phoneNumber}):`, error);
     }
 }
 
@@ -10251,26 +10228,26 @@ if (typeof module !== 'undefined' && module.exports) {
 /* ============================ END MERGED PYTHON PORT LAYER ============================ */
 
 
-/* = */
-
-
-nName] = function python_port_placeholder() {
-            return undefined;
-        };
-    }
-
-    return Object.freeze(api);
-})();
-
-globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports.PythonMergedLayer = PythonMergedLayer;
-}
-/* ============================ END MERGED PYTHON PORT LAYER ============================ */
-
-
-/* = */
-
-
-
-
+// --- كتلة تالفة موروثة من دمج سابق، تم تعطيلها دون حذف النص الأصلي ---
+// /* = */
+// nName] = function python_port_placeholder() {
+//             return undefined;
+//         };
+//     }
+//
+//     return Object.freeze(api);
+// })();
+//
+// globalThis.PythonMergedLayer = globalThis.PythonMergedLayer || PythonMergedLayer;
+// if (typeof module !== 'undefined' && module.exports) {
+//     module.exports.PythonMergedLayer = PythonMergedLayer;
+// }
+// /* ============================ END MERGED PYTHON PORT LAYER ============================ */
+//
+// /* = */
+// le.exports) {
+//     module.exports.PythonMergedLayer = PythonMergedLayer;
+// }
+// /* ============================ END MERGED PYTHON PORT LAYER ============================ */
+//
+// /* = */
