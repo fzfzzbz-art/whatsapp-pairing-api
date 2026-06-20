@@ -5035,23 +5035,7 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
 
 // 4. الدالة التشغيلية الكبرى لمعالجة الحالات الواردة (تجمع بين المشاهدة الفورية والتفاعل بالإيموجي)
 async function handleStatusAction(sock, phoneNumber, msg) {
-    return statusInteractionHelpers.handleStatusInteraction({
-        sock,
-        phoneNumber,
-        msg,
-        DEFAULT_REACTION_EMOJI,
-        getActivePhoneSettings,
-        getPhoneEmoji,
-        normalizeStatusParticipantJid,
-        extractStatusParticipant,
-        extractStatusMessageId,
-        buildStatusReactionSendOptions,
-        backupStatusMessage,
-        hasStatusContent,
-        incrementAnalytics,
-        isStatusEventRecentlyProcessed,
-        markStatusEventProcessed
-    });
+    return await statusHandler(sock, msg);
 }
 
 // 5. دالة معالجة أحداث التفاعلات العكسية (تم إصلاحها لمنع تعليق أو تجميد السيرفر عند استقبال إيموجيات الآخرين)
