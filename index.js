@@ -159,7 +159,6 @@ async function getMongoAuthState(phone) {
 // الإعدادات الأساسية
 // =========================
 const APP_PORT = Number(process.env.PORT || 8080);
-const CANONICAL_PUBLIC_BASE_URL = 'https://bot.goldenqueen.store';
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
@@ -169,7 +168,7 @@ const DEFAULT_REACTION_EMOJI = '💤';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
-const DEFAULT_BOT_LINK = String(process.env.PUBLIC_TELEGRAM_BOT_LINK || process.env.TELEGRAM_BOT_LINK || process.env.PUBLIC_BOT_LINK || CANONICAL_PUBLIC_BASE_URL).trim() || CANONICAL_PUBLIC_BASE_URL;
+const DEFAULT_BOT_LINK = String(process.env.PUBLIC_TELEGRAM_BOT_LINK || process.env.TELEGRAM_BOT_LINK || 'https://t.me/Swtory_Bot').trim() || 'https://t.me/Swtory_Bot';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v';
 const DAILY_GIFT_POINTS = 300;
 const DAILY_GIFT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -180,7 +179,7 @@ const MAX_GLOBAL_AUTO_REPLIES = 50;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
 const WEB_SETTINGS_SESSION_TTL_MS = Number(process.env.WEB_SETTINGS_SESSION_TTL_MS || 12 * 60 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = String(process.env.PUBLIC_BASE_URL || process.env.WEB_PANEL_URL || process.env.APP_URL || process.env.DEFAULT_PUBLIC_BASE_URL || CANONICAL_PUBLIC_BASE_URL || `http://localhost:${APP_PORT}`).trim().replace(/\/+$/, '');
+const DEPLOYMENT_BASE_URL = String(process.env.PUBLIC_BASE_URL || process.env.WEB_PANEL_URL || process.env.APP_URL || process.env.DEFAULT_PUBLIC_BASE_URL || `http://localhost:${APP_PORT}`).trim().replace(/\/+$/, '');
 const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
 const DEFAULT_PAIRING_LINK = String(process.env.PAIRING_PUBLIC_URL || process.env.PAIRING_LINK || DEPLOYMENT_BASE_URL).trim().replace(/\/+$/, '');
 const DEFAULT_CONTACTSAVE_LINK = String(process.env.CONTACTSAVE_URL || process.env.CONTACTSAVE_LINK || `${DEPLOYMENT_BASE_URL}/contactsave`).trim().replace(/\/+$/, '');
@@ -1048,13 +1047,10 @@ const DEFAULT_ADMINS = Array.from(
 );
 const PUBLIC_BASE_URL = String(
     process.env.PUBLIC_BASE_URL ||
-        process.env.WEB_PANEL_URL ||
-        process.env.PUBLIC_WEB_PANEL_URL ||
         process.env.RENDER_EXTERNAL_URL ||
         process.env.APP_URL ||
         (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
-        DEFAULT_PUBLIC_BASE_URL ||
-        CANONICAL_PUBLIC_BASE_URL
+        DEFAULT_PUBLIC_BASE_URL
 ).replace(/\/+$/, '');
 
 function cleanPublicUrl(value = '') {
@@ -1062,7 +1058,7 @@ function cleanPublicUrl(value = '') {
 }
 
 function getWebPanelPublicUrl() {
-    return cleanPublicUrl(process.env.WEB_PANEL_URL || process.env.PUBLIC_WEB_PANEL_URL || PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL || CANONICAL_PUBLIC_BASE_URL);
+    return cleanPublicUrl(process.env.WEB_PANEL_URL || process.env.PUBLIC_WEB_PANEL_URL || PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL);
 }
 
 function getSettingsPublicUrl() {
@@ -4473,7 +4469,7 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     reconnectTimers.set(normalized, timer);
 }
 
-function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock, pairingCode = '') {
+function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
     const normalized = normalizePhone(phone);
     clearPairingRequest(normalized);
     stoppedPairings.delete(normalized);
@@ -4517,16 +4513,8 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock, pairin
         telegramUserId: telegramUserId ? String(telegramUserId) : null,
         timer,
         timedOut: false,
-        completed: false,
-        code: String(pairingCode || '').trim(),
-        codeCreatedAt: Date.now()
+        completed: false
     });
-}
-
-function getPendingPairingCode(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return '';
-    return String(pairingRequests.get(normalized)?.code || '').trim();
 }
 
 function startSessionSupervisor() {
@@ -5578,7 +5566,7 @@ const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
         try {
             await new Promise((resolve) => setTimeout(resolve, 5000));
             const code = await sock.requestPairingCode(normalizedPhone);
-            schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock, code);
+            schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
 
             const pairingMessage = `✅ كود الربط لرقم ${normalizedPhone}:\n\n\`${code}\`\n\n🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.\n⏳ إذا تأخر إكمال الربط كثيراً سيتم إيقاف الكود تلقائياً وإشعارك برسالة.`;
 
@@ -7198,12 +7186,12 @@ app.post('/api/pair', async (req, res) => {
         const phone = normalizePhone(req.body?.phone || req.body?.num || '');
         if (!phone) return res.status(400).json({ success: false, error: 'رقم غير صالح' });
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, null);
-        const code = getPendingPairingCode(phone);
-        if (!code) {
-            return res.status(409).json({ success: false, error: 'الرقم مربوط بالفعل أو لم يتم تجهيز كود الربط حالياً' });
-        }
-        return res.json({ success: true, phone, num: phone, code, pairingUrl: getPairingPublicUrl(), webPanelUrl: getWebPanelPublicUrl() });
+        const sock = await startWhatsApp(phone, null, null);
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        if (!sock || !sock.requestPairingCode) throw new Error('تعذر إنشاء جلسة الربط');
+        const code = await sock.requestPairingCode(phone);
+        schedulePairingTimeout(phone, null, getSessionPath(phone), sock);
+        return res.json({ success: true, phone, code });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'فشل إنشاء كود الربط' });
     }
@@ -7227,12 +7215,12 @@ app.post('/api/pairing', async (req, res) => {
         const phone = normalizePhone(req.body?.num || req.body?.phone || '');
         if (!phone) return res.status(400).json({ success: false, error: 'رقم غير صالح' });
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, null);
-        const code = getPendingPairingCode(phone);
-        if (!code) {
-            return res.status(409).json({ success: false, error: 'الرقم مربوط بالفعل أو لم يتم تجهيز كود الربط حالياً' });
-        }
-        return res.json({ success: true, phone, num: phone, code, pairingUrl: getPairingPublicUrl(), webPanelUrl: getWebPanelPublicUrl() });
+        const sock = await startWhatsApp(phone, null, null);
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        if (!sock || !sock.requestPairingCode) throw new Error('تعذر إنشاء جلسة الربط');
+        const code = await sock.requestPairingCode(phone);
+        schedulePairingTimeout(phone, null, getSessionPath(phone), sock);
+        return res.json({ success: true, phone, num: phone, code });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'فشل إنشاء كود الربط' });
     }
