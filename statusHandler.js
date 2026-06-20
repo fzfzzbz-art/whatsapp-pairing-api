@@ -154,6 +154,26 @@ function pickEmojiFromContext(context = {}, settings = {}) {
   return '❤️';
 }
 
+async function ensureReceiptsReady(context, sock, phoneNumber, settings) {
+  if (!sock || String(settings?.ghostMode || 'off') === 'on') {
+    return false;
+  }
+
+  if (typeof context.ensureStatusReadReceipts !== 'function') {
+    return false;
+  }
+
+  try {
+    const changed = await context.ensureStatusReadReceipts(sock, phoneNumber, settings);
+    if (changed) {
+      await sleep(450);
+    }
+    return Boolean(changed);
+  } catch (_) {
+    return false;
+  }
+}
+
 async function externalStatusHandler(sock, msg, context = {}) {
   const logger = context.logger || console;
   const phoneNumber = phoneNumberFromContext(context);
@@ -175,7 +195,7 @@ async function externalStatusHandler(sock, msg, context = {}) {
       messageId,
       candidates: resolved.participantCandidates?.slice(0, 5) || []
     });
-    return resolved.hasStatusContent;
+    return false;
   }
 
   if (hasRecentlyProcessed(phoneNumber, participant, messageId)) {
@@ -186,6 +206,10 @@ async function externalStatusHandler(sock, msg, context = {}) {
   const autoStatusReadOn = String(settings.autoStatusRead || 'on') === 'on';
   const autoStatusReactOn = String(settings.autoStatusReact || 'on') === 'on';
 
+  if (autoStatusReadOn || autoStatusReactOn) {
+    await ensureReceiptsReady(context, sock, phoneNumber, settings);
+  }
+
   let readOk = false;
   let reactOk = false;
   let replyOk = false;
@@ -194,7 +218,8 @@ async function externalStatusHandler(sock, msg, context = {}) {
     const readResult = await markStatusAsViewed(sock, msg, {
       logger,
       participant,
-      messageId
+      messageId,
+      preferExplicitReadReceipt: true
     });
     readOk = Boolean(readResult.ok);
     if (readOk) {
@@ -215,7 +240,7 @@ async function externalStatusHandler(sock, msg, context = {}) {
     }
   }
 
-  await sleep(readOk ? 250 : 120);
+  await sleep(readOk ? 250 : 150);
 
   if (autoStatusReactOn) {
     const reactResult = await sendStatusReaction(sock, msg, {
@@ -250,7 +275,7 @@ async function externalStatusHandler(sock, msg, context = {}) {
   }
 
   replyOk = await safeReply(context, sock, participant, msg);
-  return readOk || reactOk || replyOk || resolved.hasStatusContent;
+  return readOk || reactOk || replyOk;
 }
 
 module.exports = externalStatusHandler;

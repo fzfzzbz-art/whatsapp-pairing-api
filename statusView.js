@@ -222,6 +222,57 @@ function resolveStatusContext(msg) {
   };
 }
 
+function buildStatusReadKeyCandidates(msg, participant = '', messageId = '') {
+  const normalizedParticipant = normalizeStatusParticipantJid(participant || msg?.key?.participant || msg?.participant || '');
+  const finalMessageId = String(messageId || msg?.key?.id || '').trim();
+  const originalRemoteJid = normalizeWhatsAppJid(msg?.key?.remoteJid || '');
+
+  const candidates = [
+    {
+      remoteJid: 'status@broadcast',
+      id: finalMessageId,
+      participant: normalizedParticipant,
+      fromMe: false
+    },
+    {
+      remoteJid: normalizedParticipant,
+      id: finalMessageId,
+      participant: normalizedParticipant,
+      fromMe: false
+    },
+    {
+      ...(msg?.key || {}),
+      remoteJid: 'status@broadcast',
+      id: finalMessageId,
+      participant: normalizedParticipant,
+      fromMe: false
+    },
+    {
+      ...(msg?.key || {}),
+      remoteJid: normalizedParticipant || originalRemoteJid,
+      id: finalMessageId,
+      participant: normalizedParticipant,
+      fromMe: false
+    }
+  ];
+
+  const seen = new Set();
+  return candidates.filter((item) => {
+    const remoteJid = normalizeWhatsAppJid(item?.remoteJid || '');
+    const id = String(item?.id || '').trim();
+    const participantValue = normalizeStatusParticipantJid(item?.participant || '');
+    if (!remoteJid || !id) return false;
+    const signature = `${remoteJid}::${id}::${participantValue}`;
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    item.remoteJid = remoteJid;
+    item.id = id;
+    item.participant = participantValue;
+    item.fromMe = false;
+    return true;
+  });
+}
+
 async function markStatusAsViewed(sock, msg, options = {}) {
   const logger = options.logger || console;
   const context = resolveStatusContext(msg);
@@ -238,43 +289,35 @@ async function markStatusAsViewed(sock, msg, options = {}) {
     };
   }
 
-  const key = {
-    remoteJid: 'status@broadcast',
-    id: messageId,
-    participant,
-    fromMe: false
-  };
+  const keyCandidates = buildStatusReadKeyCandidates(msg, participant, messageId);
+  const readMessageAttempts = keyCandidates.map((key, index) => ({
+    name: `readMessages.${index + 1}`,
+    run: async () => {
+      if (typeof sock.readMessages !== 'function') throw new Error('readMessages unavailable');
+      await sock.readMessages([key]);
+    }
+  }));
 
-  const attempts = [
+  const sendReceiptAttempts = [
     {
-      name: 'readMessages.status-broadcast',
-      run: async () => {
-        if (typeof sock.readMessages !== 'function') throw new Error('readMessages unavailable');
-        await sock.readMessages([key]);
-      }
-    },
-    {
-      name: 'readMessages.direct-jid',
-      run: async () => {
-        if (typeof sock.readMessages !== 'function') throw new Error('readMessages unavailable');
-        await sock.readMessages([{ ...key, remoteJid: participant }]);
-      }
-    },
-    {
-      name: 'readMessages.original-key',
-      run: async () => {
-        if (typeof sock.readMessages !== 'function') throw new Error('readMessages unavailable');
-        await sock.readMessages([{ ...(msg?.key || {}), remoteJid: 'status@broadcast', participant, fromMe: false, id: messageId }]);
-      }
-    },
-    {
-      name: 'sendReceipt.read',
+      name: 'sendReceipt.read.status-broadcast',
       run: async () => {
         if (typeof sock.sendReceipt !== 'function') throw new Error('sendReceipt unavailable');
         await sock.sendReceipt('status@broadcast', participant, [messageId], 'read');
       }
+    },
+    {
+      name: 'sendReceipt.read.direct-participant',
+      run: async () => {
+        if (typeof sock.sendReceipt !== 'function') throw new Error('sendReceipt unavailable');
+        await sock.sendReceipt(participant, undefined, [messageId], 'read');
+      }
     }
   ];
+
+  const attempts = options.preferExplicitReadReceipt
+    ? [...sendReceiptAttempts, ...readMessageAttempts]
+    : [...readMessageAttempts, ...sendReceiptAttempts];
 
   let lastError = null;
   for (const attempt of attempts) {
@@ -305,5 +348,6 @@ module.exports = {
   normalizeStatusParticipantJid,
   unwrapMessageContent,
   resolveStatusContext,
+  buildStatusReadKeyCandidates,
   markStatusAsViewed
 };

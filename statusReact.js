@@ -20,9 +20,30 @@ function buildStatusReactionSendOptions(participant = '') {
   const options = { broadcast: true };
   if (normalizedParticipant) {
     options.statusJidList = [normalizedParticipant];
-    options.participant = normalizedParticipant;
   }
   return options;
+}
+
+function buildStatusReactionRelayOptions(participant = '') {
+  const normalizedParticipant = normalizeStatusParticipantJid(participant);
+  const options = {};
+  if (normalizedParticipant) {
+    options.statusJidList = [normalizedParticipant];
+  }
+  return options;
+}
+
+async function markStatusReadBeforeReaction(sock, participant, messageId) {
+  if (!sock || !participant || !messageId || typeof sock.sendReceipt !== 'function') {
+    return false;
+  }
+
+  try {
+    await sock.sendReceipt('status@broadcast', participant, [messageId], 'read');
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 async function sendStatusReaction(sock, msg, options = {}) {
@@ -43,6 +64,8 @@ async function sendStatusReaction(sock, msg, options = {}) {
     };
   }
 
+  await markStatusReadBeforeReaction(sock, participant, messageId);
+
   const reactionKey = {
     remoteJid: 'status@broadcast',
     id: messageId,
@@ -50,9 +73,12 @@ async function sendStatusReaction(sock, msg, options = {}) {
     fromMe: false
   };
 
+  const sendOptions = buildStatusReactionSendOptions(participant);
+  const relayOptions = buildStatusReactionRelayOptions(participant);
+
   const attempts = [
     {
-      name: 'sendMessage.react',
+      name: 'sendMessage.react.status-broadcast',
       run: async () => {
         if (typeof sock.sendMessage !== 'function') throw new Error('sendMessage unavailable');
         await sock.sendMessage('status@broadcast', {
@@ -60,11 +86,11 @@ async function sendStatusReaction(sock, msg, options = {}) {
             text: emoji,
             key: reactionKey
           }
-        }, buildStatusReactionSendOptions(participant));
+        }, sendOptions);
       }
     },
     {
-      name: 'relayMessage.reactionMessage',
+      name: 'relayMessage.reactionMessage.status-broadcast',
       run: async () => {
         if (typeof sock.relayMessage !== 'function') throw new Error('relayMessage unavailable');
         await sock.relayMessage('status@broadcast', {
@@ -73,14 +99,11 @@ async function sendStatusReaction(sock, msg, options = {}) {
             text: emoji,
             senderTimestampMs: Date.now()
           }
-        }, {
-          ...buildStatusReactionSendOptions(participant),
-          statusJidList: [participant]
-        });
+        }, relayOptions);
       }
     },
     {
-      name: 'sendMessage.react-direct-participant',
+      name: 'sendMessage.react.direct-participant',
       run: async () => {
         if (typeof sock.sendMessage !== 'function') throw new Error('sendMessage unavailable');
         await sock.sendMessage(participant, {
@@ -88,7 +111,7 @@ async function sendStatusReaction(sock, msg, options = {}) {
             text: emoji,
             key: reactionKey
           }
-        }, buildStatusReactionSendOptions(participant));
+        });
       }
     }
   ];
@@ -128,5 +151,6 @@ async function sendStatusReaction(sock, msg, options = {}) {
 module.exports = {
   pickReactionEmoji,
   buildStatusReactionSendOptions,
+  buildStatusReactionRelayOptions,
   sendStatusReaction
 };
