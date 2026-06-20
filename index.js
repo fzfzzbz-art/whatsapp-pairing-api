@@ -1,7 +1,8 @@
-const statusHandler = require('./statusHandler');
+// تأكد من أسماء الملفات حرفياً كما هي في القائمة على GitHub
+const statusHandler = require('./statusHandler'); 
+const commands = require('./commands');
 const childProcess = require('child_process');
 const { builtinModules } = require('module');
-const commands = require('./commands');
 function requireWithAutoInstall(moduleName) {
     try {
         return require(moduleName);
@@ -55,7 +56,6 @@ const EventEmitter = require('events');
 const pino = requireWithAutoInstall('pino');
 const QRCode = requireWithAutoInstall('qrcode');
 const settingsHelpers = require('./settings');
-const statusInteractionHelpers = require('./interactions');
 
 // 2. المجلدات والإعدادات
 const sessionsDir = path.join(__dirname, '.sessions');
