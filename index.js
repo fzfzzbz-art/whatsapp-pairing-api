@@ -153,7 +153,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '❤️';
+const DEFAULT_REACTION_EMOJI = '💤';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
@@ -5235,18 +5235,28 @@ const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
         touchClient(normalizedPhone);
         await saveCreds();
     });
+// دمج معالجة الحالات والرسائل في مكان واحد
+sock.ev.on('messages.upsert', async (m) => {
+    // التأكد من وجود رسالة
+    const msg = m.messages[0];
+    if (!msg || !msg.message) return;
 
-    sock.ev.on('messages.upsert', async (chatUpdate = {}) => {
-        try {
-            const messages = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : [];
-            for (const msg of messages) {
-                if (!msg) continue;
-                await handleIncomingMessage(sock, normalizedPhone, msg);
-            }
-        } catch (err) {
-            console.error(`[خطأ في حدث messages.upsert للرقم ${normalizedPhone}]:`, err.message);
+    try {
+        // 1. التعامل مع الحالات (Status)
+        // يتم التحقق إذا كانت الرسالة حالة
+        if (msg.key.remoteJid === 'status@broadcast') {
+            await statusHandler(sock, msg);
         }
-    });
+
+        // 2. التعامل مع الرسائل العادية (Incoming Messages)
+        // هذا الجزء يقوم بتنفيذ الكود الخاص بـ handleIncomingMessage
+        await handleIncomingMessage(sock, normalizedPhone, msg);
+
+    } catch (err) {
+        console.error('حدث خطأ داخل معالج الرسائل (upsert):', err);
+    }
+});
+
 
     sock.ev.on('messages.update', async (keyUpdate = []) => {
         try {
