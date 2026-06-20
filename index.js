@@ -164,7 +164,7 @@ const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
 if (!global.processedStatusEvents) global.processedStatusEvents = new Map();
 // تم تثبيت القيمة هنا بـ 10 ثوانٍ لضمان سرعة التفاعل والمشاهدة معاً
 const STATUS_EVENT_DEDUPE_TTL_MS = 10000;
-const DEFAULT_REACTION_EMOJI = '💤';
+const DEFAULT_REACTION_EMOJI = '❤️';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
 const BRAND_IMAGE_TEXT = '𝒃𝒐𝒕_𝒇𝒂𝒓𝒆𝒔_𝒐𝒎𝒂𝒓 ༼༽';
@@ -2138,7 +2138,9 @@ function rollbackLinkedNumberAutoReplyCooldown(phone, remoteJid) {
 
 function extractStatusParticipant(msg) {
     const content = unwrapMessageContent(msg?.message);
-    const candidates = [
+    const participantCandidates = new Set();
+
+    const directCandidates = [
         msg?.key?.participant,
         msg?.participant,
         msg?.message?.messageContextInfo?.participant,
@@ -2148,17 +2150,57 @@ function extractStatusParticipant(msg) {
         content?.videoMessage?.contextInfo?.participant,
         content?.documentMessage?.contextInfo?.participant,
         content?.reactionMessage?.key?.participant,
-        content?.protocolMessage?.key?.participant
+        content?.protocolMessage?.key?.participant,
+        msg?.broadcastParticipant,
+        content?.broadcastParticipant,
+        ...(Array.isArray(msg?.statusJidList) ? msg.statusJidList : []),
+        ...(Array.isArray(content?.statusJidList) ? content.statusJidList : [])
     ];
 
-    for (const candidate of candidates) {
+    const collectNestedParticipants = (node, depth = 0, seen = new Set()) => {
+        if (!node || depth > 8 || seen.has(node)) return;
+        if (typeof node === 'string') {
+            const normalized = normalizeStatusParticipantJid(node);
+            if (normalized && normalized !== 'status@broadcast') {
+                participantCandidates.add(normalized);
+            }
+            return;
+        }
+        if (typeof node !== 'object') return;
+        seen.add(node);
+
+        if (Array.isArray(node)) {
+            for (const item of node) collectNestedParticipants(item, depth + 1, seen);
+            return;
+        }
+
+        for (const [key, value] of Object.entries(node)) {
+            if (typeof value === 'string') {
+                if (/participant|author|sender|jid|remote/i.test(key)) {
+                    const normalized = normalizeStatusParticipantJid(value);
+                    if (normalized && normalized !== 'status@broadcast') {
+                        participantCandidates.add(normalized);
+                    }
+                }
+                continue;
+            }
+            if (value && typeof value === 'object') {
+                collectNestedParticipants(value, depth + 1, seen);
+            }
+        }
+    };
+
+    for (const candidate of directCandidates) {
         const normalized = normalizeStatusParticipantJid(candidate);
         if (normalized && normalized !== 'status@broadcast') {
-            return normalized;
+            participantCandidates.add(normalized);
         }
     }
 
-    return '';
+    collectNestedParticipants(msg);
+    collectNestedParticipants(content);
+
+    return Array.from(participantCandidates)[0] || '';
 }
 
 function extractStatusMessageId(msg) {
@@ -2167,8 +2209,30 @@ function extractStatusMessageId(msg) {
         msg?.key?.id,
         content?.protocolMessage?.key?.id,
         content?.reactionMessage?.key?.id,
-        content?.messageContextInfo?.stanzaId
+        content?.messageContextInfo?.stanzaId,
+        content?.extendedTextMessage?.contextInfo?.stanzaId,
+        content?.imageMessage?.contextInfo?.stanzaId,
+        content?.videoMessage?.contextInfo?.stanzaId,
+        content?.documentMessage?.contextInfo?.stanzaId
     ];
+
+    const collectNestedIds = (node, depth = 0, seen = new Set()) => {
+        if (!node || depth > 8 || seen.has(node) || typeof node !== 'object') return;
+        seen.add(node);
+
+        if (typeof node.id === 'string') candidates.push(node.id);
+        if (typeof node.stanzaId === 'string') candidates.push(node.stanzaId);
+
+        for (const value of Object.values(node)) {
+            if (value && typeof value === 'object') {
+                collectNestedIds(value, depth + 1, seen);
+            }
+        }
+    };
+
+    collectNestedIds(msg);
+    collectNestedIds(content);
+
     for (const candidate of candidates) {
         const normalized = String(candidate || '').trim();
         if (normalized) return normalized;
@@ -2190,7 +2254,12 @@ function pruneProcessedStatusEvents(phone = '') {
     const now = Date.now();
 
     for (const [key, expiresAt] of global.processedStatusEvents.entries()) {
-        if (Number(expiresAt || 0) <= now || (prefix && key.startsWith(prefix))) {
+        if (Number(expiresAt || 0) <= now) {
+            global.processedStatusEvents.delete(key);
+            continue;
+        }
+
+        if (prefix && key.startsWith(prefix) && Number(expiresAt || 0) <= now) {
             global.processedStatusEvents.delete(key);
         }
     }
@@ -5133,17 +5202,66 @@ async function processIncomingStatusEvent(sock, phoneNumber, msg) {
 
 // 4. الدالة التشغيلية الكبرى لمعالجة الحالات الواردة (تجمع بين المشاهدة الفورية والتفاعل بالإيموجي)
 async function handleStatusAction(sock, phoneNumber, msg) {
+    const statusHandlerContext = {
+        phoneNumber,
+        logger: console,
+        defaultReactionEmoji: DEFAULT_REACTION_EMOJI,
+        getPhoneEmoji: (phone) => {
+            try {
+                return typeof getPhoneEmoji === 'function' ? getPhoneEmoji(phone) : DEFAULT_REACTION_EMOJI;
+            } catch (_) {
+                return DEFAULT_REACTION_EMOJI;
+            }
+        },
+        getSettings: () => {
+            try {
+                return typeof getActivePhoneSettings === 'function' ? getActivePhoneSettings(phoneNumber) : {};
+            } catch (_) {
+                return {};
+            }
+        },
+        backupStatus: async (activeSock, activePhoneNumber, activeMsg) => {
+            if (typeof hasStatusContent === 'function' && hasStatusContent(activeMsg) && typeof backupStatusMessage === 'function') {
+                await backupStatusMessage(activeSock, activePhoneNumber, activeMsg);
+            }
+        },
+        buildReplyMessage: () => {
+            try {
+                return typeof buildStatusAutoMessage === 'function' ? buildStatusAutoMessage(phoneNumber) : '';
+            } catch (_) {
+                return '';
+            }
+        },
+        sendReply: async (activeSock, participant, messageText, activeMsg) => {
+            if (typeof sendStatusReplyMessage !== 'function') return false;
+            return await sendStatusReplyMessage(activeSock, participant, messageText, activeMsg);
+        },
+        onReactionSuccess: async () => {
+            if (typeof incrementAnalytics === 'function') {
+                incrementAnalytics('totalStatusReactions');
+            }
+        },
+        dedupeTtlMs: STATUS_EVENT_DEDUPE_TTL_MS
+    };
+
     try {
+        if (typeof externalStatusHandler === 'function') {
+            const externalHandled = await externalStatusHandler(sock, msg, statusHandlerContext);
+            if (externalHandled) {
+                return true;
+            }
+        }
+
         const handled = await processIncomingStatusEvent(sock, phoneNumber, msg);
         if (!handled && typeof externalStatusHandler === 'function') {
-            return await externalStatusHandler(sock, msg);
+            return await externalStatusHandler(sock, msg, statusHandlerContext);
         }
         return handled;
     } catch (error) {
         console.error(`[Status Action Error ${phoneNumber}]:`, error.message);
         if (typeof externalStatusHandler === 'function') {
             try {
-                return await externalStatusHandler(sock, msg);
+                return await externalStatusHandler(sock, msg, statusHandlerContext);
             } catch (fallbackError) {
                 console.error(`[External Status Handler Error ${phoneNumber}]:`, fallbackError.message);
             }
