@@ -1,4 +1,15 @@
- const {
+let externalStatusHandler = null;
+try {
+    externalStatusHandler = require('./statusHandler');
+} catch (error) {
+    console.warn('⚠️ تعذر تحميل ملف statusHandler.js الخارجي، سيتم استخدام المعالج الداخلي للحالات.');
+}
+const commands = require('./commands');
+const childProcess = require('child_process');
+const { builtinModules } = require('module');
+function requireWithAutoInstall(moduleName) {
+    try {
+const {
     default: makeWASocket,
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
