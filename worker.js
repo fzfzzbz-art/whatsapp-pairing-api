@@ -3,7 +3,7 @@
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
-const statusHandler = require('./interactions');
+const statusHandler = require('./statusHandler');
 
 async function startSession(phoneNumber) {
     const sessionPath = `./data/${phoneNumber}`;
