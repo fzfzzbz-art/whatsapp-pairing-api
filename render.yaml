@@ -3,8 +3,8 @@ services:
     name: whatsapp-pairing-bot
     env: node
     plan: free
-    buildCommand: npm install
-    startCommand: node index.js
+    buildCommand: npm install --legacy-peer-deps
+    startCommand: npm run start:optimized
     envVars:
       - key: NODE_VERSION
         value: 20.x

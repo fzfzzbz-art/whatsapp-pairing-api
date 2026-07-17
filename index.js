@@ -1010,6 +1010,7 @@ const sessionSnapshotSyncPromises = new Map();
 const phoneJobQueues = new Map();
 const sessionStartPromises = new Map();
 const recentStatusEvents = new Map();
+const pendingContactSyncs = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
@@ -1046,6 +1047,7 @@ const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION
 const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
 const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
+const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
 let sessionSupervisorStarted = false;
 let lastRuntimeCleanupAt = 0;
 const DATABASE_ENABLED = false;
@@ -5936,12 +5938,14 @@ function pickContactDisplayName(...values) {
     return '';
 }
 
-function upsertPhoneContact(phone, jid, patch = {}) {
+function upsertPhoneContact(phone, jid, patch = {}, options = {}) {
     const normalizedPhone = normalizePhone(phone);
     const normalizedJid = normalizeContactJid(jid || patch?.jid || patch?.id);
     if (!normalizedPhone || !normalizedJid) return null;
 
-    const db = getContactsArchiveDB();
+    const db = options?.db && typeof options.db === 'object' ? options.db : getContactsArchiveDB();
+    const shouldPersist = options?.persist !== false;
+    db.phones = db.phones || {};
     db.phones[normalizedPhone] = db.phones[normalizedPhone] || {};
     const existing = db.phones[normalizedPhone][normalizedJid] || {};
     const phoneNumber = normalizePhone(normalizedJid);
@@ -5969,13 +5973,18 @@ function upsertPhoneContact(phone, jid, patch = {}) {
         ...existing,
         ...next
     };
-    saveContactsArchiveDB(db);
+
+    if (shouldPersist) {
+        saveContactsArchiveDB(db);
+    }
     return db.phones[normalizedPhone][normalizedJid];
 }
 
 function processPhoneContactsUpdates(phone, records = []) {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
+
+    const db = getContactsArchiveDB();
     let count = 0;
     for (const item of records) {
         const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
@@ -5988,10 +5997,80 @@ function processPhoneContactsUpdates(phone, records = []) {
             short: item?.short,
             fullName: item?.fullName,
             lastSeenAt: new Date().toISOString()
+        }, {
+            db,
+            persist: false
         });
         count += 1;
     }
+
+    if (count > 0) {
+        saveContactsArchiveDB(db);
+    }
     return count;
+}
+
+function flushQueuedPhoneContactsUpdates(phone) {
+    const normalizedPhone = normalizePhone(phone);
+    const queued = pendingContactSyncs.get(normalizedPhone);
+    if (!queued) return 0;
+
+    if (queued.timer) {
+        clearTimeout(queued.timer);
+    }
+
+    pendingContactSyncs.delete(normalizedPhone);
+    const records = Array.from((queued.recordsByJid instanceof Map ? queued.recordsByJid : new Map()).values());
+    if (!records.length) return 0;
+    return processPhoneContactsUpdates(normalizedPhone, records);
+}
+
+function queuePhoneContactsUpdates(phone, records = []) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
+
+    const queued = pendingContactSyncs.get(normalizedPhone) || {
+        recordsByJid: new Map(),
+        timer: null
+    };
+
+    let accepted = 0;
+    for (const item of records) {
+        const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
+        if (!jid) continue;
+        const existing = queued.recordsByJid.get(jid) || {};
+        queued.recordsByJid.set(jid, {
+            ...existing,
+            ...item,
+            id: jid,
+            jid,
+            user: jid
+        });
+        accepted += 1;
+    }
+
+    if (!accepted) {
+        return 0;
+    }
+
+    if (queued.timer) {
+        clearTimeout(queued.timer);
+    }
+
+    queued.timer = setTimeout(() => {
+        try {
+            flushQueuedPhoneContactsUpdates(normalizedPhone);
+        } catch (error) {
+            console.error(`Contacts Flush Error (${normalizedPhone}):`, error?.message || error);
+        }
+    }, CONTACTS_SYNC_FLUSH_DELAY_MS);
+
+    if (typeof queued.timer.unref === 'function') {
+        queued.timer.unref();
+    }
+
+    pendingContactSyncs.set(normalizedPhone, queued);
+    return accepted;
 }
 
 function getPhoneContactEntries(phone) {
@@ -9508,7 +9587,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('contacts.upsert', (items = []) => {
         try {
             touchClient(normalizedPhone);
-            processPhoneContactsUpdates(normalizedPhone, items);
+            queuePhoneContactsUpdates(normalizedPhone, items);
         } catch (error) {
             console.error(`contacts.upsert Error (${normalizedPhone}):`, error.message);
         }
@@ -9517,7 +9596,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('contacts.update', (items = []) => {
         try {
             touchClient(normalizedPhone);
-            processPhoneContactsUpdates(normalizedPhone, items);
+            queuePhoneContactsUpdates(normalizedPhone, items);
         } catch (error) {
             console.error(`contacts.update Error (${normalizedPhone}):`, error.message);
         }
@@ -12419,6 +12498,9 @@ app.get('/settings', (req, res) => {
     res.send(buildSettingsPageHTML());
 });
 
+app.get('/contactsave', (req, res) => {
+    return res.redirect(302, '/settings-local');
+});
 
 app.get('/minibot/setting', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -13285,8 +13367,12 @@ async function initTelegramTransport() {
     }
 }
 
-const server = app.listen(APP_PORT, async () => {
-    console.log(`Server running on port ${APP_PORT}`);
+let serviceBootstrapStarted = false;
+
+async function bootstrapServiceInBackground() {
+    if (serviceBootstrapStarted) return;
+    serviceBootstrapStarted = true;
+
     await restorePersistentFilesFromMongo().catch((error) => {
         console.error('Local restore warning:', error.message || error);
     });
@@ -13316,6 +13402,20 @@ const server = app.listen(APP_PORT, async () => {
     console.log(`Service linked successfully to ${PUBLIC_BASE_URL}`);
     console.log(`Storage root: ${STORAGE_ROOT}`);
     console.log(`Telegram transport mode: ${telegramStatus.mode}`);
+}
+
+const server = app.listen(APP_PORT, () => {
+    console.log(`Server running on port ${APP_PORT}`);
+    const kickoff = () => {
+        bootstrapServiceInBackground().catch((error) => {
+            serviceBootstrapStarted = false;
+            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
+        });
+    };
+    const bootstrapTimer = setTimeout(kickoff, 10);
+    if (typeof bootstrapTimer.unref === 'function') {
+        bootstrapTimer.unref();
+    }
 });
 
 server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
@@ -13333,6 +13433,12 @@ async function gracefulShutdown(signal) {
         clearTimeout(timer);
     }
     reconnectTimers.clear();
+
+    for (const phone of Array.from(pendingContactSyncs.keys())) {
+        try {
+            flushQueuedPhoneContactsUpdates(phone);
+        } catch (_) {}
+    }
 
     for (const phone of channelPromotionTimers.keys()) {
         clearChannelPromotionTimer(phone);

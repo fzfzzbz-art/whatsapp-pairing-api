@@ -3,4 +3,4 @@ set -e
 if [ ! -d node_modules ]; then
   npm install
 fi
-npm index.js
+node index.js

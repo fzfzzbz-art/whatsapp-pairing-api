@@ -1,101 +1,242 @@
-diff --git a/.env b/.env
-index adb9539..63f0aeb 100644
---- a/.env
-+++ b/.env
-@@ -4,3 +4,7 @@ TELEGRAM_DEVELOPER_ID=7231690686
- DEFAULT_PAIRING_NUMBER=
- MONGODB_URI=mongodb+srv://faresomarr:faresaltmimi95@cluster0.lbe3uof.mongodb.net/?retryWrites=true&w=majority
- MONGODB_DB_NAME=faresbot
-+LOCAL_SESSION_PRUNE_ENABLED=false
-+SESSION_PRUNE_ENABLED=false
-+MONGODB_SESSIONS_COLLECTION=whatsapp_sessions
-+JSON_MIRROR_COLLECTION=json_mirrors
 diff --git a/index.js b/index.js
-index b34a630..52696da 100644
+index 9bfa85f..c466130 100644
 --- a/index.js
 +++ b/index.js
-@@ -1,3 +1,5 @@
-+require('dotenv').config();
+@@ -1010,6 +1010,7 @@ const sessionSnapshotSyncPromises = new Map();
+ const phoneJobQueues = new Map();
+ const sessionStartPromises = new Map();
+ const recentStatusEvents = new Map();
++const pendingContactSyncs = new Map();
+ const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+ const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
+ const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
+@@ -1046,6 +1047,7 @@ const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION
+ const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
+ const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
+ const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
++const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
+ let sessionSupervisorStarted = false;
+ let lastRuntimeCleanupAt = 0;
+ const DATABASE_ENABLED = false;
+@@ -5936,12 +5938,14 @@ function pickContactDisplayName(...values) {
+     return '';
+ }
+ 
+-function upsertPhoneContact(phone, jid, patch = {}) {
++function upsertPhoneContact(phone, jid, patch = {}, options = {}) {
+     const normalizedPhone = normalizePhone(phone);
+     const normalizedJid = normalizeContactJid(jid || patch?.jid || patch?.id);
+     if (!normalizedPhone || !normalizedJid) return null;
+ 
+-    const db = getContactsArchiveDB();
++    const db = options?.db && typeof options.db === 'object' ? options.db : getContactsArchiveDB();
++    const shouldPersist = options?.persist !== false;
++    db.phones = db.phones || {};
+     db.phones[normalizedPhone] = db.phones[normalizedPhone] || {};
+     const existing = db.phones[normalizedPhone][normalizedJid] || {};
+     const phoneNumber = normalizePhone(normalizedJid);
+@@ -5969,13 +5973,18 @@ function upsertPhoneContact(phone, jid, patch = {}) {
+         ...existing,
+         ...next
+     };
+-    saveContactsArchiveDB(db);
 +
-  const {
-     default: makeWASocket,
-     fetchLatestBaileysVersion,
-@@ -1693,7 +1695,7 @@ async function getMongoAuthState(phone) {
++    if (shouldPersist) {
++        saveContactsArchiveDB(db);
++    }
+     return db.phones[normalizedPhone][normalizedJid];
+ }
  
- 
- async function restorePersistentFilesFromMongo() {
--    const files = [USERS_FILE, SETTINGS_FILE, PHONE_SETTINGS_FILE, BOT_ANALYTICS_FILE, STATUS_BACKUPS_FILE, STATUS_ARCHIVE_FILE, PROFILE_SCHEDULE_FILE, CONTACTS_ARCHIVE_FILE, DELETED_MESSAGES_ARCHIVE_FILE];
-+    const files = [USERS_FILE, SETTINGS_FILE, PHONE_SETTINGS_FILE, SESSION_STORE_FILE, BOT_ANALYTICS_FILE, STATUS_BACKUPS_FILE, STATUS_ARCHIVE_FILE, PROFILE_SCHEDULE_FILE, CONTACTS_ARCHIVE_FILE, DELETED_MESSAGES_ARCHIVE_FILE];
-     for (const filePath of files) {
-         await restoreJsonMirror(filePath);
+ function processPhoneContactsUpdates(phone, records = []) {
+     const normalizedPhone = normalizePhone(phone);
+     if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
++
++    const db = getContactsArchiveDB();
+     let count = 0;
+     for (const item of records) {
+         const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
+@@ -5988,12 +5997,82 @@ function processPhoneContactsUpdates(phone, records = []) {
+             short: item?.short,
+             fullName: item?.fullName,
+             lastSeenAt: new Date().toISOString()
++        }, {
++            db,
++            persist: false
+         });
+         count += 1;
      }
-@@ -1738,7 +1740,9 @@ function writeJSON(filePath, data) {
-     const pathKey = getJsonMirrorPathKey(filePath);
-     const cloned = cloneJsonValue(data);
-     JSON_MIRROR_CACHE.set(pathKey, cloned);
--    writeJsonFileToDisk(filePath, cloned);
-+    void persistJsonMirror(filePath, cloned).catch((error) => {
-+        console.error(`JSON Mirror Persist Error (${path.basename(filePath)}):`, error?.message || error);
-+    });
++
++    if (count > 0) {
++        saveContactsArchiveDB(db);
++    }
+     return count;
  }
  
- function getDefaultSessionStoreDB() {
-@@ -1811,10 +1815,11 @@ function sessionHasLocalAuthFiles(phone = '') {
-     return listLocalSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
- }
- 
-+const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
- const LOCAL_SESSION_FILE_LIMITS = Object.freeze({
--    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 60)),
--    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 80)),
--    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 80))
-+    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 10000)),
-+    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 10000)),
-+    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 10000))
++function flushQueuedPhoneContactsUpdates(phone) {
++    const normalizedPhone = normalizePhone(phone);
++    const queued = pendingContactSyncs.get(normalizedPhone);
++    if (!queued) return 0;
++
++    if (queued.timer) {
++        clearTimeout(queued.timer);
++    }
++
++    pendingContactSyncs.delete(normalizedPhone);
++    const records = Array.from((queued.recordsByJid instanceof Map ? queued.recordsByJid : new Map()).values());
++    if (!records.length) return 0;
++    return processPhoneContactsUpdates(normalizedPhone, records);
++}
++
++function queuePhoneContactsUpdates(phone, records = []) {
++    const normalizedPhone = normalizePhone(phone);
++    if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
++
++    const queued = pendingContactSyncs.get(normalizedPhone) || {
++        recordsByJid: new Map(),
++        timer: null
++    };
++
++    let accepted = 0;
++    for (const item of records) {
++        const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
++        if (!jid) continue;
++        const existing = queued.recordsByJid.get(jid) || {};
++        queued.recordsByJid.set(jid, {
++            ...existing,
++            ...item,
++            id: jid,
++            jid,
++            user: jid
++        });
++        accepted += 1;
++    }
++
++    if (!accepted) {
++        return 0;
++    }
++
++    if (queued.timer) {
++        clearTimeout(queued.timer);
++    }
++
++    queued.timer = setTimeout(() => {
++        try {
++            flushQueuedPhoneContactsUpdates(normalizedPhone);
++        } catch (error) {
++            console.error(`Contacts Flush Error (${normalizedPhone}):`, error?.message || error);
++        }
++    }, CONTACTS_SYNC_FLUSH_DELAY_MS);
++
++    if (typeof queued.timer.unref === 'function') {
++        queued.timer.unref();
++    }
++
++    pendingContactSyncs.set(normalizedPhone, queued);
++    return accepted;
++}
++
+ function getPhoneContactEntries(phone) {
+     const normalizedPhone = normalizePhone(phone);
+     if (!normalizedPhone) return [];
+@@ -9508,7 +9587,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+     sock.ev.on('contacts.upsert', (items = []) => {
+         try {
+             touchClient(normalizedPhone);
+-            processPhoneContactsUpdates(normalizedPhone, items);
++            queuePhoneContactsUpdates(normalizedPhone, items);
+         } catch (error) {
+             console.error(`contacts.upsert Error (${normalizedPhone}):`, error.message);
+         }
+@@ -9517,7 +9596,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+     sock.ev.on('contacts.update', (items = []) => {
+         try {
+             touchClient(normalizedPhone);
+-            processPhoneContactsUpdates(normalizedPhone, items);
++            queuePhoneContactsUpdates(normalizedPhone, items);
+         } catch (error) {
+             console.error(`contacts.update Error (${normalizedPhone}):`, error.message);
+         }
+@@ -12419,6 +12498,9 @@ app.get('/settings', (req, res) => {
+     res.send(buildSettingsPageHTML());
  });
  
- function classifySessionJsonFile(fileName = '') {
-@@ -1843,6 +1848,7 @@ function rankSessionJsonFilesForRetention(fileNames = []) {
++app.get('/contactsave', (req, res) => {
++    return res.redirect(302, '/settings-local');
++});
+ 
+ app.get('/minibot/setting', (req, res) => {
+     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+@@ -13285,8 +13367,12 @@ async function initTelegramTransport() {
+     }
  }
  
- function pruneSessionDirectoryFiles(phone = '') {
-+    if (!LOCAL_SESSION_PRUNE_ENABLED) return false;
-     const normalizedPhone = normalizePhone(phone);
-     if (!normalizedPhone) return false;
-     const sessionDir = getSessionStorageDir(normalizedPhone);
-diff --git a/lib/remoteSessionStore.js b/lib/remoteSessionStore.js
-index c70b3ff..fda292a 100644
---- a/lib/remoteSessionStore.js
-+++ b/lib/remoteSessionStore.js
-@@ -1,3 +1,5 @@
-+require('dotenv').config();
+-const server = app.listen(APP_PORT, async () => {
+-    console.log(`Server running on port ${APP_PORT}`);
++let serviceBootstrapStarted = false;
 +
- const { MongoClient } = require('mongodb');
- const zlib = require('zlib');
++async function bootstrapServiceInBackground() {
++    if (serviceBootstrapStarted) return;
++    serviceBootstrapStarted = true;
++
+     await restorePersistentFilesFromMongo().catch((error) => {
+         console.error('Local restore warning:', error.message || error);
+     });
+@@ -13316,6 +13402,20 @@ const server = app.listen(APP_PORT, async () => {
+     console.log(`Service linked successfully to ${PUBLIC_BASE_URL}`);
+     console.log(`Storage root: ${STORAGE_ROOT}`);
+     console.log(`Telegram transport mode: ${telegramStatus.mode}`);
++}
++
++const server = app.listen(APP_PORT, () => {
++    console.log(`Server running on port ${APP_PORT}`);
++    const kickoff = () => {
++        bootstrapServiceInBackground().catch((error) => {
++            serviceBootstrapStarted = false;
++            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
++        });
++    };
++    const bootstrapTimer = setTimeout(kickoff, 10);
++    if (typeof bootstrapTimer.unref === 'function') {
++        bootstrapTimer.unref();
++    }
+ });
  
-@@ -6,10 +8,11 @@ const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'faresbot').trim()
- const SESSION_COLLECTION_NAME = String(process.env.MONGODB_SESSIONS_COLLECTION || 'whatsapp_sessions').trim() || 'whatsapp_sessions';
- const SESSION_STORE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_STORAGE_TIMEOUT_MS || 20000));
- const SESSION_COMPRESSION_MIN_BYTES = Math.max(256, Number(process.env.SESSION_COMPRESSION_MIN_BYTES || 512));
--const SESSION_STORE_MAX_BYTES = Math.max(256 * 1024, Number(process.env.SESSION_STORE_MAX_BYTES || (2 * 1024 * 1024)));
--const SESSION_MAX_PRE_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_PRE_KEYS || 60));
--const SESSION_MAX_SIGNAL_SESSIONS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SIGNAL_SESSIONS || 80));
--const SESSION_MAX_SENDER_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SENDER_KEYS || 80));
-+const SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
-+const SESSION_STORE_MAX_BYTES = Math.max(256 * 1024, Number(process.env.SESSION_STORE_MAX_BYTES || (12 * 1024 * 1024)));
-+const SESSION_MAX_PRE_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_PRE_KEYS || 10000));
-+const SESSION_MAX_SIGNAL_SESSIONS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SIGNAL_SESSIONS || 10000));
-+const SESSION_MAX_SENDER_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SENDER_KEYS || 10000));
+ server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+@@ -13334,6 +13434,12 @@ async function gracefulShutdown(signal) {
+     }
+     reconnectTimers.clear();
  
- let collectionPromise = null;
- 
-@@ -121,6 +124,9 @@ function estimateFilesByteLength(files = {}) {
- 
- function pruneSessionFiles(files = {}) {
-   const decoded = sanitizeSessionFiles(files, { forStorage: false });
-+  if (!SESSION_PRUNE_ENABLED) {
-+    return { files: decoded, fileBytes: estimateFilesByteLength(decoded) };
-+  }
-   const keep = {};
-   const grouped = { prekey: [], session: [], sender: [], other: [] };
- 
++    for (const phone of Array.from(pendingContactSyncs.keys())) {
++        try {
++            flushQueuedPhoneContactsUpdates(phone);
++        } catch (_) {}
++    }
++
+     for (const phone of channelPromotionTimers.keys()) {
+         clearChannelPromotionTimer(phone);
+     }
+diff --git a/render.yaml b/render.yaml
+index d9c4651..591a35b 100644
+--- a/render.yaml
++++ b/render.yaml
+@@ -3,8 +3,8 @@ services:
+     name: whatsapp-pairing-bot
+     env: node
+     plan: free
+-    buildCommand: npm install
+-    startCommand: node index.js
++    buildCommand: npm install --legacy-peer-deps
++    startCommand: npm run start:optimized
+     envVars:
+       - key: NODE_VERSION
+         value: 20.x
+diff --git a/start.sh b/start.sh
+index ba9cbfb..a854240 100644
+--- a/start.sh
++++ b/start.sh
+@@ -3,4 +3,4 @@ set -e
+ if [ ! -d node_modules ]; then
+   npm install
+ fi
+-npm index.js
++node index.js
