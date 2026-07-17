@@ -1,11 +1,14 @@
 const axios = require('axios');
 const { sleep } = require('../lib/myfunc');
 
+const FALLBACK_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-1.onrender.com';
 const DEFAULT_PAIRING_BASE_URL = String(
     process.env.DEFAULT_PUBLIC_BASE_URL ||
     process.env.PUBLIC_BASE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
     process.env.APP_URL ||
-    `http://127.0.0.1:${process.env.PORT || 3000}`
+    (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
+    FALLBACK_PUBLIC_SITE_URL
 ).replace(/\/+$/, '');
 
 async function pairCommand(sock, chatId, message, q) {
