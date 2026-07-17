@@ -1,35 +1,5 @@
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const { listMongoSessionJsonFiles, clearMongoSessionAuthFiles } = require('../mongo-auth');
 const isOwnerOrSudo = require('../lib/isOwner');
-
-const ENABLE_PERSISTENT_LOCAL_STORAGE = ['1', 'true', 'yes', 'on'].includes(
-    String(process.env.ENABLE_PERSISTENT_LOCAL_STORAGE || 'true').trim().toLowerCase()
-);
-const STORAGE_ROOT = (() => {
-    const projectRoot = process.cwd();
-    const runtimeRoot = path.join(projectRoot, '.runtime');
-    const forceProjectStorage = !['0', 'false', 'no', 'off'].includes(String(process.env.FORCE_PROJECT_STORAGE || 'true').trim().toLowerCase());
-    const candidates = [
-        projectRoot,
-        process.env.BOT_STORAGE_ROOT,
-        process.env.RAILWAY_VOLUME_MOUNT_PATH,
-        process.env.RAILWAY_PERSISTENT_DIR,
-        process.env.RENDER_DISK_MOUNT_PATH,
-        runtimeRoot
-    ].map((item) => String(item || '').trim()).filter(Boolean);
-
-    if (forceProjectStorage) {
-        return projectRoot;
-    }
-
-    if (!ENABLE_PERSISTENT_LOCAL_STORAGE) {
-        return runtimeRoot;
-    }
-
-    return candidates[0] || projectRoot;
-})();
-const SESSIONS_ROOT = path.join(STORAGE_ROOT, 'sessions');
 
 const channelInfo = {
     contextInfo: {
@@ -47,7 +17,7 @@ function normalizePhone(value = '') {
     return String(value || '').replace(/\D/g, '').trim();
 }
 
-function resolveCurrentSessionDir(sock) {
+function resolveCurrentSessionPhone(sock) {
     const candidates = [
         sock?.user?.id,
         sock?.authState?.creds?.me?.id,
@@ -57,18 +27,10 @@ function resolveCurrentSessionDir(sock) {
 
     for (const candidate of candidates) {
         const phone = normalizePhone(candidate);
-        if (phone) {
-            return {
-                phone,
-                dir: path.join(SESSIONS_ROOT, phone)
-            };
-        }
+        if (phone) return phone;
     }
 
-    return {
-        phone: '',
-        dir: path.join(__dirname, '../session')
-    };
+    return '';
 }
 
 async function clearSessionCommand(sock, chatId, msg) {
@@ -84,80 +46,36 @@ async function clearSessionCommand(sock, chatId, msg) {
             return;
         }
 
-        const { phone, dir: sessionDir } = resolveCurrentSessionDir(sock);
-
-        if (!fs.existsSync(sessionDir)) {
+        const phone = resolveCurrentSessionPhone(sock);
+        if (!phone) {
             await sock.sendMessage(chatId, {
-                text: phone
-                    ? `❌ Session directory for ${phone} not found!`
-                    : '❌ Session directory not found!',
+                text: '❌ تعذر تحديد رقم الجلسة الحالية من الاتصال النشط.',
                 ...channelInfo
             });
             return;
         }
 
-        let filesCleared = 0;
-        let errors = 0;
-        const errorDetails = [];
-
         await sock.sendMessage(chatId, {
-            text: phone
-                ? `🔍 Optimizing session files for ${phone}...`
-                : '🔍 Optimizing session files for better performance...',
+            text: `🔍 جاري تنظيف ملفات جلسة MongoDB للرقم ${phone}...`,
             ...channelInfo
         });
 
-        const files = fs.readdirSync(sessionDir);
-        let appStateSyncCount = 0;
-        let preKeyCount = 0;
-        let senderKeyCount = 0;
-        let signalSessionCount = 0;
+        const files = listMongoSessionJsonFiles(phone);
+        const appStateSyncCount = files.filter((file) => file.startsWith('app-state-sync-')).length;
+        const preKeyCount = files.filter((file) => file.startsWith('pre-key-')).length;
+        const senderKeyCount = files.filter((file) => file.startsWith('sender-key-')).length;
+        const signalSessionCount = files.filter((file) => file.startsWith('session-')).length;
+        const removed = clearMongoSessionAuthFiles(phone, { preserveSessionMeta: true, ownerId: phone });
 
-        for (const file of files) {
-            if (file.startsWith('app-state-sync-')) appStateSyncCount++;
-            if (file.startsWith('pre-key-')) preKeyCount++;
-            if (file.startsWith('sender-key-')) senderKeyCount++;
-            if (file.startsWith('session-')) signalSessionCount++;
-        }
-
-        const keepFiles = new Set([
-            'creds.json',
-            'session-meta.json',
-            'phone-settings-profile.json',
-            'phone-settings-credentials.json',
-            'phone-settings-meta.json'
-        ]);
-
-        for (const file of files) {
-            if (keepFiles.has(file)) {
-                continue;
-            }
-
-            try {
-                const filePath = path.join(sessionDir, file);
-                const stat = fs.statSync(filePath);
-                if (stat.isDirectory()) {
-                    fs.rmSync(filePath, { recursive: true, force: true });
-                } else {
-                    fs.unlinkSync(filePath);
-                }
-                filesCleared++;
-            } catch (error) {
-                errors++;
-                errorDetails.push(`Failed to delete ${file}: ${error.message}`);
-            }
-        }
-
-        const message = `✅ Session files cleared successfully!\n\n` +
-            `📱 Target session: ${phone || 'legacy-default'}\n` +
+        const message = `✅ تم تنظيف جلسة MongoDB بنجاح!\n\n` +
+            `📱 Target session: ${phone}\n` +
             `📊 Statistics:\n` +
-            `• Total files cleared: ${filesCleared}\n` +
-            `• App state sync files found: ${appStateSyncCount}\n` +
-            `• Pre-key files found: ${preKeyCount}\n` +
-            `• Sender-key files found: ${senderKeyCount}\n` +
-            `• Signal session files found: ${signalSessionCount}\n` +
-            `• Preserved core files: creds + session metadata + phone settings` +
-            (errors > 0 ? `\n\n⚠️ Errors encountered: ${errors}\n${errorDetails.join('\n')}` : '');
+            `• Total auth records cleared: ${removed}\n` +
+            `• App state sync records found: ${appStateSyncCount}\n` +
+            `• Pre-key records found: ${preKeyCount}\n` +
+            `• Sender-key records found: ${senderKeyCount}\n` +
+            `• Signal session records found: ${signalSessionCount}\n` +
+            `• Storage mode: MongoDB only`;
 
         await sock.sendMessage(chatId, {
             text: message,
@@ -166,7 +84,7 @@ async function clearSessionCommand(sock, chatId, msg) {
     } catch (error) {
         console.error('Error in clearsession command:', error);
         await sock.sendMessage(chatId, {
-            text: '❌ Failed to clear session files!',
+            text: '❌ Failed to clear MongoDB session records!',
             ...channelInfo
         });
     }
