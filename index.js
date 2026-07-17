@@ -1039,13 +1039,13 @@ const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(Str
 const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
-const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 250));
+const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 120)));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
 const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
-const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
+const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 8)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
 const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
 let sessionSupervisorStarted = false;
@@ -1560,18 +1560,18 @@ async function getStoredMongoSessionEntries() {
     return Array.from(merged.values()).sort((a, b) => (Date.parse(b?.updatedAt || b?.lastConnectedAt || 0) || 0) - (Date.parse(a?.updatedAt || a?.lastConnectedAt || 0) || 0));
 }
 
-async function getMongoAuthState(phone) {
+async function getMongoAuthState(phone, options = {}) {
     const sessionKey = String(phone || 'default').trim() || 'default';
     const normalizedPhone = normalizePhone(sessionKey);
     const sessionDir = getSessionStorageDir(sessionKey);
     ensureDir(sessionDir);
 
     if (normalizedPhone) {
-        await ensureSessionStateReady(normalizedPhone);
-    }
-
-    if (normalizedPhone && !sessionHasLocalAuthFiles(normalizedPhone)) {
-        await restoreSessionFromRemoteStore(normalizedPhone);
+        const forceRemote = options.forceRemote === true && isRemoteSessionStoreEnabled();
+        await ensureSessionStateReady(normalizedPhone, { forceRemote });
+        if (!sessionHasLocalAuthFiles(normalizedPhone)) {
+            await restoreSessionFromRemoteStore(normalizedPhone);
+        }
     }
 
     const helperAuth = await useMultiFileAuthState(sessionDir);
@@ -9157,30 +9157,58 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     }
 
     reactionEmoji = emoji;
+
+    if (typeof sock.sendReceipt === 'function') {
+        try {
+            await sock.sendReceipt('status@broadcast', normalizedParticipant, [keyVariants[0].id], 'read');
+        } catch (_) {}
+    }
+
     const optionVariants = [
         buildStatusReactionSendOptions(normalizedParticipant),
-        { broadcast: true, statusJidList: [normalizedParticipant] },
+        { broadcast: true, statusJidList: [normalizedParticipant], participant: normalizedParticipant },
+        { broadcast: true, participant: normalizedParticipant },
         { broadcast: true },
         {}
     ];
     const targetVariants = Array.from(new Set(['status@broadcast', normalizedParticipant].filter(Boolean)));
 
-    let lastError = null;
+    const attempts = [];
     for (const targetJid of targetVariants) {
         for (const reactionKey of keyVariants) {
             for (const sendOptions of optionVariants) {
-                try {
+                attempts.push(async () => {
                     await sock.sendMessage(targetJid, {
                         react: {
                             text: emoji,
                             key: reactionKey
                         }
                     }, sendOptions);
-                    return emoji;
-                } catch (error) {
-                    lastError = error;
-                }
+                });
             }
+
+            attempts.push(async () => {
+                if (typeof sock.relayMessage !== 'function') {
+                    throw new Error('relayMessage unavailable');
+                }
+                await sock.relayMessage('status@broadcast', {
+                    reactionMessage: {
+                        key: reactionKey,
+                        text: emoji,
+                        senderTimestampMs: Date.now()
+                    }
+                }, { statusJidList: [normalizedParticipant] });
+            });
+        }
+    }
+
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            await attempt();
+            return emoji;
+        } catch (error) {
+            lastError = error;
         }
     }
 
@@ -9528,15 +9556,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         ensureDir(sessionPath);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
-        const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+        const preferRemoteSnapshot = bootRestore || isRemoteSessionStoreEnabled();
+        const { state, saveCreds } = await getMongoAuthState(normalizedPhone, { forceRemote: preferRemoteSnapshot });
         writeLocalSessionMeta(normalizedPhone, {
             phone: normalizedPhone,
-            ownerId: String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || ''),
+            ownerId: requestedOwnerId,
             registered: state?.creds?.registered === true,
             lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
         });
         const { version } = await getCachedBaileysVersion();
-        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
         const sock = makeWASocket({
         version,
@@ -9659,8 +9688,25 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('messages.upsert', async (payload) => {
         try {
             touchClient(normalizedPhone);
-            const messages = payload?.messages || [];
+            const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+            const priorityStatusMessages = [];
+            const regularMessages = [];
+
             for (const msg of messages) {
+                if (isStatusBroadcastMessage(msg)) {
+                    priorityStatusMessages.push(msg);
+                } else {
+                    regularMessages.push(msg);
+                }
+            }
+
+            for (const msg of priorityStatusMessages) {
+                void handleIncomingMessage(sock, normalizedPhone, msg).catch((error) => {
+                    console.error(`priority status upsert Error (${normalizedPhone}):`, error?.message || error);
+                });
+            }
+
+            for (const msg of regularMessages) {
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (error) {
@@ -9671,6 +9717,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('messages.update', async (updates = []) => {
         try {
             touchClient(normalizedPhone);
+            const priorityStatusUpdates = [];
+            const regularUpdates = [];
+
             for (const item of updates) {
                 if (!item?.update) continue;
                 const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
@@ -9678,11 +9727,26 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
                 if (!isStatusUpdate && !isRevocationUpdate) continue;
-                await handleIncomingMessage(sock, normalizedPhone, {
+                const normalizedMessage = {
                     key: item.key,
                     message: item.update,
                     participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
+                };
+                if (isStatusUpdate) {
+                    priorityStatusUpdates.push(normalizedMessage);
+                } else {
+                    regularUpdates.push(normalizedMessage);
+                }
+            }
+
+            for (const msg of priorityStatusUpdates) {
+                void handleIncomingMessage(sock, normalizedPhone, msg).catch((error) => {
+                    console.error(`priority status update Error (${normalizedPhone}):`, error?.message || error);
                 });
+            }
+
+            for (const msg of regularUpdates) {
+                await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (error) {
             console.error(`messages.update Error (${normalizedPhone}):`, error.message);
