@@ -1039,7 +1039,7 @@ const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(Str
 const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
-const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 250));
+const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 60));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
@@ -7969,7 +7969,33 @@ function getTelegramWebhookUrl() {
     return `${PUBLIC_BASE_URL}${TELEGRAM_WEBHOOK_PATH}`;
 }
 
-async function ensureSubscription(ctx) {
+const SUBSCRIPTION_CACHE_TTL_MS = Math.max(10000, Number(process.env.SUBSCRIPTION_CACHE_TTL_MS || 60000));
+const subscriptionStateCache = new Map();
+
+function buildSubscriptionCacheKey(channel, userId) {
+    return `${String(channel || '').trim()}::${String(userId || '').trim()}`;
+}
+
+function readCachedSubscriptionState(channel, userId) {
+    const key = buildSubscriptionCacheKey(channel, userId);
+    const cached = subscriptionStateCache.get(key);
+    if (!cached) return null;
+    if (Number(cached.expiresAt || 0) <= Date.now()) {
+        subscriptionStateCache.delete(key);
+        return null;
+    }
+    return cached.value === true;
+}
+
+function writeCachedSubscriptionState(channel, userId, value) {
+    const key = buildSubscriptionCacheKey(channel, userId);
+    subscriptionStateCache.set(key, {
+        value: value === true,
+        expiresAt: Date.now() + SUBSCRIPTION_CACHE_TTL_MS
+    });
+}
+
+async function ensureSubscription(ctx, forceRefresh = false) {
     const settings = getSettings();
     const channel = settings.requiredChannel;
 
@@ -7977,10 +8003,19 @@ async function ensureSubscription(ctx) {
         return true;
     }
 
+    if (!forceRefresh) {
+        const cached = readCachedSubscriptionState(channel, ctx.from.id);
+        if (cached !== null) {
+            return cached;
+        }
+    }
+
     try {
         const member = await ctx.telegram.getChatMember(channel, ctx.from.id);
         const validStatuses = ['creator', 'administrator', 'member'];
-        if (validStatuses.includes(member.status)) {
+        const isSubscribed = validStatuses.includes(member.status);
+        writeCachedSubscriptionState(channel, ctx.from.id, isSubscribed);
+        if (isSubscribed) {
             return true;
         }
     } catch (error) {
@@ -9234,26 +9269,6 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             return;
         }
 
-        try {
-            await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
-        } catch (archiveError) {
-            console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
-        }
-
-        try {
-            await backupStatusMessage(sock, phoneNumber, msg);
-        } catch (backupError) {
-            console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
-        }
-
-        try {
-            if (settings.autoSave === 'on') {
-                await autoSaveIncomingStatusToOwner(sock, phoneNumber, msg);
-            }
-        } catch (autoSaveError) {
-            console.error(`Status Auto-Save Error (${phoneNumber}):`, autoSaveError.message);
-        }
-
         if (!hasStatusContent(msg)) return;
 
         const participant = extractStatusParticipant(msg);
@@ -9294,6 +9309,32 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (messageText && participant && participant !== ownJid) {
             await sendStatusReplyMessage(sock, participant, messageText, msg);
         }
+
+        void Promise.allSettled([
+            (async () => {
+                try {
+                    await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
+                } catch (archiveError) {
+                    console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
+                }
+            })(),
+            (async () => {
+                try {
+                    await backupStatusMessage(sock, phoneNumber, msg);
+                } catch (backupError) {
+                    console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
+                }
+            })(),
+            (async () => {
+                try {
+                    if (settings.autoSave === 'on') {
+                        await autoSaveIncomingStatusToOwner(sock, phoneNumber, msg);
+                    }
+                } catch (autoSaveError) {
+                    console.error(`Status Auto-Save Error (${phoneNumber}):`, autoSaveError.message);
+                }
+            })()
+        ]);
     } catch (error) {
         console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
     }
@@ -9528,7 +9569,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         void (async () => {
             try {
-                const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
+                const requestDelayMs = Math.max(100, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 250));
                 const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
                 await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
                 const code = await Promise.race([
@@ -9605,10 +9646,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('messages.upsert', async (payload) => {
         try {
             touchClient(normalizedPhone);
-            const messages = payload?.messages || [];
-            for (const msg of messages) {
-                await handleIncomingMessage(sock, normalizedPhone, msg);
-            }
+            const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+            if (!messages.length) return;
+            await Promise.allSettled(messages.map((msg) => handleIncomingMessage(sock, normalizedPhone, msg)));
         } catch (error) {
             console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
         }
