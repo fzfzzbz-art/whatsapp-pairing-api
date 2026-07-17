@@ -1484,9 +1484,17 @@ async function deleteMongoSessionState(phone, options = {}) {
 
     if (normalizedPhone && isRemoteSessionStoreEnabled()) {
         try {
-            await deleteRemoteSession(normalizedPhone);
+            if (preserveLocalIndex || preservePhoneSettings) {
+                await syncSessionToRemoteStore(sessionKey, {
+                    ownerId: String(options.ownerId || getPhoneOwner(sessionKey) || '').trim(),
+                    registered: false,
+                    lastConnectedAt: readLocalSessionMeta(sessionKey)?.lastConnectedAt || null
+                });
+            } else {
+                await deleteRemoteSession(normalizedPhone);
+            }
         } catch (error) {
-            console.error(`⚠️ تعذر حذف الجلسة البعيدة ${normalizedPhone}:`, error.message || error);
+            console.error(`⚠️ تعذر تحديث/حذف الجلسة البعيدة ${normalizedPhone}:`, error.message || error);
         }
     }
 
@@ -1807,7 +1815,22 @@ function collectSessionDirectorySnapshot(phone = '', metadata = {}) {
     if (!normalizedPhone) return null;
 
     const snapshot = getMongoSessionSnapshot(normalizedPhone);
-    const files = snapshot?.files || {};
+    const files = { ...(snapshot?.files || {}) };
+    const profileFiles = {
+        'phone-settings-profile.json': getSessionPhoneProfileSettingsFile(normalizedPhone),
+        'phone-settings-credentials.json': getSessionPhoneProfileCredentialsFile(normalizedPhone),
+        'phone-settings-meta.json': getSessionPhoneProfileMetaFile(normalizedPhone)
+    };
+
+    for (const [fileName, filePath] of Object.entries(profileFiles)) {
+        try {
+            if (!fs.existsSync(filePath)) continue;
+            const raw = fs.readFileSync(filePath, 'utf8');
+            if (String(raw || '').trim()) {
+                files[fileName] = raw;
+            }
+        } catch (_) {}
+    }
 
     return normalizeSessionStoreRecord(normalizedPhone, {
         ownerId: metadata.ownerId || snapshot?.ownerId || getPhoneOwner?.(normalizedPhone) || '',
@@ -2930,7 +2953,14 @@ function savePhoneSettingsDB(db) {
     _phoneSettingsDBCacheAt = Date.now();
     writeJSON(PHONE_SETTINGS_FILE, db);
     for (const [phone, profile] of Object.entries(db.profiles)) {
-        syncPhoneProfileToDirectory(phone, profile);
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone) continue;
+        syncPhoneProfileToDirectory(normalizedPhone, profile);
+        void scheduleSessionSnapshotSync(normalizedPhone, {
+            ownerId: String(getPhoneOwner(normalizedPhone) || '').trim(),
+            registered: readLocalSessionMeta(normalizedPhone)?.registered === true,
+            lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+        }, 0).catch(() => undefined);
     }
 }
 
@@ -8050,6 +8080,7 @@ function clearSessionAuthDirectory(phone, options = {}) {
 
     const removed = clearMongoSessionAuthFiles(normalizedPhone, {
         preserveSessionMeta,
+        preservePhoneSettings,
         ownerId: String(options.ownerId || getPhoneOwner(normalizedPhone) || '').trim(),
         lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
     });
@@ -9398,9 +9429,24 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
 
+        if (msg.key?.fromMe) {
+            incrementAnalytics('totalOwnerReplies');
+            if (settings.ghostMode === 'on') {
+                dropGhostPendingMessages(phoneNumber, from);
+            }
+            const handledOwnerControl = await handleOwnerControlMessage(sock, phoneNumber, msg);
+            if (handledOwnerControl) {
+                return;
+            }
+        } else if (!isGroup) {
+            const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
+            if (handledPublicCommand) return;
+        }
+
+        let legacyHandled = false;
         try {
-            await dispatchLegacyMessage(sock, phoneNumber, msg);
-            if (text.startsWith('.')) {
+            legacyHandled = await dispatchLegacyMessage(sock, phoneNumber, msg);
+            if (legacyHandled && text.startsWith('.')) {
                 return;
             }
         } catch (legacyError) {
@@ -9408,11 +9454,6 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
         if (msg.key?.fromMe) {
-            incrementAnalytics('totalOwnerReplies');
-            if (settings.ghostMode === 'on') {
-                dropGhostPendingMessages(phoneNumber, from);
-            }
-            await handleOwnerControlMessage(sock, phoneNumber, msg);
             return;
         }
 
@@ -9434,11 +9475,6 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 
         if (!isGroup && settings.ghostMode === 'on' && msg.key) {
             rememberGhostPendingMessage(phoneNumber, msg);
-        }
-
-        if (!isGroup) {
-            const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
-            if (handledPublicCommand) return;
         }
 
         if (settings.autoRead === 'on' && settings.ghostMode !== 'on' && msg.key) {

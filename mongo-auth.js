@@ -286,6 +286,13 @@ function clearMongoSessionAuthFiles(phone = '', options = {}) {
     if (options.preserveSessionMeta === true && typeof cache.files['session-meta.json'] === 'string') {
         nextFiles['session-meta.json'] = cache.files['session-meta.json'];
     }
+    if (options.preservePhoneSettings === true) {
+        for (const fileName of ['phone-settings-profile.json', 'phone-settings-credentials.json', 'phone-settings-meta.json']) {
+            if (typeof cache.files[fileName] === 'string') {
+                nextFiles[fileName] = cache.files[fileName];
+            }
+        }
+    }
 
     const removed = existingFiles.filter((fileName) => !Object.prototype.hasOwnProperty.call(nextFiles, fileName)).length;
     cache.ownerId = String(options.ownerId || cache.ownerId || '').trim();
