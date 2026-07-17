@@ -1018,6 +1018,7 @@ const sessionSnapshotSyncMetadata = new Map();
 const sessionSnapshotSyncPromises = new Map();
 const phoneJobQueues = new Map();
 const sessionStartPromises = new Map();
+const sessionDeletionLocks = new Map();
 const recentStatusEvents = new Map();
 const pendingContactSyncs = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -1048,7 +1049,7 @@ const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(Str
 const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
-const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 120)));
+const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 0)));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
@@ -5883,9 +5884,47 @@ function userOwnsPhone(userId, phone) {
     return db.phoneOwners[normalized] === String(userId);
 }
 
-function getUserPhones(userId) {
-    const user = getUserRecord(userId);
+function pruneOrphanLinkedNumbers(userId) {
+    const db = getUsersDB();
+    const key = String(userId);
+    const user = db.users[key];
+    if (!user) return [];
+
+    const linkedNumbers = Array.isArray(user.linkedNumbers) ? user.linkedNumbers.map((phone) => normalizePhone(phone)).filter(Boolean) : [];
+    const nextLinkedNumbers = [];
+    let changed = false;
+
+    for (const phone of linkedNumbers) {
+        const ownedByUser = db.phoneOwners[phone] === key;
+        const hasRuntimeState = waClients.has(phone) || hasActivePendingPairing(phone) || sessionStartPromises.has(phone);
+        const hasStoredState = hasPersistedSuccessfulSession(phone);
+
+        if (ownedByUser && (hasRuntimeState || hasStoredState)) {
+            nextLinkedNumbers.push(phone);
+            continue;
+        }
+
+        changed = true;
+        if (ownedByUser) {
+            delete db.phoneOwners[phone];
+        }
+        if (user.emojis && Object.prototype.hasOwnProperty.call(user.emojis, phone)) {
+            delete user.emojis[phone];
+        }
+    }
+
+    const deduped = Array.from(new Set(nextLinkedNumbers));
+    if (changed || deduped.length !== linkedNumbers.length) {
+        user.linkedNumbers = deduped;
+        user.updatedAt = new Date().toISOString();
+        saveUsersDB(db);
+    }
+
     return Array.isArray(user.linkedNumbers) ? user.linkedNumbers : [];
+}
+
+function getUserPhones(userId) {
+    return pruneOrphanLinkedNumbers(userId);
 }
 
 function getPhoneOwner(phone) {
@@ -8252,6 +8291,31 @@ function clearPairingRequest(phone) {
     pairingRequests.delete(normalized);
 }
 
+function markSessionDeletionInProgress(phone, ttlMs = 30000) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    sessionDeletionLocks.set(normalized, Date.now() + Math.max(5000, Number(ttlMs) || 30000));
+    return true;
+}
+
+function isSessionDeletionInProgress(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const expiresAt = Number(sessionDeletionLocks.get(normalized) || 0);
+    if (!expiresAt) return false;
+    if (Date.now() > expiresAt) {
+        sessionDeletionLocks.delete(normalized);
+        return false;
+    }
+    return true;
+}
+
+function clearSessionDeletionInProgress(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    return sessionDeletionLocks.delete(normalized);
+}
+
 function resetReconnectAttempts(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return 0;
@@ -8511,17 +8575,22 @@ async function cleanupSession(phone) {
     const normalized = normalizePhone(phone);
     const sock = waClients.get(normalized);
 
+    markSessionDeletionInProgress(normalized, 30000);
     clearReconnectTimer(normalized);
     clearPairingRequest(normalized);
     clientActivity.delete(normalized);
     clearPresenceTimer(normalized);
     clearGhostPendingMessagesForPhone(normalized);
-    stoppedPairings.delete(normalized);
+    clearSessionPingTimer(normalized);
+    stoppedPairings.add(normalized);
     resetReconnectAttempts(normalized);
 
     if (sock) {
         try {
             await sock.logout();
+        } catch (_) {}
+        try {
+            sock.ws?.close?.();
         } catch (_) {}
         try {
             sock.end?.();
@@ -8530,7 +8599,7 @@ async function cleanupSession(phone) {
     }
 
     await purgeSessionData(normalized, {
-        keepProfile: true,
+        keepProfile: false,
         ownerId: getPhoneOwner(normalized) || ''
     });
 }
@@ -9529,6 +9598,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     const startPromise = (async () => {
         clearReconnectTimer(normalizedPhone);
+        clearSessionDeletionInProgress(normalizedPhone);
         stoppedPairings.delete(normalizedPhone);
 
         const existing = waClients.get(normalizedPhone);
@@ -9867,6 +9937,11 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
                 clearSessionPingTimer(normalizedPhone);
+
+                if (isSessionDeletionInProgress(normalizedPhone)) {
+                    console.log(`Manual session deletion in progress: ${normalizedPhone}`);
+                    return;
+                }
 
                 const transientCryptoDisconnect = isTransientCryptoDisconnect(lastDisconnect);
                 const corruptedBootSession = bootRestore && shouldDiscardCorruptedBootSession(lastDisconnect);
