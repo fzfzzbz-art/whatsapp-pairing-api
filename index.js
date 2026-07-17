@@ -221,7 +221,15 @@ const EMBEDDED_PAIR_CODE_BRIDGE = (() => {
             return "";
         }
 
-        const DEFAULT_PUBLIC_WEB_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.APP_URL || '').trim().replace(/\/+$/, '') || `http://127.0.0.1:${process.env.PORT || 3000}`;
+        const FALLBACK_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-1.onrender.com';
+        const DEFAULT_PUBLIC_WEB_BASE_URL = String(
+            process.env.DEFAULT_PUBLIC_BASE_URL ||
+            process.env.PUBLIC_BASE_URL ||
+            process.env.RENDER_EXTERNAL_URL ||
+            process.env.APP_URL ||
+            (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
+            ''
+        ).trim().replace(/\/+$/, '') || FALLBACK_PUBLIC_SITE_URL;
 
         const DEFAULT_SETTINGS = {
             current_emoji: String(process.env.CURRENT_EMOJI || "🔥"),
@@ -356,7 +364,15 @@ const DEFAULT_REACTION_EMOJI = '❤️';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'Golden Queen Bot';
 const BRAND_IMAGE_TEXT = 'Golden Queen Bot';
-const DEFAULT_BOT_LINK = String(process.env.DEFAULT_BOT_LINK || process.env.PUBLIC_BASE_URL || process.env.APP_URL || '').trim().replace(/\/+$/, '') || `http://127.0.0.1:${process.env.PORT || 8080}`;
+const FALLBACK_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-1.onrender.com';
+const DEFAULT_BOT_LINK = String(
+    process.env.DEFAULT_BOT_LINK ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL ||
+    (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
+    ''
+).trim().replace(/\/+$/, '') || FALLBACK_PUBLIC_SITE_URL;
 const DEVELOPER_DISPLAY_NAME = '◥ ツفارس ツ ◤ ⁪⁬⁮⁮⁮ ⁪⁬⁮⁮⁮';
 const DEVELOPER_USERNAME = 'P_n_ij';
 const DEVELOPER_PROFILE_LINK = 'https://t.me/P_n_ij';
@@ -376,7 +392,14 @@ const MAX_WA_ABOUT_LENGTH = 139;
 const PROFILE_CUSTOM_MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = String(process.env.DEPLOYMENT_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.APP_URL || DEFAULT_BOT_LINK).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
+const DEPLOYMENT_BASE_URL = String(
+    process.env.DEPLOYMENT_BASE_URL ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL ||
+    (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
+    DEFAULT_BOT_LINK
+).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
 const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL || DEFAULT_BOT_LINK).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
 const THIRD_LINKING_SITE_PATH = (() => {
     const rawPath = String(process.env.THIRD_LINKING_SITE_PATH || '/knightbot-freebot').trim() || '/knightbot-freebot';
