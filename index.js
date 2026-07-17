@@ -383,18 +383,17 @@ const THIRD_LINKING_SITE_PATH = (() => {
     return rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
 })();
 const THIRD_LINKING_SITE_URL = `${DEPLOYMENT_BASE_URL}${THIRD_LINKING_SITE_PATH}`;
-const LINKING_SITE_URL = `${DEPLOYMENT_BASE_URL}/linking-site`;
-const FREEBOT_SITE_URL = `${DEPLOYMENT_BASE_URL}/Freebot`;
+const LINKING_SITE_URL = DEPLOYMENT_BASE_URL;
+const FREEBOT_SITE_URL = DEPLOYMENT_BASE_URL;
+const PRIMARY_LINKING_SITE_URL = DEPLOYMENT_BASE_URL;
+const PRIMARY_SETTINGS_URL = `${DEPLOYMENT_BASE_URL}/settings`;
 const DEFAULT_SITE_INFO_TEXT = [
-    `🌐 الموقع الرسمي: ${DEPLOYMENT_BASE_URL}`,
-    `⚙️ صفحة الإعدادات: ${DEPLOYMENT_BASE_URL}/settings`,
-    `🆕 واجهة Freebot الجديدة: ${THIRD_LINKING_SITE_URL}`,
-    `🧩 رابط Freebot المباشر: ${FREEBOT_SITE_URL}`,
-    `🔗 API كود الاقتران: ${DEPLOYMENT_BASE_URL}/api/pairing`
+    `🌐 موقع الربط: ${PRIMARY_LINKING_SITE_URL}`,
+    `⚙️ صفحة الإعدادات: ${PRIMARY_SETTINGS_URL}`
 ].join('\n');
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
-    target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
+    target_settings_page_url: PRIMARY_SETTINGS_URL,
     target_site_login_api_url: `${DEPLOYMENT_BASE_URL}/api/login`,
     target_site_settings_load_api_url: `${DEPLOYMENT_BASE_URL}/api/settings/load`,
     target_site_settings_save_api_url: `${DEPLOYMENT_BASE_URL}/api/settings/save`,
@@ -876,28 +875,36 @@ const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
     '',
     '📢 قناة واتساب الرسمية:',
     WHATSAPP_CHANNEL_LINK,
+    '🌐 رابط موقع الربط:',
+    PRIMARY_LINKING_SITE_URL,
     '⚙️ رابط الإعدادات:',
-    `${DEPLOYMENT_BASE_URL}/settings`,
-    '🆕 واجهة Freebot الجديدة:',
-    '{thirdSite}',
-    '🧩 رابط Freebot المباشر:',
-    '{freebotSite}',
-    '',
-    '🔗 رابط المشروع:',
-    'https://t.me/Faresw_bot'
+    PRIMARY_SETTINGS_URL
 ].join('\n');
 const DEFAULT_LINKED_WELCOME_MESSAGE = [
     '✅ تم تسجيل رقمك بنجاح.',
     '📢 اشترك في قناة واتساب الرسمية:',
     WHATSAPP_CHANNEL_LINK,
+    '🌐 رابط موقع الربط:',
+    PRIMARY_LINKING_SITE_URL,
     '⚙️ رابط الإعدادات:',
-    `${DEPLOYMENT_BASE_URL}/settings`,
-    '🆕 واجهة Freebot الجديدة:',
-    '{thirdSite}',
-    '🧩 رابط Freebot المباشر:',
-    '{freebotSite}'
+    PRIMARY_SETTINGS_URL
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
+const LEGACY_PUBLIC_LINK_MARKERS = [
+    'واجهة Freebot الجديدة',
+    'رابط Freebot المباشر',
+    'رابط المشروع:',
+    'https://t.me/Faresw_bot',
+    '/Freebot',
+    '/linking-site',
+    'knightbot-freebot'
+];
+
+function shouldResetPublicLinkMessage(message = '') {
+    const normalized = String(message || '').trim();
+    if (!normalized) return false;
+    return LEGACY_PUBLIC_LINK_MARKERS.some((marker) => normalized.includes(marker));
+}
 const CHANNEL_PROMOTION_INTERVAL_MS = 5 * 60 * 1000; // كل 5 دقائق
 const CHANNEL_PROMOTION_INITIAL_DELAY_MS = 5 * 60 * 1000; // تأخير أولي 5 دقائق
 const CHANNEL_PROMOTION_MESSAGE = `تحديث جديد تقدر تحكم برقمك بالكامل من خلال هذا البوت
@@ -2820,8 +2827,14 @@ function getSettings() {
     settings.admins = Array.from(new Set([...(settings.admins || []), ...DEFAULT_ADMINS])).map(String);
     settings.linkedBotMessageEnabled = settings.linkedBotMessageEnabled !== false;
     settings.linkedBotMessage = String(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE);
+    if (shouldResetPublicLinkMessage(settings.linkedBotMessage)) {
+        settings.linkedBotMessage = DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE;
+    }
     settings.linkedWelcomeMessageEnabled = settings.linkedWelcomeMessageEnabled !== false;
     settings.linkedWelcomeMessage = String(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE);
+    if (shouldResetPublicLinkMessage(settings.linkedWelcomeMessage)) {
+        settings.linkedWelcomeMessage = DEFAULT_LINKED_WELCOME_MESSAGE;
+    }
     settings.globalLinkedAutoReplies = String(settings.globalLinkedAutoReplies || '').trim();
     settings.globalStatusLikeMessageEnabled = String(settings.globalStatusLikeMessage || '').trim() ? settings.globalStatusLikeMessageEnabled === true : false;
     settings.globalStatusLikeMessage = String(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE);
@@ -2837,8 +2850,14 @@ function saveSettings(settings) {
     settings.admins = Array.from(new Set((settings.admins || []).map(String)));
     settings.linkedBotMessageEnabled = settings.linkedBotMessageEnabled !== false;
     settings.linkedBotMessage = String(settings.linkedBotMessage || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE);
+    if (shouldResetPublicLinkMessage(settings.linkedBotMessage)) {
+        settings.linkedBotMessage = DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE;
+    }
     settings.linkedWelcomeMessageEnabled = settings.linkedWelcomeMessageEnabled !== false;
     settings.linkedWelcomeMessage = String(settings.linkedWelcomeMessage || DEFAULT_LINKED_WELCOME_MESSAGE);
+    if (shouldResetPublicLinkMessage(settings.linkedWelcomeMessage)) {
+        settings.linkedWelcomeMessage = DEFAULT_LINKED_WELCOME_MESSAGE;
+    }
     settings.globalLinkedAutoReplies = String(settings.globalLinkedAutoReplies || '').trim();
     settings.globalStatusLikeMessageEnabled = settings.globalStatusLikeMessageEnabled === true && Boolean(String(settings.globalStatusLikeMessage || '').trim());
     settings.globalStatusLikeMessage = String(settings.globalStatusLikeMessage || DEFAULT_STATUS_LIKE_REPLY_MESSAGE);
@@ -3007,9 +3026,8 @@ function buildPhoneSettingsAccessMessage(phone, appId = null) {
     return [
         `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
         '',
-        `🌐 رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
-        `🆕 واجهة Freebot الجديدة: ${THIRD_LINKING_SITE_URL}`,
-        `🧩 رابط Freebot المباشر: ${FREEBOT_SITE_URL}`,
+        `🌐 رابط موقع الربط: ${PRIMARY_LINKING_SITE_URL}`,
+        `⚙️ رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
         `📱 الرقم: ${credential.phone}`,
         `🗝️ كلمة السر: ${credential.password}`,
         '',
@@ -6386,10 +6404,10 @@ function buildLinkingSiteSummaryExtras() {
             totalSessionsStarted: Number(analytics.totalSessionsStarted || 0)
         },
         routes: {
-            main: DEPLOYMENT_BASE_URL,
-            linkingSite: LINKING_SITE_URL,
-            freebot: FREEBOT_SITE_URL,
-            thirdSite: THIRD_LINKING_SITE_URL,
+            main: PRIMARY_LINKING_SITE_URL,
+            linkingSite: PRIMARY_LINKING_SITE_URL,
+            freebot: PRIMARY_LINKING_SITE_URL,
+            thirdSite: PRIMARY_LINKING_SITE_URL,
             settings: SITE_ENDPOINTS.target_settings_page_url,
             pairing: buildPairingApiDescriptor('').endpoint
         }
@@ -6433,9 +6451,8 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '.settings / الإعدادات — عرض إعدادات الرقم الحالية',
         ...buildLinkedOwnerQuickCommands(phone),
         '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        `🌐 رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
-        `🆕 واجهة Freebot الجديدة: ${THIRD_LINKING_SITE_URL}`,
-        `🧩 رابط Freebot المباشر: ${FREEBOT_SITE_URL}`,
+        `🌐 رابط موقع الربط: ${PRIMARY_LINKING_SITE_URL}`,
+        `⚙️ رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
         `📢 قناة واتساب الرسمية: ${WHATSAPP_CHANNEL_LINK}`,
         '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت ولكل رقم إعداداته المستقلة.',
         '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
