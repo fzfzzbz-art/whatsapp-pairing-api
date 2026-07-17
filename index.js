@@ -1008,6 +1008,7 @@ const sessionSnapshotSyncTimers = new Map();
 const sessionSnapshotSyncMetadata = new Map();
 const sessionSnapshotSyncPromises = new Map();
 const phoneJobQueues = new Map();
+const sessionStartPromises = new Map();
 const recentStatusEvents = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
@@ -1041,6 +1042,7 @@ const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERA
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
+const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
 const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
 const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
@@ -8126,6 +8128,16 @@ function touchClient(phone) {
     clientActivity.set(normalized, Date.now());
 }
 
+function hasPersistedSuccessfulSession(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const meta = readLocalSessionMeta(normalized);
+    if (meta?.registered === true) return true;
+    const store = getSessionStoreDB();
+    const record = store.sessions?.[normalized] || {};
+    return record?.registered === true;
+}
+
 function clearReconnectTimer(phone) {
     const normalized = normalizePhone(phone);
     const timer = reconnectTimers.get(normalized);
@@ -8213,12 +8225,36 @@ async function cleanupSessionAfterReconnectFailure(phone, ownerId = null, reason
 
 function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
-    if (!normalized || reconnectTimers.has(normalized)) return;
+    if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
-    const attemptNumber = bumpReconnectAttempts(normalized);
-    if (attemptNumber > MAX_RECONNECT_ATTEMPTS) {
-        console.warn(`Reconnect attempts exceeded for ${normalized}; session will be preserved and retries will continue.`);
+    const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
+    const retryLimit = hasSuccessfulSession ? MAX_RECONNECT_ATTEMPTS : ORPHAN_SESSION_RETRY_LIMIT;
+    let attemptNumber = bumpReconnectAttempts(normalized);
+
+    if (attemptNumber > retryLimit) {
+        if (!hasSuccessfulSession) {
+            console.warn(`Reconnect attempts exceeded for orphan session ${normalized}; purging session and ownership records.`);
+            void purgeSessionData(normalized, {
+                keepProfile: false,
+                ownerId: ownerId || getPhoneOwner(normalized) || ''
+            }).then(async () => {
+                const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
+                if (resolvedOwnerId) {
+                    await notifyTelegramUser(
+                        resolvedOwnerId,
+                        `🧹 تم حذف الرقم ${normalized} نهائياً من الجلسات والإحصائيات بعد تكرار محاولة الاستعادة بدون نجاح.`
+                    );
+                }
+            }).catch((error) => {
+                console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
+            });
+            resetReconnectAttempts(normalized);
+            return;
+        }
+
+        console.warn(`Reconnect attempts exceeded for ${normalized}; preserving established session and recycling retry counter.`);
         resetReconnectAttempts(normalized);
+        attemptNumber = bumpReconnectAttempts(normalized);
     }
 
     incrementAnalytics('totalReconnects');
@@ -8265,14 +8301,14 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
         try { await sock.logout?.(); } catch (_) {}
 
         await purgeSessionData(normalized, {
-            keepProfile: true,
+            keepProfile: false,
             ownerId: telegramUserId || existing.telegramUserId || getPhoneOwner(normalized) || ''
         });
 
         await notifyTelegramUser(
             telegramUserId || existing.telegramUserId,
             `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
-تم تنظيف ملفات الجلسة مع الاحتفاظ بإعدادات الرقم وملكيته، ويمكن طلب كود جديد في أي وقت.`
+🧹 تم حذف الرقم وجلساته غير المكتملة نهائياً من الإحصائيات ويمكن طلب كود جديد من الصفر في أي وقت.`
         );
 
         clearPairingRequest(normalized);
@@ -8328,7 +8364,9 @@ function startSessionSupervisor() {
             if (pending?.timedOut) continue;
 
             if (!sock) {
-                scheduleReconnect(normalized, getPhoneOwner(normalized), 1000);
+                if (!sessionStartPromises.has(normalized)) {
+                    scheduleReconnect(normalized, getPhoneOwner(normalized), 1000);
+                }
                 continue;
             }
 
@@ -9357,23 +9395,29 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     const bootRestore = options?.bootRestore === true;
     if (!normalizedPhone) return null;
 
-    clearReconnectTimer(normalizedPhone);
-    stoppedPairings.delete(normalizedPhone);
-
-    const existing = waClients.get(normalizedPhone);
-    if (existing) {
-        touchClient(normalizedPhone);
-        return existing;
+    const inflightStart = sessionStartPromises.get(normalizedPhone);
+    if (inflightStart) {
+        return inflightStart;
     }
 
-    const sessionPath = getSessionPath(normalizedPhone);
-    const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
+    const startPromise = (async () => {
+        clearReconnectTimer(normalizedPhone);
+        stoppedPairings.delete(normalizedPhone);
 
-    const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
-    const { version } = await getCachedBaileysVersion();
-    const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+        const existing = waClients.get(normalizedPhone);
+        if (existing) {
+            touchClient(normalizedPhone);
+            return existing;
+        }
 
-    const sock = makeWASocket({
+        const sessionPath = getSessionPath(normalizedPhone);
+        const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
+
+        const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+        const { version } = await getCachedBaileysVersion();
+        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+
+        const sock = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
@@ -9393,6 +9437,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     touchClient(normalizedPhone);
 
     if (!state.creds.registered && autoRequestPairingCode) {
+        pairingRequests.set(normalizedPhone, {
+            ...(pairingRequests.get(normalizedPhone) || {}),
+            ownerId: requestedOwnerId || '',
+            requestedAt: Date.now(),
+            generating: true,
+            completed: false,
+            timedOut: false,
+            sessionPath
+        });
+
         void (async () => {
             try {
                 const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
@@ -9407,7 +9461,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     ...(pairingRequests.get(normalizedPhone) || {}),
                     code,
                     requestedAt: Date.now(),
-                    ownerId: requestedOwnerId || ''
+                    ownerId: requestedOwnerId || '',
+                    generating: false
                 });
 
                 const pairingMessage = `✅ كود الربط لرقم ${normalizedPhone}:
@@ -9659,17 +9714,15 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     console.log(`Session Logged Out Or Invalidated: ${normalizedPhone}`);
                     const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
                     await purgeSessionData(normalizedPhone, {
-                        keepProfile: true,
+                        keepProfile: false,
                         ownerId: existingOwnerId || ''
                     });
                     try {
                         await notifyTelegramUser(existingOwnerId, `⚠️ خرج الرقم ${normalizedPhone} من واتساب أو تم إبطال الجلسة.
-🧹 تم حذف ملفات الجلسة فقط مع الاحتفاظ بإعدادات الرقم وملكيته داخل المشروع.
-🔁 سيصدر البوت كود ربط جديد تلقائياً عند إعادة التشغيل.`);
+🧹 تم حذف الرقم وجلساته نهائياً من الإحصائيات وملفات الربط، ويجب طلب ربط جديد من البداية إذا رغبت.`);
                     } catch (error) {
                         console.error(`notifyTelegramUser Permanent Disconnect Error (${normalizedPhone}):`, error.message || error);
                     }
-                    scheduleReconnect(normalizedPhone, existingOwnerId || getPhoneOwner(normalizedPhone), 1500);
                     return;
                 }
 
@@ -9688,7 +9741,18 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
-    return sock;
+        return sock;
+    })();
+
+    sessionStartPromises.set(normalizedPhone, startPromise);
+
+    try {
+        return await startPromise;
+    } finally {
+        if (sessionStartPromises.get(normalizedPhone) === startPromise) {
+            sessionStartPromises.delete(normalizedPhone);
+        }
+    }
 }
 
 async function createBotInstance(sessionId, ownerId = '') {
@@ -12986,6 +13050,13 @@ async function handlePairingCodeApiRequest(req, res) {
         const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(req.body || {}));
         if (!phoneValidation.ok) return res.status(400).json({ success: false, error: phoneValidation.error });
         const phone = phoneValidation.phone;
+        if (sessionStartPromises.has(phone)) {
+            return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
+        }
+        if (hasPersistedSuccessfulSession(phone) || waClients.has(phone)) {
+            await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, { autoRequestPairingCode: false, bootRestore: true });
+            return res.status(409).json({ success: false, error: 'هذا الرقم مرتبط بالفعل وتوجد له جلسة محفوظة، لذلك لن يتم إنشاء جلسة جديدة أو كود جديد' });
+        }
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
         await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
         const code = await waitForPairingCode(phone);
