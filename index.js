@@ -8227,6 +8227,21 @@ function hasPersistedSuccessfulSession(phone) {
     return hasStoredSessionPayload(normalized);
 }
 
+function getPendingPairingState(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return null;
+    const pending = pairingRequests.get(normalized);
+    if (!pending) return null;
+    return {
+        ...pending,
+        active: pending.completed !== true && pending.timedOut !== true
+    };
+}
+
+function hasActivePendingPairing(phone) {
+    return Boolean(getPendingPairingState(phone)?.active);
+}
+
 function clearReconnectTimer(phone) {
     const normalized = normalizePhone(phone);
     const timer = reconnectTimers.get(normalized);
@@ -8316,8 +8331,9 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
+    const pendingPairing = getPendingPairingState(normalized);
     const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
-    if (!hasSuccessfulSession) {
+    if (!hasSuccessfulSession && !pendingPairing?.active) {
         console.warn(`Skipping reconnect for orphan/unregistered session ${normalized}; purging session immediately.`);
         clearReconnectTimer(normalized);
         resetReconnectAttempts(normalized);
@@ -8350,10 +8366,17 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
-            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, {
-                autoRequestPairingCode: false,
-                bootRestore: true
-            });
+            const latestPendingPairing = getPendingPairingState(normalized);
+            const reconnectOptions = latestPendingPairing?.active
+                ? {
+                    autoRequestPairingCode: !latestPendingPairing.code,
+                    bootRestore: false
+                }
+                : {
+                    autoRequestPairingCode: false,
+                    bootRestore: true
+                };
+            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, reconnectOptions);
         } catch (error) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
@@ -9502,9 +9525,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
 
         const sessionPath = getSessionPath(normalizedPhone);
+        ensureDir(sessionPath);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
         const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+        writeLocalSessionMeta(normalizedPhone, {
+            phone: normalizedPhone,
+            ownerId: String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || ''),
+            registered: state?.creds?.registered === true,
+            lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+        });
         const { version } = await getCachedBaileysVersion();
         const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
@@ -9526,6 +9556,18 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
+
+    if (!state.creds.registered) {
+        try {
+            await saveCreds({
+                ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
+                registered: false,
+                lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+            });
+        } catch (error) {
+            console.error(`Initial Session Persist Error (${normalizedPhone}):`, error?.message || error);
+        }
+    }
 
     if (!state.creds.registered && autoRequestPairingCode) {
         pairingRequests.set(normalizedPhone, {
@@ -9825,6 +9867,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 if (pendingPair && pendingPair.completed !== true) {
                     console.log(`Pairing session closed before completion: ${normalizedPhone}`);
                     clearReconnectTimer(normalizedPhone);
+                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone), 1500);
                     return;
                 }
 
