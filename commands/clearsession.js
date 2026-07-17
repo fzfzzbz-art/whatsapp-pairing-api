@@ -1,4 +1,4 @@
-const { listMongoSessionJsonFiles, clearMongoSessionAuthFiles } = require('../mongo-auth');
+const { listMongoSessionJsonFiles, clearMongoSessionAuthFiles, deleteMongoSessionSnapshot } = require('../mongo-auth');
 const isOwnerOrSudo = require('../lib/isOwner');
 
 const channelInfo = {
@@ -65,9 +65,10 @@ async function clearSessionCommand(sock, chatId, msg) {
         const preKeyCount = files.filter((file) => file.startsWith('pre-key-')).length;
         const senderKeyCount = files.filter((file) => file.startsWith('sender-key-')).length;
         const signalSessionCount = files.filter((file) => file.startsWith('session-')).length;
-        const removed = clearMongoSessionAuthFiles(phone, { preserveSessionMeta: true, ownerId: phone });
+        const removed = clearMongoSessionAuthFiles(phone, { preserveSessionMeta: false, preservePhoneSettings: false, ownerId: '' });
+        const deletedSnapshot = await deleteMongoSessionSnapshot(phone);
 
-        const message = `✅ تم تنظيف جلسة MongoDB بنجاح!\n\n` +
+        const message = `✅ تم حذف جلسة MongoDB نهائياً!\n\n` +
             `📱 Target session: ${phone}\n` +
             `📊 Statistics:\n` +
             `• Total auth records cleared: ${removed}\n` +
@@ -75,6 +76,7 @@ async function clearSessionCommand(sock, chatId, msg) {
             `• Pre-key records found: ${preKeyCount}\n` +
             `• Sender-key records found: ${senderKeyCount}\n` +
             `• Signal session records found: ${signalSessionCount}\n` +
+            `• Remote snapshot deleted: ${deletedSnapshot ? 'yes' : 'no / already missing'}\n` +
             `• Storage mode: MongoDB only`;
 
         await sock.sendMessage(chatId, {
