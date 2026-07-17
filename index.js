@@ -8207,14 +8207,24 @@ function touchClient(phone) {
     clientActivity.set(normalized, Date.now());
 }
 
+function hasStoredSessionPayload(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    if (sessionHasLocalAuthFiles(normalized)) return true;
+    const store = getSessionStoreDB();
+    const record = store.sessions?.[normalized] || {};
+    return Number(record?.fileCount || 0) > 0;
+}
+
 function hasPersistedSuccessfulSession(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
     const meta = readLocalSessionMeta(normalized);
-    if (meta?.registered === true) return true;
     const store = getSessionStoreDB();
     const record = store.sessions?.[normalized] || {};
-    return record?.registered === true;
+    const registered = meta?.registered === true || record?.registered === true;
+    if (!registered) return false;
+    return hasStoredSessionPayload(normalized);
 }
 
 function clearReconnectTimer(phone) {
@@ -8307,30 +8317,29 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
     const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
-    const retryLimit = hasSuccessfulSession ? MAX_RECONNECT_ATTEMPTS : ORPHAN_SESSION_RETRY_LIMIT;
+    if (!hasSuccessfulSession) {
+        console.warn(`Skipping reconnect for orphan/unregistered session ${normalized}; purging session immediately.`);
+        clearReconnectTimer(normalized);
+        resetReconnectAttempts(normalized);
+        void purgeSessionData(normalized, {
+            keepProfile: false,
+            ownerId: ownerId || getPhoneOwner(normalized) || ''
+        }).then(async () => {
+            const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
+            if (resolvedOwnerId) {
+                await notifyTelegramUser(
+                    resolvedOwnerId,
+                    `🧹 تم حذف الرقم ${normalized} لأن جلسته غير مكتملة أو غير صالحة، ولن تتم إعادة الاتصال له تلقائياً.`
+                );
+            }
+        }).catch((error) => {
+            console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
+        });
+        return;
+    }
+
     let attemptNumber = bumpReconnectAttempts(normalized);
-
-    if (attemptNumber > retryLimit) {
-        if (!hasSuccessfulSession) {
-            console.warn(`Reconnect attempts exceeded for orphan session ${normalized}; purging session and ownership records.`);
-            void purgeSessionData(normalized, {
-                keepProfile: false,
-                ownerId: ownerId || getPhoneOwner(normalized) || ''
-            }).then(async () => {
-                const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
-                if (resolvedOwnerId) {
-                    await notifyTelegramUser(
-                        resolvedOwnerId,
-                        `🧹 تم حذف الرقم ${normalized} نهائياً من الجلسات والإحصائيات بعد تكرار محاولة الاستعادة بدون نجاح.`
-                    );
-                }
-            }).catch((error) => {
-                console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
-            });
-            resetReconnectAttempts(normalized);
-            return;
-        }
-
+    if (attemptNumber > MAX_RECONNECT_ATTEMPTS) {
         console.warn(`Reconnect attempts exceeded for ${normalized}; preserving established session and recycling retry counter.`);
         resetReconnectAttempts(normalized);
         attemptNumber = bumpReconnectAttempts(normalized);
@@ -8341,7 +8350,10 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
-            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized));
+            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, {
+                autoRequestPairingCode: false,
+                bootRestore: true
+            });
         } catch (error) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
@@ -9810,6 +9822,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     return;
                 }
 
+                if (pendingPair && pendingPair.completed !== true) {
+                    console.log(`Pairing session closed before completion: ${normalizedPhone}`);
+                    clearReconnectTimer(normalizedPhone);
+                    return;
+                }
+
                 if (shouldReconnect) {
                     console.log(`Reconnecting WhatsApp Session: ${normalizedPhone}`);
                     scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone));
@@ -9870,10 +9888,10 @@ async function initializeSessions() {
             }
             const preparation = await ensureSessionStateReady(session.sessionId);
             if (!preparation.ready) {
-                console.log(`⚠️ جلسة ${session.sessionId} لا تحتوي على ملفات ربط صالحة حالياً، سيتم تشغيلها في وضع ربط جديد مع الاحتفاظ بإعداداتها.`);
-                await startWhatsApp(session.sessionId, null, session.ownerId || getPhoneOwner(session.sessionId), null, {
-                    autoRequestPairingCode: true,
-                    bootRestore: false
+                console.log(`⚠️ جلسة ${session.sessionId} لا تحتوي على ملفات ربط صالحة، سيتم حذفها ولن تتم إعادة الاتصال لها تلقائياً.`);
+                await purgeSessionData(session.sessionId, {
+                    keepProfile: false,
+                    ownerId: session.ownerId || getPhoneOwner(session.sessionId) || ''
                 });
                 return;
             }
@@ -9888,7 +9906,11 @@ async function initializeSessions() {
             const errorText = String(error?.data || error?.message || error?.stack || '').toLowerCase();
             const shouldDeleteSession = statusCode === 401 || /(decrypt|decryption|failed to decrypt|cannot decrypt|closed session|session closed|no session|prekey|pre-key|bad mac|invalid mac|message counter|stale key|sender key)/i.test(errorText);
             if (shouldDeleteSession) {
-                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وتم الاحتفاظ بها لإعادة المحاولة أو الاستعادة من التخزين البعيد.`);
+                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وسيتم حذفها لمنع تكرار إعادة الاتصال.`);
+                await purgeSessionData(session.sessionId, {
+                    keepProfile: false,
+                    ownerId: session.ownerId || getPhoneOwner(session.sessionId) || ''
+                });
             }
         }
     });
@@ -9912,7 +9934,9 @@ async function startAllSavedSessions() {
     const restoredEntries = await rebuildLinkedUsersFromStoredSessions();
     const fallbackEntries = restoredEntries.length
         ? []
-        : getAllLinkedPhones().map((phone) => ({ phone: normalizePhone(phone), ownerId: String(getPhoneOwner(phone) || '') }));
+        : getAllLinkedPhones()
+            .map((phone) => ({ phone: normalizePhone(phone), ownerId: String(getPhoneOwner(phone) || '') }))
+            .filter((entry) => entry.phone && hasPersistedSuccessfulSession(entry.phone));
     const mergedEntries = [...restoredEntries, ...fallbackEntries]
         .filter((entry) => entry?.phone)
         .filter((entry, index, arr) => arr.findIndex((item) => item.phone === entry.phone) === index);
@@ -13135,12 +13159,16 @@ async function handlePairingCodeApiRequest(req, res) {
         if (sessionStartPromises.has(phone)) {
             return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
         }
-        if (hasPersistedSuccessfulSession(phone) || waClients.has(phone)) {
+        if (hasPersistedSuccessfulSession(phone)) {
             await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, { autoRequestPairingCode: false, bootRestore: true });
             return res.status(409).json({ success: false, error: 'هذا الرقم مرتبط بالفعل وتوجد له جلسة محفوظة، لذلك لن يتم إنشاء جلسة جديدة أو كود جديد' });
         }
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
+        if (waClients.has(phone)) {
+            return res.status(409).json({ success: false, error: 'يوجد تشغيل مؤقت لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
+        }
+        await purgeSessionData(phone, { keepProfile: false, ownerId: getPhoneOwner(phone) || '' });
+        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true, bootRestore: false });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الربط');
         return res.json({
