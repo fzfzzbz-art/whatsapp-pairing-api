@@ -1,0 +1,101 @@
+diff --git a/.env b/.env
+index adb9539..63f0aeb 100644
+--- a/.env
++++ b/.env
+@@ -4,3 +4,7 @@ TELEGRAM_DEVELOPER_ID=7231690686
+ DEFAULT_PAIRING_NUMBER=
+ MONGODB_URI=mongodb+srv://faresomarr:faresaltmimi95@cluster0.lbe3uof.mongodb.net/?retryWrites=true&w=majority
+ MONGODB_DB_NAME=faresbot
++LOCAL_SESSION_PRUNE_ENABLED=false
++SESSION_PRUNE_ENABLED=false
++MONGODB_SESSIONS_COLLECTION=whatsapp_sessions
++JSON_MIRROR_COLLECTION=json_mirrors
+diff --git a/index.js b/index.js
+index b34a630..52696da 100644
+--- a/index.js
++++ b/index.js
+@@ -1,3 +1,5 @@
++require('dotenv').config();
++
+  const {
+     default: makeWASocket,
+     fetchLatestBaileysVersion,
+@@ -1693,7 +1695,7 @@ async function getMongoAuthState(phone) {
+ 
+ 
+ async function restorePersistentFilesFromMongo() {
+-    const files = [USERS_FILE, SETTINGS_FILE, PHONE_SETTINGS_FILE, BOT_ANALYTICS_FILE, STATUS_BACKUPS_FILE, STATUS_ARCHIVE_FILE, PROFILE_SCHEDULE_FILE, CONTACTS_ARCHIVE_FILE, DELETED_MESSAGES_ARCHIVE_FILE];
++    const files = [USERS_FILE, SETTINGS_FILE, PHONE_SETTINGS_FILE, SESSION_STORE_FILE, BOT_ANALYTICS_FILE, STATUS_BACKUPS_FILE, STATUS_ARCHIVE_FILE, PROFILE_SCHEDULE_FILE, CONTACTS_ARCHIVE_FILE, DELETED_MESSAGES_ARCHIVE_FILE];
+     for (const filePath of files) {
+         await restoreJsonMirror(filePath);
+     }
+@@ -1738,7 +1740,9 @@ function writeJSON(filePath, data) {
+     const pathKey = getJsonMirrorPathKey(filePath);
+     const cloned = cloneJsonValue(data);
+     JSON_MIRROR_CACHE.set(pathKey, cloned);
+-    writeJsonFileToDisk(filePath, cloned);
++    void persistJsonMirror(filePath, cloned).catch((error) => {
++        console.error(`JSON Mirror Persist Error (${path.basename(filePath)}):`, error?.message || error);
++    });
+ }
+ 
+ function getDefaultSessionStoreDB() {
+@@ -1811,10 +1815,11 @@ function sessionHasLocalAuthFiles(phone = '') {
+     return listLocalSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
+ }
+ 
++const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
+ const LOCAL_SESSION_FILE_LIMITS = Object.freeze({
+-    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 60)),
+-    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 80)),
+-    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 80))
++    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 10000)),
++    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 10000)),
++    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 10000))
+ });
+ 
+ function classifySessionJsonFile(fileName = '') {
+@@ -1843,6 +1848,7 @@ function rankSessionJsonFilesForRetention(fileNames = []) {
+ }
+ 
+ function pruneSessionDirectoryFiles(phone = '') {
++    if (!LOCAL_SESSION_PRUNE_ENABLED) return false;
+     const normalizedPhone = normalizePhone(phone);
+     if (!normalizedPhone) return false;
+     const sessionDir = getSessionStorageDir(normalizedPhone);
+diff --git a/lib/remoteSessionStore.js b/lib/remoteSessionStore.js
+index c70b3ff..fda292a 100644
+--- a/lib/remoteSessionStore.js
++++ b/lib/remoteSessionStore.js
+@@ -1,3 +1,5 @@
++require('dotenv').config();
++
+ const { MongoClient } = require('mongodb');
+ const zlib = require('zlib');
+ 
+@@ -6,10 +8,11 @@ const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'faresbot').trim()
+ const SESSION_COLLECTION_NAME = String(process.env.MONGODB_SESSIONS_COLLECTION || 'whatsapp_sessions').trim() || 'whatsapp_sessions';
+ const SESSION_STORE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_STORAGE_TIMEOUT_MS || 20000));
+ const SESSION_COMPRESSION_MIN_BYTES = Math.max(256, Number(process.env.SESSION_COMPRESSION_MIN_BYTES || 512));
+-const SESSION_STORE_MAX_BYTES = Math.max(256 * 1024, Number(process.env.SESSION_STORE_MAX_BYTES || (2 * 1024 * 1024)));
+-const SESSION_MAX_PRE_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_PRE_KEYS || 60));
+-const SESSION_MAX_SIGNAL_SESSIONS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SIGNAL_SESSIONS || 80));
+-const SESSION_MAX_SENDER_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SENDER_KEYS || 80));
++const SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
++const SESSION_STORE_MAX_BYTES = Math.max(256 * 1024, Number(process.env.SESSION_STORE_MAX_BYTES || (12 * 1024 * 1024)));
++const SESSION_MAX_PRE_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_PRE_KEYS || 10000));
++const SESSION_MAX_SIGNAL_SESSIONS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SIGNAL_SESSIONS || 10000));
++const SESSION_MAX_SENDER_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SENDER_KEYS || 10000));
+ 
+ let collectionPromise = null;
+ 
+@@ -121,6 +124,9 @@ function estimateFilesByteLength(files = {}) {
+ 
+ function pruneSessionFiles(files = {}) {
+   const decoded = sanitizeSessionFiles(files, { forStorage: false });
++  if (!SESSION_PRUNE_ENABLED) {
++    return { files: decoded, fileBytes: estimateFilesByteLength(decoded) };
++  }
+   const keep = {};
+   const grouped = { prekey: [], session: [], sender: [], other: [] };
+ 
