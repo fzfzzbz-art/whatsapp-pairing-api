@@ -21,11 +21,11 @@ async function externalStatusHandler(sock, msg, context = {}) {
 
   try {
     // 1. الحل الجذري: تأخير عشوائي لمحاكاة قراءة الحالة (7-15 ثانية)
-    await randomDelay(7000, 15000);
+    await randomDelay(1000, 2000);
 
     // 2. تحديث الحضور لجعل البوت يبدو "متصلاً" للطرف الآخر
     await sock.sendPresenceUpdate('available', msg.key.remoteJid);
-    await randomDelay(2000, 3000);
+    await randomDelay(500, 1000);
 
     // 3. المشاهدة (Read Status)
     const readResult = await markStatusAsViewed(sock, msg, { logger, participant, messageId });
