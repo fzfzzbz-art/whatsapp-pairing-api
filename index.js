@@ -34,6 +34,13 @@ const {
     touchRemoteSession
 } = require('./lib/remoteSessionStore');
 const {
+    resolveStatusContext,
+    markStatusAsViewed
+} = require('./statusView');
+const {
+    sendStatusReaction
+} = require('./statusReact');
+const {
     useMongoAuthState,
     getMongoSessionSnapshot,
     replaceMongoSessionSnapshot,
@@ -9368,11 +9375,13 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         if (!hasStatusContent(msg)) return;
 
-        const participant = extractStatusParticipant(msg);
+        const resolvedStatus = resolveStatusContext(msg);
+        const participant = normalizeWhatsAppJid(resolvedStatus.participant || extractStatusParticipant(msg));
+        const messageId = String(resolvedStatus.messageId || msg?.key?.id || '').trim();
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const readKeyVariants = buildStatusMessageKeyVariants(msg, participant);
 
-        if (!readKeyVariants.length) return;
+        if (!messageId || !readKeyVariants.length) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
         const shouldDelayStatusInteraction = shouldReadStatus || settings.statusMsgSend === 'on';
@@ -9381,18 +9390,42 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         }
 
         const forceVisibleReaction = settings.autoStatusReact === 'on';
-        if (shouldReadStatus && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
-            for (const reactionKey of readKeyVariants) {
-                try {
-                    await sock.readMessages([reactionKey]);
-                    break;
-                } catch (_) {}
+        if (shouldReadStatus && participant && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
+            const readResult = await markStatusAsViewed(sock, msg, {
+                logger: console,
+                participant,
+                messageId,
+                preferExplicitReadReceipt: true
+            });
+
+            if (!readResult?.ok) {
+                for (const reactionKey of readKeyVariants) {
+                    try {
+                        await sock.readMessages([reactionKey]);
+                        break;
+                    } catch (_) {}
+                }
             }
         }
 
         let reactedEmoji = '';
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+            const preferredEmoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
+            const directReaction = await sendStatusReaction(sock, msg, {
+                logger: console,
+                participant,
+                messageId,
+                reactionEmoji: preferredEmoji
+            });
+
+            if (directReaction?.ok) {
+                reactedEmoji = directReaction.emoji || preferredEmoji;
+            }
+
+            if (!reactedEmoji) {
+                reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
+            }
+
             if (reactedEmoji) {
                 incrementAnalytics('totalStatusReactions');
             }
@@ -9434,15 +9467,32 @@ async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
     const text = String(textFromMessage(msg) || '').trim();
     if (!text) return false;
 
-    if (/^\.bot$/i.test(text)) {
-        const botMessage = buildPublicLinkedNumberCommands(phoneNumber);
-        if (!String(botMessage || '').trim()) {
-            return true;
+    const normalizedText = normalizeIncomingCommand(text).toLowerCase();
+
+    if (['.bot', '.help', '.menu', '.list'].includes(normalizedText)) {
+        const botMessage = String(buildPublicLinkedNumberCommands(phoneNumber) || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE || '').trim();
+        if (!botMessage) {
+            return false;
         }
         await sock.sendMessage(
             from,
             {
                 text: botMessage
+            },
+            { quoted: msg }
+        );
+        return true;
+    }
+
+    if (normalizedText === '.settings') {
+        const settingsMessage = String(buildPhoneSettingsMessage(phoneNumber) || '').trim();
+        if (!settingsMessage) {
+            return false;
+        }
+        await sock.sendMessage(
+            from,
+            {
+                text: settingsMessage
             },
             { quoted: msg }
         );
