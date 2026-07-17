@@ -33,6 +33,15 @@ const {
     deleteRemoteSession,
     touchRemoteSession
 } = require('./lib/remoteSessionStore');
+const {
+    useMongoAuthState,
+    getMongoSessionSnapshot,
+    replaceMongoSessionSnapshot,
+    listMongoSessionJsonFiles,
+    sessionHasMongoAuthFiles,
+    clearMongoSessionAuthFiles,
+    dropMongoSessionCache
+} = require('./mongo-auth');
 
 EventEmitter.defaultMaxListeners = 0;
 
@@ -1563,51 +1572,23 @@ async function getStoredMongoSessionEntries() {
 async function getMongoAuthState(phone, options = {}) {
     const sessionKey = String(phone || 'default').trim() || 'default';
     const normalizedPhone = normalizePhone(sessionKey);
-    const sessionDir = getSessionStorageDir(sessionKey);
-    ensureDir(sessionDir);
+    const auth = await useMongoAuthState(normalizedPhone || sessionKey, {
+        ownerId: options.ownerId || getPhoneOwner?.(normalizedPhone || sessionKey) || '',
+        registered: options.registered === true,
+        lastConnectedAt: options.lastConnectedAt || readLocalSessionMeta(normalizedPhone || sessionKey)?.lastConnectedAt || null
+    });
 
-    if (normalizedPhone) {
-        const forceRemote = options.forceRemote === true && isRemoteSessionStoreEnabled();
-        await ensureSessionStateReady(normalizedPhone, { forceRemote });
-        if (!sessionHasLocalAuthFiles(normalizedPhone)) {
-            await restoreSessionFromRemoteStore(normalizedPhone);
-        }
-    }
-
-    const helperAuth = await useMultiFileAuthState(sessionDir);
-    const state = helperAuth.state;
-
-    if (!state?.keys?.__remoteSyncWrapped && typeof state?.keys?.set === 'function') {
-        const originalSet = state.keys.set.bind(state.keys);
-        state.keys.set = async (data, ...args) => {
-            const result = await originalSet(data, ...args);
-            const hasMutations = data && typeof data === 'object' && Object.values(data).some((bucket) => bucket && typeof bucket === 'object' && Object.keys(bucket).length > 0);
-            if (hasMutations && normalizedPhone) {
-                scheduleSessionSnapshotSync(normalizedPhone, {
-                    ownerId: getPhoneOwner?.(normalizedPhone) || '',
-                    registered: state?.creds?.registered === true,
-                    lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
-                });
-            }
-            return result;
-        };
-        Object.defineProperty(state.keys, '__remoteSyncWrapped', {
-            value: true,
-            enumerable: false,
-            configurable: true,
-            writable: false
-        });
-    }
+    const state = auth.state;
 
     const saveCreds = async (metadata = {}) => {
         const registered = metadata.registered === true || state?.creds?.registered === true;
         const payload = {
-            ownerId: metadata.ownerId || getPhoneOwner?.(normalizedPhone) || '',
+            ownerId: metadata.ownerId || getPhoneOwner?.(normalizedPhone || sessionKey) || '',
             registered,
-            lastConnectedAt: metadata.lastConnectedAt || null
+            lastConnectedAt: metadata.lastConnectedAt || readLocalSessionMeta(normalizedPhone || sessionKey)?.lastConnectedAt || null
         };
 
-        await helperAuth.saveCreds();
+        const saved = await auth.saveCreds(payload);
         writeLocalSessionMeta(sessionKey, {
             phone: normalizedPhone || sessionKey,
             ownerId: payload.ownerId,
@@ -1615,7 +1596,21 @@ async function getMongoAuthState(phone, options = {}) {
             lastConnectedAt: payload.lastConnectedAt
         });
 
-        await flushSessionSnapshotSync(normalizedPhone || sessionKey, payload);
+        const snapshot = saved || await getMongoSessionSnapshot(normalizedPhone || sessionKey);
+        const fileCount = Object.keys(snapshot?.files || {}).length;
+        const store = getSessionStoreDB();
+        store.sessions[normalizedPhone || sessionKey] = {
+            ...(store.sessions[normalizedPhone || sessionKey] || {}),
+            phone: normalizedPhone || sessionKey,
+            sessionId: normalizedPhone || sessionKey,
+            ownerId: payload.ownerId,
+            registered,
+            lastConnectedAt: payload.lastConnectedAt || null,
+            updatedAt: new Date().toISOString(),
+            fileCount
+        };
+        saveSessionStoreDB(store);
+        return snapshot;
     };
 
     return { state, saveCreds };
@@ -1725,19 +1720,15 @@ function toLocalSessionIndexRecord(phone, payload = {}) {
 }
 
 function listLocalSessionJsonFiles(phone = '') {
-    const sessionDir = getSessionStorageDir(phone);
-    if (!fs.existsSync(sessionDir)) return [];
-    try {
-        return fs.readdirSync(sessionDir)
-            .filter((fileName) => fileName && fileName.endsWith('.json'))
-            .sort();
-    } catch (_) {
-        return [];
-    }
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return [];
+    return listMongoSessionJsonFiles(normalizedPhone);
 }
 
 function sessionHasLocalAuthFiles(phone = '') {
-    return listLocalSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return false;
+    return sessionHasMongoAuthFiles(normalizedPhone);
 }
 
 const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
@@ -1815,24 +1806,13 @@ function collectSessionDirectorySnapshot(phone = '', metadata = {}) {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) return null;
 
-    const sessionDir = getSessionStorageDir(normalizedPhone);
-    ensureDir(sessionDir);
-    pruneSessionDirectoryFiles(normalizedPhone);
-    const files = {};
-
-    for (const fileName of listLocalSessionJsonFiles(normalizedPhone)) {
-        const filePath = path.join(sessionDir, fileName);
-        try {
-            files[fileName] = fs.readFileSync(filePath, 'utf8');
-        } catch (error) {
-            console.error(`Session Snapshot Read Error (${normalizedPhone}/${fileName}):`, error.message || error);
-        }
-    }
+    const snapshot = getMongoSessionSnapshot(normalizedPhone);
+    const files = snapshot?.files || {};
 
     return normalizeSessionStoreRecord(normalizedPhone, {
-        ownerId: metadata.ownerId || getPhoneOwner?.(normalizedPhone) || '',
-        registered: metadata.registered === true,
-        lastConnectedAt: metadata.lastConnectedAt || null,
+        ownerId: metadata.ownerId || snapshot?.ownerId || getPhoneOwner?.(normalizedPhone) || '',
+        registered: metadata.registered === true || snapshot?.registered === true,
+        lastConnectedAt: metadata.lastConnectedAt || snapshot?.lastConnectedAt || null,
         files
     });
 }
@@ -1841,21 +1821,7 @@ function writeSessionDirectorySnapshot(phone = '', payload = {}) {
     const record = normalizeSessionStoreRecord(phone, payload);
     if (!record) return false;
 
-    const sessionDir = getSessionStorageDir(record.phone);
-    ensureDir(sessionDir);
-
-    const allowedFiles = new Set(Object.keys(record.files || {}));
-    for (const existingFile of listLocalSessionJsonFiles(record.phone)) {
-        if (!allowedFiles.has(existingFile)) {
-            try {
-                fs.unlinkSync(path.join(sessionDir, existingFile));
-            } catch (_) {}
-        }
-    }
-
-    for (const [fileName, content] of Object.entries(record.files || {})) {
-        fs.writeFileSync(path.join(sessionDir, fileName), String(content || ''), 'utf8');
-    }
+    replaceMongoSessionSnapshot(record.phone, record);
 
     writeLocalSessionMeta(record.phone, {
         ownerId: record.ownerId || getPhoneOwner?.(record.phone) || '',
@@ -2047,7 +2013,8 @@ async function flushAllSessionSnapshotSyncs() {
 function getSessionDirectoryHealth(phone = '') {
     const normalizedPhone = normalizePhone(phone);
     const meta = readLocalSessionMeta(normalizedPhone);
-    const files = listLocalSessionJsonFiles(normalizedPhone);
+    const snapshot = getMongoSessionSnapshot(normalizedPhone);
+    const files = Object.keys(snapshot?.files || {}).sort();
     const invalidFiles = [];
     let credsValid = false;
     let hasCredsFile = false;
@@ -2056,7 +2023,6 @@ function getSessionDirectoryHealth(phone = '') {
     for (const fileName of files) {
         const category = classifySessionJsonFile(fileName);
         if (category === 'meta' || category === 'other') continue;
-        const filePath = path.join(getSessionStorageDir(normalizedPhone), fileName);
 
         if (fileName === 'creds.json') {
             hasCredsFile = true;
@@ -2066,7 +2032,7 @@ function getSessionDirectoryHealth(phone = '') {
         }
 
         try {
-            JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            JSON.parse(String(snapshot.files[fileName] || ''), BufferJSON.reviver);
             if (fileName === 'creds.json') {
                 credsValid = true;
             }
@@ -2075,12 +2041,12 @@ function getSessionDirectoryHealth(phone = '') {
         }
     }
 
-    const isRegistered = meta?.registered === true;
+    const isRegistered = snapshot?.registered === true || meta?.registered === true;
     const hasUsableAuth = credsValid && invalidFiles.length === 0 && (hasSignalMaterial || !isRegistered);
 
     return {
         normalizedPhone,
-        meta,
+        meta: { ...meta, ownerId: snapshot?.ownerId || meta?.ownerId || '', registered: isRegistered, lastConnectedAt: snapshot?.lastConnectedAt || meta?.lastConnectedAt || null },
         files,
         invalidFiles,
         hasCredsFile,
@@ -2096,24 +2062,20 @@ async function ensureSessionStateReady(phone = '', options = {}) {
         return { ready: false, restored: false, health: null };
     }
 
-    let health = getSessionDirectoryHealth(normalizedPhone);
     let restored = false;
-    const shouldRestoreFromRemote = options.forceRemote === true || !health.hasUsableAuth || health.invalidFiles.length > 0;
-
-    if (shouldRestoreFromRemote && isRemoteSessionStoreEnabled()) {
+    if (isRemoteSessionStoreEnabled()) {
         try {
             const remoteRecord = await fetchRemoteSession(normalizedPhone);
-            const remoteFilesCount = Object.keys(remoteRecord?.files || {}).length;
-            if (remoteFilesCount > 0) {
+            if (remoteRecord && Object.keys(remoteRecord.files || {}).length) {
                 writeSessionDirectorySnapshot(normalizedPhone, remoteRecord);
                 restored = true;
-                health = getSessionDirectoryHealth(normalizedPhone);
             }
         } catch (error) {
             console.error(`Remote Session Prepare Error (${normalizedPhone}):`, error.message || error);
         }
     }
 
+    const health = getSessionDirectoryHealth(normalizedPhone);
     return {
         ready: health.hasUsableAuth,
         restored,
@@ -8086,24 +8048,11 @@ function clearSessionAuthDirectory(phone, options = {}) {
         keepFiles.add('session-meta.json');
     }
 
-    const sessionDir = getSessionStorageDir(normalizedPhone);
-    ensureDir(sessionDir);
-
-    let removed = 0;
-    try {
-        for (const entry of fs.readdirSync(sessionDir, { withFileTypes: true })) {
-            if (keepFiles.has(entry.name)) continue;
-            const targetPath = path.join(sessionDir, entry.name);
-            try {
-                if (entry.isDirectory()) {
-                    fs.rmSync(targetPath, { recursive: true, force: true });
-                } else {
-                    fs.unlinkSync(targetPath);
-                }
-                removed += 1;
-            } catch (_) {}
-        }
-    } catch (_) {}
+    const removed = clearMongoSessionAuthFiles(normalizedPhone, {
+        preserveSessionMeta,
+        ownerId: String(options.ownerId || getPhoneOwner(normalizedPhone) || '').trim(),
+        lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+    });
 
     const currentMeta = readLocalSessionMeta(normalizedPhone);
     writeLocalSessionMeta(normalizedPhone, {
@@ -9553,7 +9502,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
 
         const sessionPath = getSessionPath(normalizedPhone);
-        ensureDir(sessionPath);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
         const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
@@ -9857,7 +9805,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                             `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
 ✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
 إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
-🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
+🔐 تم حفظ جلسة الرقم داخل قاعدة البيانات فقط، مع إبقاء الإعدادات مرتبطة بالرقم بشكل آمن.`
                         );
                     } catch (error) {
                         console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
