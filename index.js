@@ -33,22 +33,6 @@ const {
     deleteRemoteSession,
     touchRemoteSession
 } = require('./lib/remoteSessionStore');
-const {
-    resolveStatusContext,
-    markStatusAsViewed
-} = require('./statusView');
-const {
-    sendStatusReaction
-} = require('./statusReact');
-const {
-    useMongoAuthState,
-    getMongoSessionSnapshot,
-    replaceMongoSessionSnapshot,
-    listMongoSessionJsonFiles,
-    sessionHasMongoAuthFiles,
-    clearMongoSessionAuthFiles,
-    dropMongoSessionCache
-} = require('./mongo-auth');
 
 EventEmitter.defaultMaxListeners = 0;
 
@@ -1025,7 +1009,6 @@ const sessionSnapshotSyncMetadata = new Map();
 const sessionSnapshotSyncPromises = new Map();
 const phoneJobQueues = new Map();
 const sessionStartPromises = new Map();
-const sessionDeletionLocks = new Map();
 const recentStatusEvents = new Map();
 const pendingContactSyncs = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -1056,13 +1039,13 @@ const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(Str
 const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
-const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 0)));
+const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 250));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
 const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
-const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 8)));
+const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
 const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
 let sessionSupervisorStarted = false;
@@ -1492,17 +1475,9 @@ async function deleteMongoSessionState(phone, options = {}) {
 
     if (normalizedPhone && isRemoteSessionStoreEnabled()) {
         try {
-            if (preserveLocalIndex || preservePhoneSettings) {
-                await syncSessionToRemoteStore(sessionKey, {
-                    ownerId: String(options.ownerId || getPhoneOwner(sessionKey) || '').trim(),
-                    registered: false,
-                    lastConnectedAt: readLocalSessionMeta(sessionKey)?.lastConnectedAt || null
-                });
-            } else {
-                await deleteRemoteSession(normalizedPhone);
-            }
+            await deleteRemoteSession(normalizedPhone);
         } catch (error) {
-            console.error(`⚠️ تعذر تحديث/حذف الجلسة البعيدة ${normalizedPhone}:`, error.message || error);
+            console.error(`⚠️ تعذر حذف الجلسة البعيدة ${normalizedPhone}:`, error.message || error);
         }
     }
 
@@ -1585,26 +1560,54 @@ async function getStoredMongoSessionEntries() {
     return Array.from(merged.values()).sort((a, b) => (Date.parse(b?.updatedAt || b?.lastConnectedAt || 0) || 0) - (Date.parse(a?.updatedAt || a?.lastConnectedAt || 0) || 0));
 }
 
-async function getMongoAuthState(phone, options = {}) {
+async function getMongoAuthState(phone) {
     const sessionKey = String(phone || 'default').trim() || 'default';
     const normalizedPhone = normalizePhone(sessionKey);
-    const auth = await useMongoAuthState(normalizedPhone || sessionKey, {
-        ownerId: options.ownerId || getPhoneOwner?.(normalizedPhone || sessionKey) || '',
-        registered: options.registered === true,
-        lastConnectedAt: options.lastConnectedAt || readLocalSessionMeta(normalizedPhone || sessionKey)?.lastConnectedAt || null
-    });
+    const sessionDir = getSessionStorageDir(sessionKey);
+    ensureDir(sessionDir);
 
-    const state = auth.state;
+    if (normalizedPhone) {
+        await ensureSessionStateReady(normalizedPhone);
+    }
+
+    if (normalizedPhone && !sessionHasLocalAuthFiles(normalizedPhone)) {
+        await restoreSessionFromRemoteStore(normalizedPhone);
+    }
+
+    const helperAuth = await useMultiFileAuthState(sessionDir);
+    const state = helperAuth.state;
+
+    if (!state?.keys?.__remoteSyncWrapped && typeof state?.keys?.set === 'function') {
+        const originalSet = state.keys.set.bind(state.keys);
+        state.keys.set = async (data, ...args) => {
+            const result = await originalSet(data, ...args);
+            const hasMutations = data && typeof data === 'object' && Object.values(data).some((bucket) => bucket && typeof bucket === 'object' && Object.keys(bucket).length > 0);
+            if (hasMutations && normalizedPhone) {
+                scheduleSessionSnapshotSync(normalizedPhone, {
+                    ownerId: getPhoneOwner?.(normalizedPhone) || '',
+                    registered: state?.creds?.registered === true,
+                    lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+                });
+            }
+            return result;
+        };
+        Object.defineProperty(state.keys, '__remoteSyncWrapped', {
+            value: true,
+            enumerable: false,
+            configurable: true,
+            writable: false
+        });
+    }
 
     const saveCreds = async (metadata = {}) => {
         const registered = metadata.registered === true || state?.creds?.registered === true;
         const payload = {
-            ownerId: metadata.ownerId || getPhoneOwner?.(normalizedPhone || sessionKey) || '',
+            ownerId: metadata.ownerId || getPhoneOwner?.(normalizedPhone) || '',
             registered,
-            lastConnectedAt: metadata.lastConnectedAt || readLocalSessionMeta(normalizedPhone || sessionKey)?.lastConnectedAt || null
+            lastConnectedAt: metadata.lastConnectedAt || null
         };
 
-        const saved = await auth.saveCreds(payload);
+        await helperAuth.saveCreds();
         writeLocalSessionMeta(sessionKey, {
             phone: normalizedPhone || sessionKey,
             ownerId: payload.ownerId,
@@ -1612,21 +1615,7 @@ async function getMongoAuthState(phone, options = {}) {
             lastConnectedAt: payload.lastConnectedAt
         });
 
-        const snapshot = saved || await getMongoSessionSnapshot(normalizedPhone || sessionKey);
-        const fileCount = Object.keys(snapshot?.files || {}).length;
-        const store = getSessionStoreDB();
-        store.sessions[normalizedPhone || sessionKey] = {
-            ...(store.sessions[normalizedPhone || sessionKey] || {}),
-            phone: normalizedPhone || sessionKey,
-            sessionId: normalizedPhone || sessionKey,
-            ownerId: payload.ownerId,
-            registered,
-            lastConnectedAt: payload.lastConnectedAt || null,
-            updatedAt: new Date().toISOString(),
-            fileCount
-        };
-        saveSessionStoreDB(store);
-        return snapshot;
+        await flushSessionSnapshotSync(normalizedPhone || sessionKey, payload);
     };
 
     return { state, saveCreds };
@@ -1736,15 +1725,19 @@ function toLocalSessionIndexRecord(phone, payload = {}) {
 }
 
 function listLocalSessionJsonFiles(phone = '') {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return [];
-    return listMongoSessionJsonFiles(normalizedPhone);
+    const sessionDir = getSessionStorageDir(phone);
+    if (!fs.existsSync(sessionDir)) return [];
+    try {
+        return fs.readdirSync(sessionDir)
+            .filter((fileName) => fileName && fileName.endsWith('.json'))
+            .sort();
+    } catch (_) {
+        return [];
+    }
 }
 
 function sessionHasLocalAuthFiles(phone = '') {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return false;
-    return sessionHasMongoAuthFiles(normalizedPhone);
+    return listLocalSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
 }
 
 const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
@@ -1822,28 +1815,24 @@ function collectSessionDirectorySnapshot(phone = '', metadata = {}) {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) return null;
 
-    const snapshot = getMongoSessionSnapshot(normalizedPhone);
-    const files = { ...(snapshot?.files || {}) };
-    const profileFiles = {
-        'phone-settings-profile.json': getSessionPhoneProfileSettingsFile(normalizedPhone),
-        'phone-settings-credentials.json': getSessionPhoneProfileCredentialsFile(normalizedPhone),
-        'phone-settings-meta.json': getSessionPhoneProfileMetaFile(normalizedPhone)
-    };
+    const sessionDir = getSessionStorageDir(normalizedPhone);
+    ensureDir(sessionDir);
+    pruneSessionDirectoryFiles(normalizedPhone);
+    const files = {};
 
-    for (const [fileName, filePath] of Object.entries(profileFiles)) {
+    for (const fileName of listLocalSessionJsonFiles(normalizedPhone)) {
+        const filePath = path.join(sessionDir, fileName);
         try {
-            if (!fs.existsSync(filePath)) continue;
-            const raw = fs.readFileSync(filePath, 'utf8');
-            if (String(raw || '').trim()) {
-                files[fileName] = raw;
-            }
-        } catch (_) {}
+            files[fileName] = fs.readFileSync(filePath, 'utf8');
+        } catch (error) {
+            console.error(`Session Snapshot Read Error (${normalizedPhone}/${fileName}):`, error.message || error);
+        }
     }
 
     return normalizeSessionStoreRecord(normalizedPhone, {
-        ownerId: metadata.ownerId || snapshot?.ownerId || getPhoneOwner?.(normalizedPhone) || '',
-        registered: metadata.registered === true || snapshot?.registered === true,
-        lastConnectedAt: metadata.lastConnectedAt || snapshot?.lastConnectedAt || null,
+        ownerId: metadata.ownerId || getPhoneOwner?.(normalizedPhone) || '',
+        registered: metadata.registered === true,
+        lastConnectedAt: metadata.lastConnectedAt || null,
         files
     });
 }
@@ -1852,7 +1841,21 @@ function writeSessionDirectorySnapshot(phone = '', payload = {}) {
     const record = normalizeSessionStoreRecord(phone, payload);
     if (!record) return false;
 
-    replaceMongoSessionSnapshot(record.phone, record);
+    const sessionDir = getSessionStorageDir(record.phone);
+    ensureDir(sessionDir);
+
+    const allowedFiles = new Set(Object.keys(record.files || {}));
+    for (const existingFile of listLocalSessionJsonFiles(record.phone)) {
+        if (!allowedFiles.has(existingFile)) {
+            try {
+                fs.unlinkSync(path.join(sessionDir, existingFile));
+            } catch (_) {}
+        }
+    }
+
+    for (const [fileName, content] of Object.entries(record.files || {})) {
+        fs.writeFileSync(path.join(sessionDir, fileName), String(content || ''), 'utf8');
+    }
 
     writeLocalSessionMeta(record.phone, {
         ownerId: record.ownerId || getPhoneOwner?.(record.phone) || '',
@@ -2044,8 +2047,7 @@ async function flushAllSessionSnapshotSyncs() {
 function getSessionDirectoryHealth(phone = '') {
     const normalizedPhone = normalizePhone(phone);
     const meta = readLocalSessionMeta(normalizedPhone);
-    const snapshot = getMongoSessionSnapshot(normalizedPhone);
-    const files = Object.keys(snapshot?.files || {}).sort();
+    const files = listLocalSessionJsonFiles(normalizedPhone);
     const invalidFiles = [];
     let credsValid = false;
     let hasCredsFile = false;
@@ -2054,6 +2056,7 @@ function getSessionDirectoryHealth(phone = '') {
     for (const fileName of files) {
         const category = classifySessionJsonFile(fileName);
         if (category === 'meta' || category === 'other') continue;
+        const filePath = path.join(getSessionStorageDir(normalizedPhone), fileName);
 
         if (fileName === 'creds.json') {
             hasCredsFile = true;
@@ -2063,7 +2066,7 @@ function getSessionDirectoryHealth(phone = '') {
         }
 
         try {
-            JSON.parse(String(snapshot.files[fileName] || ''), BufferJSON.reviver);
+            JSON.parse(fs.readFileSync(filePath, 'utf8'));
             if (fileName === 'creds.json') {
                 credsValid = true;
             }
@@ -2072,12 +2075,12 @@ function getSessionDirectoryHealth(phone = '') {
         }
     }
 
-    const isRegistered = snapshot?.registered === true || meta?.registered === true;
+    const isRegistered = meta?.registered === true;
     const hasUsableAuth = credsValid && invalidFiles.length === 0 && (hasSignalMaterial || !isRegistered);
 
     return {
         normalizedPhone,
-        meta: { ...meta, ownerId: snapshot?.ownerId || meta?.ownerId || '', registered: isRegistered, lastConnectedAt: snapshot?.lastConnectedAt || meta?.lastConnectedAt || null },
+        meta,
         files,
         invalidFiles,
         hasCredsFile,
@@ -2093,20 +2096,24 @@ async function ensureSessionStateReady(phone = '', options = {}) {
         return { ready: false, restored: false, health: null };
     }
 
+    let health = getSessionDirectoryHealth(normalizedPhone);
     let restored = false;
-    if (isRemoteSessionStoreEnabled()) {
+    const shouldRestoreFromRemote = options.forceRemote === true || !health.hasUsableAuth || health.invalidFiles.length > 0;
+
+    if (shouldRestoreFromRemote && isRemoteSessionStoreEnabled()) {
         try {
             const remoteRecord = await fetchRemoteSession(normalizedPhone);
-            if (remoteRecord && Object.keys(remoteRecord.files || {}).length) {
+            const remoteFilesCount = Object.keys(remoteRecord?.files || {}).length;
+            if (remoteFilesCount > 0) {
                 writeSessionDirectorySnapshot(normalizedPhone, remoteRecord);
                 restored = true;
+                health = getSessionDirectoryHealth(normalizedPhone);
             }
         } catch (error) {
             console.error(`Remote Session Prepare Error (${normalizedPhone}):`, error.message || error);
         }
     }
 
-    const health = getSessionDirectoryHealth(normalizedPhone);
     return {
         ready: health.hasUsableAuth,
         restored,
@@ -2961,14 +2968,7 @@ function savePhoneSettingsDB(db) {
     _phoneSettingsDBCacheAt = Date.now();
     writeJSON(PHONE_SETTINGS_FILE, db);
     for (const [phone, profile] of Object.entries(db.profiles)) {
-        const normalizedPhone = normalizePhone(phone);
-        if (!normalizedPhone) continue;
-        syncPhoneProfileToDirectory(normalizedPhone, profile);
-        void scheduleSessionSnapshotSync(normalizedPhone, {
-            ownerId: String(getPhoneOwner(normalizedPhone) || '').trim(),
-            registered: readLocalSessionMeta(normalizedPhone)?.registered === true,
-            lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
-        }, 0).catch(() => undefined);
+        syncPhoneProfileToDirectory(phone, profile);
     }
 }
 
@@ -5891,47 +5891,9 @@ function userOwnsPhone(userId, phone) {
     return db.phoneOwners[normalized] === String(userId);
 }
 
-function pruneOrphanLinkedNumbers(userId) {
-    const db = getUsersDB();
-    const key = String(userId);
-    const user = db.users[key];
-    if (!user) return [];
-
-    const linkedNumbers = Array.isArray(user.linkedNumbers) ? user.linkedNumbers.map((phone) => normalizePhone(phone)).filter(Boolean) : [];
-    const nextLinkedNumbers = [];
-    let changed = false;
-
-    for (const phone of linkedNumbers) {
-        const ownedByUser = db.phoneOwners[phone] === key;
-        const hasRuntimeState = waClients.has(phone) || hasActivePendingPairing(phone) || sessionStartPromises.has(phone);
-        const hasStoredState = hasPersistedSuccessfulSession(phone);
-
-        if (ownedByUser && (hasRuntimeState || hasStoredState)) {
-            nextLinkedNumbers.push(phone);
-            continue;
-        }
-
-        changed = true;
-        if (ownedByUser) {
-            delete db.phoneOwners[phone];
-        }
-        if (user.emojis && Object.prototype.hasOwnProperty.call(user.emojis, phone)) {
-            delete user.emojis[phone];
-        }
-    }
-
-    const deduped = Array.from(new Set(nextLinkedNumbers));
-    if (changed || deduped.length !== linkedNumbers.length) {
-        user.linkedNumbers = deduped;
-        user.updatedAt = new Date().toISOString();
-        saveUsersDB(db);
-    }
-
-    return Array.isArray(user.linkedNumbers) ? user.linkedNumbers : [];
-}
-
 function getUserPhones(userId) {
-    return pruneOrphanLinkedNumbers(userId);
+    const user = getUserRecord(userId);
+    return Array.isArray(user.linkedNumbers) ? user.linkedNumbers : [];
 }
 
 function getPhoneOwner(phone) {
@@ -8124,12 +8086,24 @@ function clearSessionAuthDirectory(phone, options = {}) {
         keepFiles.add('session-meta.json');
     }
 
-    const removed = clearMongoSessionAuthFiles(normalizedPhone, {
-        preserveSessionMeta,
-        preservePhoneSettings,
-        ownerId: String(options.ownerId || getPhoneOwner(normalizedPhone) || '').trim(),
-        lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
-    });
+    const sessionDir = getSessionStorageDir(normalizedPhone);
+    ensureDir(sessionDir);
+
+    let removed = 0;
+    try {
+        for (const entry of fs.readdirSync(sessionDir, { withFileTypes: true })) {
+            if (keepFiles.has(entry.name)) continue;
+            const targetPath = path.join(sessionDir, entry.name);
+            try {
+                if (entry.isDirectory()) {
+                    fs.rmSync(targetPath, { recursive: true, force: true });
+                } else {
+                    fs.unlinkSync(targetPath);
+                }
+                removed += 1;
+            } catch (_) {}
+        }
+    } catch (_) {}
 
     const currentMeta = readLocalSessionMeta(normalizedPhone);
     writeLocalSessionMeta(normalizedPhone, {
@@ -8233,39 +8207,14 @@ function touchClient(phone) {
     clientActivity.set(normalized, Date.now());
 }
 
-function hasStoredSessionPayload(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-    if (sessionHasLocalAuthFiles(normalized)) return true;
-    const store = getSessionStoreDB();
-    const record = store.sessions?.[normalized] || {};
-    return Number(record?.fileCount || 0) > 0;
-}
-
 function hasPersistedSuccessfulSession(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
     const meta = readLocalSessionMeta(normalized);
+    if (meta?.registered === true) return true;
     const store = getSessionStoreDB();
     const record = store.sessions?.[normalized] || {};
-    const registered = meta?.registered === true || record?.registered === true;
-    if (!registered) return false;
-    return hasStoredSessionPayload(normalized);
-}
-
-function getPendingPairingState(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return null;
-    const pending = pairingRequests.get(normalized);
-    if (!pending) return null;
-    return {
-        ...pending,
-        active: pending.completed !== true && pending.timedOut !== true
-    };
-}
-
-function hasActivePendingPairing(phone) {
-    return Boolean(getPendingPairingState(phone)?.active);
+    return record?.registered === true;
 }
 
 function clearReconnectTimer(phone) {
@@ -8296,31 +8245,6 @@ function clearPairingRequest(phone) {
         clearTimeout(pending.timer);
     }
     pairingRequests.delete(normalized);
-}
-
-function markSessionDeletionInProgress(phone, ttlMs = 30000) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-    sessionDeletionLocks.set(normalized, Date.now() + Math.max(5000, Number(ttlMs) || 30000));
-    return true;
-}
-
-function isSessionDeletionInProgress(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-    const expiresAt = Number(sessionDeletionLocks.get(normalized) || 0);
-    if (!expiresAt) return false;
-    if (Date.now() > expiresAt) {
-        sessionDeletionLocks.delete(normalized);
-        return false;
-    }
-    return true;
-}
-
-function clearSessionDeletionInProgress(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-    return sessionDeletionLocks.delete(normalized);
 }
 
 function resetReconnectAttempts(phone) {
@@ -8382,31 +8306,31 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
-    const pendingPairing = getPendingPairingState(normalized);
     const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
-    if (!hasSuccessfulSession && !pendingPairing?.active) {
-        console.warn(`Skipping reconnect for orphan/unregistered session ${normalized}; purging session immediately.`);
-        clearReconnectTimer(normalized);
-        resetReconnectAttempts(normalized);
-        void purgeSessionData(normalized, {
-            keepProfile: false,
-            ownerId: ownerId || getPhoneOwner(normalized) || ''
-        }).then(async () => {
-            const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
-            if (resolvedOwnerId) {
-                await notifyTelegramUser(
-                    resolvedOwnerId,
-                    `🧹 تم حذف الرقم ${normalized} لأن جلسته غير مكتملة أو غير صالحة، ولن تتم إعادة الاتصال له تلقائياً.`
-                );
-            }
-        }).catch((error) => {
-            console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
-        });
-        return;
-    }
-
+    const retryLimit = hasSuccessfulSession ? MAX_RECONNECT_ATTEMPTS : ORPHAN_SESSION_RETRY_LIMIT;
     let attemptNumber = bumpReconnectAttempts(normalized);
-    if (attemptNumber > MAX_RECONNECT_ATTEMPTS) {
+
+    if (attemptNumber > retryLimit) {
+        if (!hasSuccessfulSession) {
+            console.warn(`Reconnect attempts exceeded for orphan session ${normalized}; purging session and ownership records.`);
+            void purgeSessionData(normalized, {
+                keepProfile: false,
+                ownerId: ownerId || getPhoneOwner(normalized) || ''
+            }).then(async () => {
+                const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
+                if (resolvedOwnerId) {
+                    await notifyTelegramUser(
+                        resolvedOwnerId,
+                        `🧹 تم حذف الرقم ${normalized} نهائياً من الجلسات والإحصائيات بعد تكرار محاولة الاستعادة بدون نجاح.`
+                    );
+                }
+            }).catch((error) => {
+                console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
+            });
+            resetReconnectAttempts(normalized);
+            return;
+        }
+
         console.warn(`Reconnect attempts exceeded for ${normalized}; preserving established session and recycling retry counter.`);
         resetReconnectAttempts(normalized);
         attemptNumber = bumpReconnectAttempts(normalized);
@@ -8417,17 +8341,7 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
-            const latestPendingPairing = getPendingPairingState(normalized);
-            const reconnectOptions = latestPendingPairing?.active
-                ? {
-                    autoRequestPairingCode: !latestPendingPairing.code,
-                    bootRestore: false
-                }
-                : {
-                    autoRequestPairingCode: false,
-                    bootRestore: true
-                };
-            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, reconnectOptions);
+            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized));
         } catch (error) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
@@ -8582,22 +8496,17 @@ async function cleanupSession(phone) {
     const normalized = normalizePhone(phone);
     const sock = waClients.get(normalized);
 
-    markSessionDeletionInProgress(normalized, 30000);
     clearReconnectTimer(normalized);
     clearPairingRequest(normalized);
     clientActivity.delete(normalized);
     clearPresenceTimer(normalized);
     clearGhostPendingMessagesForPhone(normalized);
-    clearSessionPingTimer(normalized);
-    stoppedPairings.add(normalized);
+    stoppedPairings.delete(normalized);
     resetReconnectAttempts(normalized);
 
     if (sock) {
         try {
             await sock.logout();
-        } catch (_) {}
-        try {
-            sock.ws?.close?.();
         } catch (_) {}
         try {
             sock.end?.();
@@ -8606,7 +8515,7 @@ async function cleanupSession(phone) {
     }
 
     await purgeSessionData(normalized, {
-        keepProfile: false,
+        keepProfile: true,
         ownerId: getPhoneOwner(normalized) || ''
     });
 }
@@ -9213,58 +9122,30 @@ async function sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participa
     }
 
     reactionEmoji = emoji;
-
-    if (typeof sock.sendReceipt === 'function') {
-        try {
-            await sock.sendReceipt('status@broadcast', normalizedParticipant, [keyVariants[0].id], 'read');
-        } catch (_) {}
-    }
-
     const optionVariants = [
         buildStatusReactionSendOptions(normalizedParticipant),
-        { broadcast: true, statusJidList: [normalizedParticipant], participant: normalizedParticipant },
-        { broadcast: true, participant: normalizedParticipant },
+        { broadcast: true, statusJidList: [normalizedParticipant] },
         { broadcast: true },
         {}
     ];
     const targetVariants = Array.from(new Set(['status@broadcast', normalizedParticipant].filter(Boolean)));
 
-    const attempts = [];
+    let lastError = null;
     for (const targetJid of targetVariants) {
         for (const reactionKey of keyVariants) {
             for (const sendOptions of optionVariants) {
-                attempts.push(async () => {
+                try {
                     await sock.sendMessage(targetJid, {
                         react: {
                             text: emoji,
                             key: reactionKey
                         }
                     }, sendOptions);
-                });
-            }
-
-            attempts.push(async () => {
-                if (typeof sock.relayMessage !== 'function') {
-                    throw new Error('relayMessage unavailable');
+                    return emoji;
+                } catch (error) {
+                    lastError = error;
                 }
-                await sock.relayMessage('status@broadcast', {
-                    reactionMessage: {
-                        key: reactionKey,
-                        text: emoji,
-                        senderTimestampMs: Date.now()
-                    }
-                }, { statusJidList: [normalizedParticipant] });
-            });
-        }
-    }
-
-    let lastError = null;
-    for (const attempt of attempts) {
-        try {
-            await attempt();
-            return emoji;
-        } catch (error) {
-            lastError = error;
+            }
         }
     }
 
@@ -9375,13 +9256,11 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
 
         if (!hasStatusContent(msg)) return;
 
-        const resolvedStatus = resolveStatusContext(msg);
-        const participant = normalizeWhatsAppJid(resolvedStatus.participant || extractStatusParticipant(msg));
-        const messageId = String(resolvedStatus.messageId || msg?.key?.id || '').trim();
+        const participant = extractStatusParticipant(msg);
         const ownJid = normalizeWhatsAppJid(sock.user?.id);
         const readKeyVariants = buildStatusMessageKeyVariants(msg, participant);
 
-        if (!messageId || !readKeyVariants.length) return;
+        if (!readKeyVariants.length) return;
 
         const shouldReadStatus = settings.autoStatusRead === 'on' || settings.autoStatusReact === 'on';
         const shouldDelayStatusInteraction = shouldReadStatus || settings.statusMsgSend === 'on';
@@ -9390,42 +9269,18 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         }
 
         const forceVisibleReaction = settings.autoStatusReact === 'on';
-        if (shouldReadStatus && participant && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
-            const readResult = await markStatusAsViewed(sock, msg, {
-                logger: console,
-                participant,
-                messageId,
-                preferExplicitReadReceipt: true
-            });
-
-            if (!readResult?.ok) {
-                for (const reactionKey of readKeyVariants) {
-                    try {
-                        await sock.readMessages([reactionKey]);
-                        break;
-                    } catch (_) {}
-                }
+        if (shouldReadStatus && (settings.ghostMode !== 'on' || forceVisibleReaction)) {
+            for (const reactionKey of readKeyVariants) {
+                try {
+                    await sock.readMessages([reactionKey]);
+                    break;
+                } catch (_) {}
             }
         }
 
         let reactedEmoji = '';
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
-            const preferredEmoji = pickRandomStatusEmoji(phoneNumber) || reactionEmoji || DEFAULT_REACTION_EMOJI;
-            const directReaction = await sendStatusReaction(sock, msg, {
-                logger: console,
-                participant,
-                messageId,
-                reactionEmoji: preferredEmoji
-            });
-
-            if (directReaction?.ok) {
-                reactedEmoji = directReaction.emoji || preferredEmoji;
-            }
-
-            if (!reactedEmoji) {
-                reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
-            }
-
+            reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedEmoji) {
                 incrementAnalytics('totalStatusReactions');
             }
@@ -9467,32 +9322,15 @@ async function handlePublicLinkedNumberCommand(sock, phoneNumber, msg) {
     const text = String(textFromMessage(msg) || '').trim();
     if (!text) return false;
 
-    const normalizedText = normalizeIncomingCommand(text).toLowerCase();
-
-    if (['.bot', '.help', '.menu', '.list'].includes(normalizedText)) {
-        const botMessage = String(buildPublicLinkedNumberCommands(phoneNumber) || DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE || '').trim();
-        if (!botMessage) {
-            return false;
+    if (/^\.bot$/i.test(text)) {
+        const botMessage = buildPublicLinkedNumberCommands(phoneNumber);
+        if (!String(botMessage || '').trim()) {
+            return true;
         }
         await sock.sendMessage(
             from,
             {
                 text: botMessage
-            },
-            { quoted: msg }
-        );
-        return true;
-    }
-
-    if (normalizedText === '.settings') {
-        const settingsMessage = String(buildPhoneSettingsMessage(phoneNumber) || '').trim();
-        if (!settingsMessage) {
-            return false;
-        }
-        await sock.sendMessage(
-            from,
-            {
-                text: settingsMessage
             },
             { quoted: msg }
         );
@@ -9548,24 +9386,9 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         const text = textFromMessage(msg);
         const isGroup = from.endsWith('@g.us');
 
-        if (msg.key?.fromMe) {
-            incrementAnalytics('totalOwnerReplies');
-            if (settings.ghostMode === 'on') {
-                dropGhostPendingMessages(phoneNumber, from);
-            }
-            const handledOwnerControl = await handleOwnerControlMessage(sock, phoneNumber, msg);
-            if (handledOwnerControl) {
-                return;
-            }
-        } else if (!isGroup) {
-            const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
-            if (handledPublicCommand) return;
-        }
-
-        let legacyHandled = false;
         try {
-            legacyHandled = await dispatchLegacyMessage(sock, phoneNumber, msg);
-            if (legacyHandled && text.startsWith('.')) {
+            await dispatchLegacyMessage(sock, phoneNumber, msg);
+            if (text.startsWith('.')) {
                 return;
             }
         } catch (legacyError) {
@@ -9573,6 +9396,11 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
         if (msg.key?.fromMe) {
+            incrementAnalytics('totalOwnerReplies');
+            if (settings.ghostMode === 'on') {
+                dropGhostPendingMessages(phoneNumber, from);
+            }
+            await handleOwnerControlMessage(sock, phoneNumber, msg);
             return;
         }
 
@@ -9594,6 +9422,11 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 
         if (!isGroup && settings.ghostMode === 'on' && msg.key) {
             rememberGhostPendingMessage(phoneNumber, msg);
+        }
+
+        if (!isGroup) {
+            const handledPublicCommand = await handlePublicLinkedNumberCommand(sock, phoneNumber, msg);
+            if (handledPublicCommand) return;
         }
 
         if (settings.autoRead === 'on' && settings.ghostMode !== 'on' && msg.key) {
@@ -9648,7 +9481,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     const startPromise = (async () => {
         clearReconnectTimer(normalizedPhone);
-        clearSessionDeletionInProgress(normalizedPhone);
         stoppedPairings.delete(normalizedPhone);
 
         const existing = waClients.get(normalizedPhone);
@@ -9660,16 +9492,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         const sessionPath = getSessionPath(normalizedPhone);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
-        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
-        const preferRemoteSnapshot = bootRestore || isRemoteSessionStoreEnabled();
-        const { state, saveCreds } = await getMongoAuthState(normalizedPhone, { forceRemote: preferRemoteSnapshot });
-        writeLocalSessionMeta(normalizedPhone, {
-            phone: normalizedPhone,
-            ownerId: requestedOwnerId,
-            registered: state?.creds?.registered === true,
-            lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
-        });
+        const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
         const { version } = await getCachedBaileysVersion();
+        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
         const sock = makeWASocket({
         version,
@@ -9689,18 +9514,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
-
-    if (!state.creds.registered) {
-        try {
-            await saveCreds({
-                ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
-                registered: false,
-                lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
-            });
-        } catch (error) {
-            console.error(`Initial Session Persist Error (${normalizedPhone}):`, error?.message || error);
-        }
-    }
 
     if (!state.creds.registered && autoRequestPairingCode) {
         pairingRequests.set(normalizedPhone, {
@@ -9792,25 +9605,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('messages.upsert', async (payload) => {
         try {
             touchClient(normalizedPhone);
-            const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-            const priorityStatusMessages = [];
-            const regularMessages = [];
-
+            const messages = payload?.messages || [];
             for (const msg of messages) {
-                if (isStatusBroadcastMessage(msg)) {
-                    priorityStatusMessages.push(msg);
-                } else {
-                    regularMessages.push(msg);
-                }
-            }
-
-            for (const msg of priorityStatusMessages) {
-                void handleIncomingMessage(sock, normalizedPhone, msg).catch((error) => {
-                    console.error(`priority status upsert Error (${normalizedPhone}):`, error?.message || error);
-                });
-            }
-
-            for (const msg of regularMessages) {
                 await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (error) {
@@ -9821,9 +9617,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('messages.update', async (updates = []) => {
         try {
             touchClient(normalizedPhone);
-            const priorityStatusUpdates = [];
-            const regularUpdates = [];
-
             for (const item of updates) {
                 if (!item?.update) continue;
                 const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
@@ -9831,26 +9624,11 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const isStatusUpdate = remoteJid === 'status@broadcast';
                 const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
                 if (!isStatusUpdate && !isRevocationUpdate) continue;
-                const normalizedMessage = {
+                await handleIncomingMessage(sock, normalizedPhone, {
                     key: item.key,
                     message: item.update,
                     participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
-                };
-                if (isStatusUpdate) {
-                    priorityStatusUpdates.push(normalizedMessage);
-                } else {
-                    regularUpdates.push(normalizedMessage);
-                }
-            }
-
-            for (const msg of priorityStatusUpdates) {
-                void handleIncomingMessage(sock, normalizedPhone, msg).catch((error) => {
-                    console.error(`priority status update Error (${normalizedPhone}):`, error?.message || error);
                 });
-            }
-
-            for (const msg of regularUpdates) {
-                await handleIncomingMessage(sock, normalizedPhone, msg);
             }
         } catch (error) {
             console.error(`messages.update Error (${normalizedPhone}):`, error.message);
@@ -9961,7 +9739,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                             `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
 ✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
 إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
-🔐 تم حفظ جلسة الرقم داخل قاعدة البيانات فقط، مع إبقاء الإعدادات مرتبطة بالرقم بشكل آمن.`
+🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
                         );
                     } catch (error) {
                         console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
@@ -9987,11 +9765,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
                 clearSessionPingTimer(normalizedPhone);
-
-                if (isSessionDeletionInProgress(normalizedPhone)) {
-                    console.log(`Manual session deletion in progress: ${normalizedPhone}`);
-                    return;
-                }
 
                 const transientCryptoDisconnect = isTransientCryptoDisconnect(lastDisconnect);
                 const corruptedBootSession = bootRestore && shouldDiscardCorruptedBootSession(lastDisconnect);
@@ -10034,13 +9807,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
                 if (pendingPair?.timedOut || stoppedPairings.has(normalizedPhone)) {
                     clearReconnectTimer(normalizedPhone);
-                    return;
-                }
-
-                if (pendingPair && pendingPair.completed !== true) {
-                    console.log(`Pairing session closed before completion: ${normalizedPhone}`);
-                    clearReconnectTimer(normalizedPhone);
-                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone), 1500);
                     return;
                 }
 
@@ -10104,10 +9870,10 @@ async function initializeSessions() {
             }
             const preparation = await ensureSessionStateReady(session.sessionId);
             if (!preparation.ready) {
-                console.log(`⚠️ جلسة ${session.sessionId} لا تحتوي على ملفات ربط صالحة، سيتم حذفها ولن تتم إعادة الاتصال لها تلقائياً.`);
-                await purgeSessionData(session.sessionId, {
-                    keepProfile: false,
-                    ownerId: session.ownerId || getPhoneOwner(session.sessionId) || ''
+                console.log(`⚠️ جلسة ${session.sessionId} لا تحتوي على ملفات ربط صالحة حالياً، سيتم تشغيلها في وضع ربط جديد مع الاحتفاظ بإعداداتها.`);
+                await startWhatsApp(session.sessionId, null, session.ownerId || getPhoneOwner(session.sessionId), null, {
+                    autoRequestPairingCode: true,
+                    bootRestore: false
                 });
                 return;
             }
@@ -10122,11 +9888,7 @@ async function initializeSessions() {
             const errorText = String(error?.data || error?.message || error?.stack || '').toLowerCase();
             const shouldDeleteSession = statusCode === 401 || /(decrypt|decryption|failed to decrypt|cannot decrypt|closed session|session closed|no session|prekey|pre-key|bad mac|invalid mac|message counter|stale key|sender key)/i.test(errorText);
             if (shouldDeleteSession) {
-                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وسيتم حذفها لمنع تكرار إعادة الاتصال.`);
-                await purgeSessionData(session.sessionId, {
-                    keepProfile: false,
-                    ownerId: session.ownerId || getPhoneOwner(session.sessionId) || ''
-                });
+                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وتم الاحتفاظ بها لإعادة المحاولة أو الاستعادة من التخزين البعيد.`);
             }
         }
     });
@@ -10150,9 +9912,7 @@ async function startAllSavedSessions() {
     const restoredEntries = await rebuildLinkedUsersFromStoredSessions();
     const fallbackEntries = restoredEntries.length
         ? []
-        : getAllLinkedPhones()
-            .map((phone) => ({ phone: normalizePhone(phone), ownerId: String(getPhoneOwner(phone) || '') }))
-            .filter((entry) => entry.phone && hasPersistedSuccessfulSession(entry.phone));
+        : getAllLinkedPhones().map((phone) => ({ phone: normalizePhone(phone), ownerId: String(getPhoneOwner(phone) || '') }));
     const mergedEntries = [...restoredEntries, ...fallbackEntries]
         .filter((entry) => entry?.phone)
         .filter((entry, index, arr) => arr.findIndex((item) => item.phone === entry.phone) === index);
@@ -13375,16 +13135,12 @@ async function handlePairingCodeApiRequest(req, res) {
         if (sessionStartPromises.has(phone)) {
             return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
         }
-        if (hasPersistedSuccessfulSession(phone)) {
+        if (hasPersistedSuccessfulSession(phone) || waClients.has(phone)) {
             await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, { autoRequestPairingCode: false, bootRestore: true });
             return res.status(409).json({ success: false, error: 'هذا الرقم مرتبط بالفعل وتوجد له جلسة محفوظة، لذلك لن يتم إنشاء جلسة جديدة أو كود جديد' });
         }
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        if (waClients.has(phone)) {
-            return res.status(409).json({ success: false, error: 'يوجد تشغيل مؤقت لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
-        }
-        await purgeSessionData(phone, { keepProfile: false, ownerId: getPhoneOwner(phone) || '' });
-        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true, bootRestore: false });
+        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الربط');
         return res.json({
