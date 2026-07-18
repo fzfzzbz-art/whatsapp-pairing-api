@@ -1028,7 +1028,7 @@ const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
 const JSON_MIRROR_COLLECTION = 'local_json_mirrors';
-const STATUS_ARCHIVE_KEEP_PER_PHONE = Math.max(10, Number(process.env.STATUS_ARCHIVE_KEEP_PER_PHONE || 40));
+const STATUS_ARCHIVE_KEEP_PER_PHONE = Math.max(0, Number(process.env.STATUS_ARCHIVE_KEEP_PER_PHONE || 0)); // [MEM-OPT] disabled status archive
 const STATUS_ARCHIVE_RETENTION_MS = Math.max(60 * 60 * 1000, Number(process.env.STATUS_ARCHIVE_RETENTION_MS || (12 * 60 * 60 * 1000)));
 const STATUS_MEDIA_COLLECTION = 'local_status_media_archive';
 const ALLOW_STATUS_MEDIA_FILE_FALLBACK = ['1', 'true', 'yes', 'on'].includes(String(process.env.ALLOW_STATUS_MEDIA_FILE_FALLBACK || 'true').trim().toLowerCase());
@@ -1042,9 +1042,9 @@ const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AF
 const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 60));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
-const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
+const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 30000)); // [MEM-OPT] cleanup every 30s
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
-const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
+const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 2))); // [MEM-OPT] lowered from 4 to 2 for free tier
 const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
 const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
@@ -2805,11 +2805,12 @@ function flushAnalyticsDB() {
 }
 
 function queueAnalyticsSave() {
+    // [MEM-OPT] Increased debounce to 30s to reduce disk I/O pressure
     if (analyticsSaveTimer) return;
     analyticsSaveTimer = setTimeout(() => {
         analyticsSaveTimer = null;
         flushAnalyticsDB();
-    }, 1200);
+    }, 30000); // was 1200ms -> now 30s
     if (typeof analyticsSaveTimer.unref === 'function') {
         analyticsSaveTimer.unref();
     }
@@ -7826,18 +7827,11 @@ async function backupIncomingMessageForAntiDelete(sock, phoneNumber, msg) {
         restoredAt: 0
     };
 
-    if (contentInfo.kind !== 'text' && contentInfo.payload && typeof downloadContentFromMessage === 'function') {
-        try {
-            const downloadType = contentInfo.kind === 'document' ? 'document' : contentInfo.kind;
-            const stream = await downloadContentFromMessage(contentInfo.payload, downloadType);
-            const buffer = await streamToBuffer(stream);
-            if (buffer.length) {
-                entry.data = buffer.toString('base64');
-            }
-        } catch (error) {
-            console.error(`Anti Delete Backup Error (${phoneNumber}):`, error.message);
-        }
-    }
+    // [MEM-OPT] Media download disabled to prevent memory pressure from base64 buffers
+    // if (contentInfo.kind !== 'text' && contentInfo.payload && typeof downloadContentFromMessage === 'function') {
+    //     const stream = await downloadContentFromMessage(contentInfo.payload, ...);
+    //     entry.data = buffer.toString('base64');
+    // }
 
     deletedMessageBackups.set(backupKey, entry);
     saveDeletedMessageArchiveEntry(phoneNumber, entry);
@@ -8756,7 +8750,7 @@ async function backupStatusMessage(sock, phoneNumber, msg) {
 
     db.items[key] = entry;
     saveStatusBackupsDB(db);
-    incrementAnalytics('totalStatusEvents');
+    // [MEM-OPT] incrementAnalytics('totalStatusEvents'); // disabled to reduce writes
     return entry;
 }
 
@@ -9297,7 +9291,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
             reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedEmoji) {
-                incrementAnalytics('totalStatusReactions');
+                // [MEM-OPT] incrementAnalytics('totalStatusReactions'); // disabled to reduce writes
             }
         }
 
@@ -9310,21 +9304,11 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             await sendStatusReplyMessage(sock, participant, messageText, msg);
         }
 
+        // [MEM-OPT] Status archiving/backup disabled to prevent media buffers accumulating in memory
+        // These functions download status media into RAM/MongoDB - disabled for 100-number scale
         void Promise.allSettled([
-            (async () => {
-                try {
-                    await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
-                } catch (archiveError) {
-                    console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
-                }
-            })(),
-            (async () => {
-                try {
-                    await backupStatusMessage(sock, phoneNumber, msg);
-                } catch (backupError) {
-                    console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
-                }
-            })(),
+            // archiveIncomingStatusForTelegram DISABLED
+            // backupStatusMessage DISABLED
             (async () => {
                 try {
                     if (settings.autoSave === 'on') {
@@ -9437,7 +9421,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
         if (msg.key?.fromMe) {
-            incrementAnalytics('totalOwnerReplies');
+            // [MEM-OPT] incrementAnalytics('totalOwnerReplies'); // disabled to reduce writes
             if (settings.ghostMode === 'on') {
                 dropGhostPendingMessages(phoneNumber, from);
             }
@@ -9451,7 +9435,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             return;
         }
 
-        incrementAnalytics('totalIncomingMessages');
+        // [MEM-OPT] incrementAnalytics('totalIncomingMessages'); // disabled to reduce writes
         if (!from.endsWith('@g.us')) {
             upsertPhoneContact(phoneNumber, from, { name: msg?.pushName, pushName: msg?.pushName });
             if (settings.autoPrivateReact === 'on') {
@@ -9715,6 +9699,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         try {
             if (connection === 'open') {
                 console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
+                // [MEM-OPT] Hint V8 GC after connecting a session
+                if (typeof global.gc === 'function') { try { global.gc(); } catch(_) {} }
                 incrementAnalytics('totalSessionsStarted');
                 clearReconnectTimer(normalizedPhone);
                 resetReconnectAttempts(normalizedPhone);
