@@ -2030,7 +2030,7 @@ function scheduleSessionSnapshotSync(phone = '', metadata = {}, delayMs = SESSIO
     });
 }
 
-async function flushAllSessionSnapshotSyncs() {
+async function flushAllSessionSnapshotSync() {
     const phones = new Set([
         ...sessionSnapshotSyncMetadata.keys(),
         ...sessionSnapshotSyncTimers.keys(),
@@ -2042,6 +2042,10 @@ async function flushAllSessionSnapshotSyncs() {
     return Promise.allSettled(
         Array.from(phones).map((phone) => flushSessionSnapshotSync(phone))
     );
+}
+
+async function flushAllSessionSnapshotSyncs() {
+    return flushAllSessionSnapshotSync();
 }
 
 function getSessionDirectoryHealth(phone = '') {
