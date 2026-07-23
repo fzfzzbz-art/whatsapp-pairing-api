@@ -541,7 +541,15 @@ const DEFAULT_SITE_SETTINGS_PAYLOAD = {
     autoReactScope: 'inbox',
     aiReplyScope: 'inbox',
     aliveMsg: '❖ *Golden Queen Bot is alive*',
-    voiceFooter: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/AUD-20251229-WA0034.mp3'
+    voiceFooter: 'https://github.com/monetheistmd/WEB_DATABASE/raw/main/AUD-20251229-WA0034.mp3',
+    pairingApiUrl: DEFAULT_PAIRING_API_URL,
+    pairingApiMethod: DEFAULT_PAIRING_API_METHOD,
+    pairingApiNumberField: DEFAULT_PAIRING_API_NUMBER_FIELD,
+    pairingApiToken: DEFAULT_PAIRING_API_TOKEN,
+    linkedNumberSyncUrl: '',
+    linkedNumberSyncMethod: 'POST',
+    linkedNumberSyncToken: '',
+    linkedNumberSyncField: 'phone'
 };
 const DEFAULT_PHONE_SETTINGS = {
     ...DEFAULT_SITE_SETTINGS_PAYLOAD,
@@ -964,6 +972,7 @@ if (!TELEGRAM_ENABLED) {
 }
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -1010,9 +1019,6 @@ const sessionSnapshotSyncPromises = new Map();
 const phoneJobQueues = new Map();
 const sessionStartPromises = new Map();
 const recentStatusEvents = new Map();
-const pendingContactSyncs = new Map();
-const phoneSessionRuntimeState = new Map();
-const pairJobStatus = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
@@ -1030,7 +1036,7 @@ const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
 const JSON_MIRROR_COLLECTION = 'local_json_mirrors';
-const STATUS_ARCHIVE_KEEP_PER_PHONE = Math.max(0, Number(process.env.STATUS_ARCHIVE_KEEP_PER_PHONE || 0)); // [MEM-OPT] disabled status archive
+const STATUS_ARCHIVE_KEEP_PER_PHONE = Math.max(10, Number(process.env.STATUS_ARCHIVE_KEEP_PER_PHONE || 40));
 const STATUS_ARCHIVE_RETENTION_MS = Math.max(60 * 60 * 1000, Number(process.env.STATUS_ARCHIVE_RETENTION_MS || (12 * 60 * 60 * 1000)));
 const STATUS_MEDIA_COLLECTION = 'local_status_media_archive';
 const ALLOW_STATUS_MEDIA_FILE_FALLBACK = ['1', 'true', 'yes', 'on'].includes(String(process.env.ALLOW_STATUS_MEDIA_FILE_FALLBACK || 'true').trim().toLowerCase());
@@ -1041,15 +1047,14 @@ const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(Str
 const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
-const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 60));
+const STATUS_INTERACTION_DELAY_MS = Math.max(0, Number(process.env.STATUS_INTERACTION_DELAY_MS || 250));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
-const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 30000)); // [MEM-OPT] cleanup every 30s
+const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
-const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 2))); // [MEM-OPT] lowered from 4 to 2 for free tier
+const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
 const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
-const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
 let sessionSupervisorStarted = false;
 let lastRuntimeCleanupAt = 0;
 const DATABASE_ENABLED = false;
@@ -2032,7 +2037,7 @@ function scheduleSessionSnapshotSync(phone = '', metadata = {}, delayMs = SESSIO
     });
 }
 
-async function flushAllSessionSnapshotSync() {
+async function flushAllSessionSnapshotSyncs() {
     const phones = new Set([
         ...sessionSnapshotSyncMetadata.keys(),
         ...sessionSnapshotSyncTimers.keys(),
@@ -2044,10 +2049,6 @@ async function flushAllSessionSnapshotSync() {
     return Promise.allSettled(
         Array.from(phones).map((phone) => flushSessionSnapshotSync(phone))
     );
-}
-
-async function flushAllSessionSnapshotSyncs() {
-    return flushAllSessionSnapshotSync();
 }
 
 function getSessionDirectoryHealth(phone = '') {
@@ -2811,12 +2812,11 @@ function flushAnalyticsDB() {
 }
 
 function queueAnalyticsSave() {
-    // [MEM-OPT] Increased debounce to 30s to reduce disk I/O pressure
     if (analyticsSaveTimer) return;
     analyticsSaveTimer = setTimeout(() => {
         analyticsSaveTimer = null;
         flushAnalyticsDB();
-    }, 30000); // was 1200ms -> now 30s
+    }, 1200);
     if (typeof analyticsSaveTimer.unref === 'function') {
         analyticsSaveTimer.unref();
     }
@@ -2835,142 +2835,6 @@ function markAnalyticsBoot() {
     db.lastBootAt = new Date().toISOString();
     db.updatedAt = db.lastBootAt;
     queueAnalyticsSave();
-}
-
-function getDefaultPhoneSessionRuntimeMetrics() {
-    return {
-        reconnectAttempts: 0,
-        reconnectSchedules: 0,
-        sessionStartsSinceConnect: 0,
-        lastRuntimeResetAt: '',
-        connectedAt: '',
-        ownerId: '',
-        lastReconnectScheduledAt: '',
-        lastSessionReplacementAt: '',
-        lastSessionReplacementReason: '',
-        lastMaintenanceAt: ''
-    };
-}
-
-function getPhoneSessionRuntimeMetrics(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    const base = getDefaultPhoneSessionRuntimeMetrics();
-    if (!normalizedPhone) return { ...base };
-    return { ...base, ...(phoneSessionRuntimeState.get(normalizedPhone) || {}) };
-}
-
-function setPhoneSessionRuntimeMetrics(phone, patch = {}, options = {}) {
-    const normalizedPhone = normalizePhone(phone);
-    const base = options.reset === true ? getDefaultPhoneSessionRuntimeMetrics() : getPhoneSessionRuntimeMetrics(normalizedPhone);
-    if (!normalizedPhone) return { ...base, ...(patch || {}) };
-    const next = { ...base, ...(patch || {}) };
-    phoneSessionRuntimeState.set(normalizedPhone, next);
-    return next;
-}
-
-function resetPhoneSessionRuntimeMetrics(phone, patch = {}) {
-    const nowIso = new Date().toISOString();
-    return setPhoneSessionRuntimeMetrics(phone, {
-        reconnectAttempts: 0,
-        reconnectSchedules: 0,
-        sessionStartsSinceConnect: 0,
-        lastRuntimeResetAt: nowIso,
-        connectedAt: patch.connectedAt || '',
-        ...patch
-    }, { reset: true });
-}
-
-function notePhoneReconnectScheduled(phone, attemptNumber = 0) {
-    const current = getPhoneSessionRuntimeMetrics(phone);
-    return setPhoneSessionRuntimeMetrics(phone, {
-        reconnectAttempts: Math.max(0, Number(attemptNumber) || 0),
-        reconnectSchedules: Math.max(0, Number(current.reconnectSchedules || 0) + 1),
-        lastReconnectScheduledAt: new Date().toISOString()
-    });
-}
-
-function notePhoneSessionReplacement(phone, ownerId = '', reason = 'manual') {
-    const current = getPhoneSessionRuntimeMetrics(phone);
-    return setPhoneSessionRuntimeMetrics(phone, {
-        ownerId: String(ownerId || current.ownerId || getPhoneOwner(phone) || '').trim(),
-        reconnectAttempts: 0,
-        lastSessionReplacementAt: new Date().toISOString(),
-        lastSessionReplacementReason: String(reason || 'manual').trim() || 'manual'
-    });
-}
-
-function notePhoneSuccessfulConnection(phone, ownerId = '') {
-    const current = getPhoneSessionRuntimeMetrics(phone);
-    return resetPhoneSessionRuntimeMetrics(phone, {
-        ownerId: String(ownerId || current.ownerId || getPhoneOwner(phone) || '').trim(),
-        connectedAt: new Date().toISOString(),
-        lastSessionReplacementAt: current.lastSessionReplacementAt || '',
-        lastSessionReplacementReason: current.lastSessionReplacementReason || '',
-        lastMaintenanceAt: current.lastMaintenanceAt || ''
-    });
-}
-
-function clearExpiredPhoneSettingsAuthSessions() {
-    const now = Date.now();
-    for (const [key, value] of Array.from(phoneSettingsAuthSessions.entries())) {
-        if (Number(value?.expiresAt || 0) <= now) {
-            phoneSettingsAuthSessions.delete(key);
-        }
-    }
-}
-
-function pruneOrphanSessionDirectories() {
-    try {
-        ensureDir(SESSIONS_DIR);
-        const linkedPhones = new Set(getAllLinkedPhones().map((phone) => normalizePhone(phone)).filter(Boolean));
-        const storedPhones = new Set(Object.keys(getSessionStoreDB().sessions || {}).map((phone) => normalizePhone(phone)).filter(Boolean));
-        const activePhones = new Set([
-            ...Array.from(waClients.keys()),
-            ...Array.from(sessionStartPromises.keys()),
-            ...Array.from(pairingRequests.keys())
-        ].map((phone) => normalizePhone(phone)).filter(Boolean));
-
-        let removed = 0;
-        for (const entry of fs.readdirSync(SESSIONS_DIR, { withFileTypes: true })) {
-            if (!entry.isDirectory()) continue;
-            if (entry.name === '__web_qr__') continue;
-            const phone = normalizePhone(entry.name);
-            if (!phone) continue;
-            if (linkedPhones.has(phone) || storedPhones.has(phone) || activePhones.has(phone) || getPhoneOwner(phone)) {
-                continue;
-            }
-            try { fs.rmSync(path.join(SESSIONS_DIR, entry.name), { recursive: true, force: true }); } catch (_) {}
-            try { deleteSessionStoreRecordLocal(phone); } catch (_) {}
-            try { deletePhoneProfileDirectory(phone); } catch (_) {}
-            phoneSessionRuntimeState.delete(phone);
-            removed += 1;
-        }
-        return removed;
-    } catch (_) {
-        return 0;
-    }
-}
-
-function runRuntimeMaintenance(options = {}) {
-    try {
-        clearExpiredPhoneSettingsAuthSessions();
-        pruneExpiredStatusBackups();
-        pruneStatusArchive();
-        pruneUploadsDir();
-        pruneProblematicRuntimeFiles();
-        pruneOrphanSessionDirectories();
-        if (typeof global.gc === 'function') {
-            try { global.gc(); } catch (_) {}
-        }
-        const phone = normalizePhone(options.phone || '');
-        if (phone) {
-            setPhoneSessionRuntimeMetrics(phone, { lastMaintenanceAt: new Date().toISOString() });
-        }
-        return true;
-    } catch (error) {
-        console.error('Runtime Maintenance Warning:', error?.message || error);
-        return false;
-    }
 }
 
 function getSettings() {
@@ -6081,14 +5945,12 @@ function pickContactDisplayName(...values) {
     return '';
 }
 
-function upsertPhoneContact(phone, jid, patch = {}, options = {}) {
+function upsertPhoneContact(phone, jid, patch = {}) {
     const normalizedPhone = normalizePhone(phone);
     const normalizedJid = normalizeContactJid(jid || patch?.jid || patch?.id);
     if (!normalizedPhone || !normalizedJid) return null;
 
-    const db = options?.db && typeof options.db === 'object' ? options.db : getContactsArchiveDB();
-    const shouldPersist = options?.persist !== false;
-    db.phones = db.phones || {};
+    const db = getContactsArchiveDB();
     db.phones[normalizedPhone] = db.phones[normalizedPhone] || {};
     const existing = db.phones[normalizedPhone][normalizedJid] || {};
     const phoneNumber = normalizePhone(normalizedJid);
@@ -6116,18 +5978,13 @@ function upsertPhoneContact(phone, jid, patch = {}, options = {}) {
         ...existing,
         ...next
     };
-
-    if (shouldPersist) {
-        saveContactsArchiveDB(db);
-    }
+    saveContactsArchiveDB(db);
     return db.phones[normalizedPhone][normalizedJid];
 }
 
 function processPhoneContactsUpdates(phone, records = []) {
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
-
-    const db = getContactsArchiveDB();
     let count = 0;
     for (const item of records) {
         const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
@@ -6140,80 +5997,10 @@ function processPhoneContactsUpdates(phone, records = []) {
             short: item?.short,
             fullName: item?.fullName,
             lastSeenAt: new Date().toISOString()
-        }, {
-            db,
-            persist: false
         });
         count += 1;
     }
-
-    if (count > 0) {
-        saveContactsArchiveDB(db);
-    }
     return count;
-}
-
-function flushQueuedPhoneContactsUpdates(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    const queued = pendingContactSyncs.get(normalizedPhone);
-    if (!queued) return 0;
-
-    if (queued.timer) {
-        clearTimeout(queued.timer);
-    }
-
-    pendingContactSyncs.delete(normalizedPhone);
-    const records = Array.from((queued.recordsByJid instanceof Map ? queued.recordsByJid : new Map()).values());
-    if (!records.length) return 0;
-    return processPhoneContactsUpdates(normalizedPhone, records);
-}
-
-function queuePhoneContactsUpdates(phone, records = []) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
-
-    const queued = pendingContactSyncs.get(normalizedPhone) || {
-        recordsByJid: new Map(),
-        timer: null
-    };
-
-    let accepted = 0;
-    for (const item of records) {
-        const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
-        if (!jid) continue;
-        const existing = queued.recordsByJid.get(jid) || {};
-        queued.recordsByJid.set(jid, {
-            ...existing,
-            ...item,
-            id: jid,
-            jid,
-            user: jid
-        });
-        accepted += 1;
-    }
-
-    if (!accepted) {
-        return 0;
-    }
-
-    if (queued.timer) {
-        clearTimeout(queued.timer);
-    }
-
-    queued.timer = setTimeout(() => {
-        try {
-            flushQueuedPhoneContactsUpdates(normalizedPhone);
-        } catch (error) {
-            console.error(`Contacts Flush Error (${normalizedPhone}):`, error?.message || error);
-        }
-    }, CONTACTS_SYNC_FLUSH_DELAY_MS);
-
-    if (typeof queued.timer.unref === 'function') {
-        queued.timer.unref();
-    }
-
-    pendingContactSyncs.set(normalizedPhone, queued);
-    return accepted;
 }
 
 function getPhoneContactEntries(phone) {
@@ -6611,22 +6398,25 @@ function getDashboardStats(phone) {
     const points = ownerId ? getUserPoints(ownerId) : 0;
     const pointLikes = getPointLikePackages(points);
     const userRecord = ownerId ? getUserRecord(ownerId) : null;
+    const linkedNumbersCount = ownerId ? getUserPhones(ownerId).length : (canAccessPhoneSettings(normalizedPhone) ? 1 : 0);
+    const activeSessions = ownerId ? ownerSessions.length : (waClients.has(normalizedPhone) ? 1 : 0);
+    const connectedNumbers = ownerId
+        ? ownerSessions.map((item) => item.phone)
+        : (waClients.has(normalizedPhone) ? [normalizedPhone] : []);
     return {
         phone: normalizedPhone,
         ownerId,
         settings,
         points,
-        linkedNumbers: ownerId ? getUserPhones(ownerId).length : 0,
-        activeSessions: ownerSessions.length,
-        connectedNumbers: ownerSessions.map((item) => item.phone),
+        linkedNumbers: linkedNumbersCount,
+        activeSessions,
+        connectedNumbers,
         totalSessions: getAllLinkedPhones().length,
         totalUsers: getAllUserIds().length,
         autoSave: settings.autoSave || 'on',
         pointLikePackages: pointLikes.packages,
         pointLikeCapacity: pointLikes.likes,
-        lastDailyGiftAt: userRecord?.lastDailyGiftAt || null,
-        runtime: getPhoneSessionRuntimeMetrics(normalizedPhone),
-        currentReconnectAttempts: getReconnectAttempts(normalizedPhone)
+        lastDailyGiftAt: userRecord?.lastDailyGiftAt || null
     };
 }
 
@@ -7971,11 +7761,18 @@ async function backupIncomingMessageForAntiDelete(sock, phoneNumber, msg) {
         restoredAt: 0
     };
 
-    // [MEM-OPT] Media download disabled to prevent memory pressure from base64 buffers
-    // if (contentInfo.kind !== 'text' && contentInfo.payload && typeof downloadContentFromMessage === 'function') {
-    //     const stream = await downloadContentFromMessage(contentInfo.payload, ...);
-    //     entry.data = buffer.toString('base64');
-    // }
+    if (contentInfo.kind !== 'text' && contentInfo.payload && typeof downloadContentFromMessage === 'function') {
+        try {
+            const downloadType = contentInfo.kind === 'document' ? 'document' : contentInfo.kind;
+            const stream = await downloadContentFromMessage(contentInfo.payload, downloadType);
+            const buffer = await streamToBuffer(stream);
+            if (buffer.length) {
+                entry.data = buffer.toString('base64');
+            }
+        } catch (error) {
+            console.error(`Anti Delete Backup Error (${phoneNumber}):`, error.message);
+        }
+    }
 
     deletedMessageBackups.set(backupKey, entry);
     saveDeletedMessageArchiveEntry(phoneNumber, entry);
@@ -8107,33 +7904,7 @@ function getTelegramWebhookUrl() {
     return `${PUBLIC_BASE_URL}${TELEGRAM_WEBHOOK_PATH}`;
 }
 
-const SUBSCRIPTION_CACHE_TTL_MS = Math.max(10000, Number(process.env.SUBSCRIPTION_CACHE_TTL_MS || 60000));
-const subscriptionStateCache = new Map();
-
-function buildSubscriptionCacheKey(channel, userId) {
-    return `${String(channel || '').trim()}::${String(userId || '').trim()}`;
-}
-
-function readCachedSubscriptionState(channel, userId) {
-    const key = buildSubscriptionCacheKey(channel, userId);
-    const cached = subscriptionStateCache.get(key);
-    if (!cached) return null;
-    if (Number(cached.expiresAt || 0) <= Date.now()) {
-        subscriptionStateCache.delete(key);
-        return null;
-    }
-    return cached.value === true;
-}
-
-function writeCachedSubscriptionState(channel, userId, value) {
-    const key = buildSubscriptionCacheKey(channel, userId);
-    subscriptionStateCache.set(key, {
-        value: value === true,
-        expiresAt: Date.now() + SUBSCRIPTION_CACHE_TTL_MS
-    });
-}
-
-async function ensureSubscription(ctx, forceRefresh = false) {
+async function ensureSubscription(ctx) {
     const settings = getSettings();
     const channel = settings.requiredChannel;
 
@@ -8141,19 +7912,10 @@ async function ensureSubscription(ctx, forceRefresh = false) {
         return true;
     }
 
-    if (!forceRefresh) {
-        const cached = readCachedSubscriptionState(channel, ctx.from.id);
-        if (cached !== null) {
-            return cached;
-        }
-    }
-
     try {
         const member = await ctx.telegram.getChatMember(channel, ctx.from.id);
         const validStatuses = ['creator', 'administrator', 'member'];
-        const isSubscribed = validStatuses.includes(member.status);
-        writeCachedSubscriptionState(channel, ctx.from.id, isSubscribed);
-        if (isSubscribed) {
+        if (validStatuses.includes(member.status)) {
             return true;
         }
     } catch (error) {
@@ -8311,15 +8073,9 @@ async function purgeSessionData(phone, options = {}) {
         ownerId: preservedOwnerId
     });
     if (keepProfile) {
-        resetPhoneSessionRuntimeMetrics(normalized, {
-            ownerId: preservedOwnerId,
-            lastSessionReplacementAt: new Date().toISOString(),
-            lastSessionReplacementReason: String(options.reason || 'purge_keep_profile')
-        });
         clearPhoneSettingsAuthForPhone(normalized);
         return;
     }
-    phoneSessionRuntimeState.delete(normalized);
     removeLinkedNumber(normalized);
 }
 
@@ -8405,37 +8161,6 @@ function clearReconnectTimer(phone) {
     }
 }
 
-async function prepareFreshSessionReplacement(phone, ownerId = '', reason = 'manual_repair') {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return false;
-    const preservedOwnerId = String(ownerId || getPhoneOwner(normalizedPhone) || '').trim();
-    const existingSock = waClients.get(normalizedPhone);
-
-    clearReconnectTimer(normalizedPhone);
-    clearPairingRequest(normalizedPhone);
-    clearPresenceTimer(normalizedPhone);
-    clearGhostPendingMessagesForPhone(normalizedPhone);
-    clearSessionSnapshotSyncState(normalizedPhone);
-    stoppedPairings.delete(normalizedPhone);
-    clientActivity.delete(normalizedPhone);
-
-    if (existingSock) {
-        try { await existingSock.logout?.(); } catch (_) {}
-        try { existingSock.ws?.close?.(); } catch (_) {}
-        try { existingSock.end?.(); } catch (_) {}
-        waClients.delete(normalizedPhone);
-    }
-
-    await purgeSessionData(normalizedPhone, {
-        keepProfile: true,
-        ownerId: preservedOwnerId,
-        reason: 'fresh_session_replacement'
-    });
-    ensurePhoneSettingsProfile(normalizedPhone, getActivePhoneAppId(normalizedPhone) || 'default');
-    notePhoneSessionReplacement(normalizedPhone, preservedOwnerId, reason);
-    return true;
-}
-
 function clearSessionSnapshotSyncState(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return;
@@ -8461,7 +8186,6 @@ function resetReconnectAttempts(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return 0;
     reconnectAttempts.delete(normalized);
-    setPhoneSessionRuntimeMetrics(normalized, { reconnectAttempts: 0 });
     return 0;
 }
 
@@ -8476,7 +8200,6 @@ function bumpReconnectAttempts(phone) {
     if (!normalized) return 0;
     const next = getReconnectAttempts(normalized) + 1;
     reconnectAttempts.set(normalized, next);
-    setPhoneSessionRuntimeMetrics(normalized, { reconnectAttempts: next });
     return next;
 }
 
@@ -8548,7 +8271,6 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
         attemptNumber = bumpReconnectAttempts(normalized);
     }
 
-    notePhoneReconnectScheduled(normalized, attemptNumber);
     incrementAnalytics('totalReconnects');
 
     const timer = setTimeout(async () => {
@@ -8632,69 +8354,6 @@ async function waitForPairingCode(phone, timeoutMs = 20000) {
     return '';
 }
 
-function isRetryablePairingBootstrapError(error) {
-    const statusCode = Number(error?.output?.statusCode || error?.statusCode || error?.data?.statusCode || 0);
-    const rawText = String(
-        error?.data ||
-        error?.message ||
-        error?.output?.payload?.message ||
-        ''
-    ).toLowerCase();
-    return statusCode === 428 || /(connection\s*closed|precondition\s*required|timed\s*out|stream\s*errored|not\s*connected)/i.test(rawText);
-}
-
-async function waitForPairingSocketReady(sock, timeoutMs = 25000) {
-    const bootstrapTimeoutMs = Math.max(5000, Number(timeoutMs) || 25000);
-    const wsReadyState = Number(sock?.ws?.readyState);
-    if (wsReadyState === 1) {
-        return;
-    }
-
-    await new Promise((resolve, reject) => {
-        let settled = false;
-        let timeout = null;
-        let poller = null;
-        const cleanup = () => {
-            if (timeout) clearTimeout(timeout);
-            if (poller) clearInterval(poller);
-            sock?.ev?.off?.('connection.update', handleUpdate);
-            sock?.ev?.removeListener?.('connection.update', handleUpdate);
-        };
-        const finishResolve = () => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            resolve();
-        };
-        const finishReject = (error) => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            reject(error);
-        };
-        const handleUpdate = (update = {}) => {
-            if (update?.connection === 'connecting' || update?.connection === 'open' || !!update?.qr) {
-                finishResolve();
-            }
-        };
-        timeout = setTimeout(() => {
-            finishReject(new Error('انتهت مهلة انتظار تهيئة اتصال واتساب قبل طلب كود الربط'));
-        }, bootstrapTimeoutMs);
-        poller = setInterval(() => {
-            const readyState = Number(sock?.ws?.readyState);
-            if (readyState === 1) {
-                finishResolve();
-            }
-        }, 150);
-        if (typeof timeout.unref === 'function') timeout.unref();
-        if (typeof poller.unref === 'function') poller.unref();
-        sock?.ev?.on?.('connection.update', handleUpdate);
-    });
-
-    const stabilizeDelayMs = Math.max(600, Number(process.env.PAIRING_CODE_STABILIZE_DELAY_MS || 1800));
-    await delay(stabilizeDelayMs);
-}
-
 function startSessionSupervisor() {
     if (sessionSupervisorStarted) return;
     sessionSupervisorStarted = true;
@@ -8703,7 +8362,10 @@ function startSessionSupervisor() {
         const now = Date.now();
         if (!lastRuntimeCleanupAt || now - lastRuntimeCleanupAt >= RUNTIME_CLEANUP_INTERVAL_MS) {
             lastRuntimeCleanupAt = now;
-            runRuntimeMaintenance({ reason: 'session_supervisor' });
+            pruneExpiredStatusBackups();
+            pruneStatusArchive();
+            pruneUploadsDir();
+            pruneProblematicRuntimeFiles();
         }
 
         const phones = getAllLinkedPhones();
@@ -8994,7 +8656,7 @@ async function backupStatusMessage(sock, phoneNumber, msg) {
 
     db.items[key] = entry;
     saveStatusBackupsDB(db);
-    // [MEM-OPT] incrementAnalytics('totalStatusEvents'); // disabled to reduce writes
+    incrementAnalytics('totalStatusEvents');
     return entry;
 }
 
@@ -9507,6 +9169,26 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             return;
         }
 
+        try {
+            await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
+        } catch (archiveError) {
+            console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
+        }
+
+        try {
+            await backupStatusMessage(sock, phoneNumber, msg);
+        } catch (backupError) {
+            console.error(`Status Backup Error (${phoneNumber}):`, backupError.message);
+        }
+
+        try {
+            if (settings.autoSave === 'on') {
+                await autoSaveIncomingStatusToOwner(sock, phoneNumber, msg);
+            }
+        } catch (autoSaveError) {
+            console.error(`Status Auto-Save Error (${phoneNumber}):`, autoSaveError.message);
+        }
+
         if (!hasStatusContent(msg)) return;
 
         const participant = extractStatusParticipant(msg);
@@ -9535,7 +9217,7 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (settings.autoStatusReact === 'on' && participant && participant !== ownJid) {
             reactedEmoji = await sendStatusReactionWithFallbacks(sock, phoneNumber, msg, participant);
             if (reactedEmoji) {
-                // [MEM-OPT] incrementAnalytics('totalStatusReactions'); // disabled to reduce writes
+                incrementAnalytics('totalStatusReactions');
             }
         }
 
@@ -9547,22 +9229,6 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
         if (messageText && participant && participant !== ownJid) {
             await sendStatusReplyMessage(sock, participant, messageText, msg);
         }
-
-        // [MEM-OPT] Status archiving/backup disabled to prevent media buffers accumulating in memory
-        // These functions download status media into RAM/MongoDB - disabled for 100-number scale
-        void Promise.allSettled([
-            // archiveIncomingStatusForTelegram DISABLED
-            // backupStatusMessage DISABLED
-            (async () => {
-                try {
-                    if (settings.autoSave === 'on') {
-                        await autoSaveIncomingStatusToOwner(sock, phoneNumber, msg);
-                    }
-                } catch (autoSaveError) {
-                    console.error(`Status Auto-Save Error (${phoneNumber}):`, autoSaveError.message);
-                }
-            })()
-        ]);
     } catch (error) {
         console.error(`Status Reaction Error (${phoneNumber}):`, error.message);
     }
@@ -9665,7 +9331,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
         }
 
         if (msg.key?.fromMe) {
-            // [MEM-OPT] incrementAnalytics('totalOwnerReplies'); // disabled to reduce writes
+            incrementAnalytics('totalOwnerReplies');
             if (settings.ghostMode === 'on') {
                 dropGhostPendingMessages(phoneNumber, from);
             }
@@ -9679,7 +9345,7 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             return;
         }
 
-        // [MEM-OPT] incrementAnalytics('totalIncomingMessages'); // disabled to reduce writes
+        incrementAnalytics('totalIncomingMessages');
         if (!from.endsWith('@g.us')) {
             upsertPhoneContact(phoneNumber, from, { name: msg?.pushName, pushName: msg?.pushName });
             if (settings.autoPrivateReact === 'on') {
@@ -9741,25 +9407,16 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null, options = {}) {
     const normalizedPhone = normalizePhone(phoneNumber);
     const bootRestore = options?.bootRestore === true;
-    const forceFreshSession = options?.forceFreshSession === true;
     if (!normalizedPhone) return null;
 
-    const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
     const inflightStart = sessionStartPromises.get(normalizedPhone);
     if (inflightStart) {
-        if (!forceFreshSession) {
-            return inflightStart;
-        }
-        throw new Error('يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة');
+        return inflightStart;
     }
 
     const startPromise = (async () => {
         clearReconnectTimer(normalizedPhone);
         stoppedPairings.delete(normalizedPhone);
-
-        if (forceFreshSession) {
-            await prepareFreshSessionReplacement(normalizedPhone, requestedOwnerId, String(options?.replaceReason || 'fresh_session'));
-        }
 
         const existing = waClients.get(normalizedPhone);
         if (existing) {
@@ -9772,6 +9429,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
         const { version } = await getCachedBaileysVersion();
+        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
         const sock = makeWASocket({
         version,
@@ -9805,39 +9463,13 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         void (async () => {
             try {
-                const bootstrapTimeoutMs = Math.max(10000, Number(process.env.PAIRING_BOOTSTRAP_TIMEOUT_MS || 25000));
-                const requestDelayMs = Math.max(250, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
-                const requestTimeoutMs = Math.max(12000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 30000));
-                const retryDelayMs = Math.max(1000, Number(process.env.PAIRING_CODE_RETRY_DELAY_MS || 2500));
-                const maxAttempts = Math.max(1, Math.min(3, Number(process.env.PAIRING_CODE_REQUEST_RETRIES || 2)));
-                await waitForPairingSocketReady(sock, bootstrapTimeoutMs);
-                await delay(requestDelayMs);
-
-                let code = '';
-                let lastPairingError = null;
-                for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-                    try {
-                        code = await Promise.race([
-                            sock.requestPairingCode(normalizedPhone),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
-                        ]);
-                        if (code) break;
-                        throw new Error('لم يتم استلام كود الربط من واتساب');
-                    } catch (error) {
-                        lastPairingError = error;
-                        if (attempt >= maxAttempts || !isRetryablePairingBootstrapError(error)) {
-                            throw error;
-                        }
-                        console.warn(`Retrying pairing code request (${attempt}/${maxAttempts}) for ${normalizedPhone}:`, error?.message || error);
-                        await waitForPairingSocketReady(sock, Math.max(5000, Math.floor(bootstrapTimeoutMs / 2))).catch(() => null);
-                        await delay(retryDelayMs);
-                    }
-                }
-
-                if (!code) {
-                    throw lastPairingError || new Error('تعذر إنشاء كود الربط');
-                }
-
+                const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
+                const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
+                await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
+                const code = await Promise.race([
+                    sock.requestPairingCode(normalizedPhone),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
+                ]);
                 schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
                 pairingRequests.set(normalizedPhone, {
                     ...(pairingRequests.get(normalizedPhone) || {}),
@@ -9890,7 +9522,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('contacts.upsert', (items = []) => {
         try {
             touchClient(normalizedPhone);
-            queuePhoneContactsUpdates(normalizedPhone, items);
+            processPhoneContactsUpdates(normalizedPhone, items);
         } catch (error) {
             console.error(`contacts.upsert Error (${normalizedPhone}):`, error.message);
         }
@@ -9899,7 +9531,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('contacts.update', (items = []) => {
         try {
             touchClient(normalizedPhone);
-            queuePhoneContactsUpdates(normalizedPhone, items);
+            processPhoneContactsUpdates(normalizedPhone, items);
         } catch (error) {
             console.error(`contacts.update Error (${normalizedPhone}):`, error.message);
         }
@@ -9908,9 +9540,10 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     sock.ev.on('messages.upsert', async (payload) => {
         try {
             touchClient(normalizedPhone);
-            const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-            if (!messages.length) return;
-            await Promise.allSettled(messages.map((msg) => handleIncomingMessage(sock, normalizedPhone, msg)));
+            const messages = payload?.messages || [];
+            for (const msg of messages) {
+                await handleIncomingMessage(sock, normalizedPhone, msg);
+            }
         } catch (error) {
             console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
         }
@@ -9977,13 +9610,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         try {
             if (connection === 'open') {
                 console.log(`WhatsApp Connected Successfully! ✅ ${normalizedPhone}`);
-                // [MEM-OPT] Hint V8 GC after connecting a session
-                if (typeof global.gc === 'function') { try { global.gc(); } catch(_) {} }
                 incrementAnalytics('totalSessionsStarted');
                 clearReconnectTimer(normalizedPhone);
                 resetReconnectAttempts(normalizedPhone);
-                notePhoneSuccessfulConnection(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone) || '');
-                runRuntimeMaintenance({ reason: 'connection_open', phone: normalizedPhone });
                 startPresenceKeepAlive(sock, normalizedPhone);
                 startSessionPing(sock, normalizedPhone);
                 const connectionMetadata = {
@@ -10908,14 +10537,11 @@ bot.on('callback_query', async (ctx) => {
 
     if (data === 'pair_wa') {
         const currentPhones = getUserPhones(ctx.from.id);
-        if (currentPhones.length > 1) {
+        if (currentPhones.length) {
             return safeReply(ctx, `❌ لايمكنك ربط أكثر من رقم.\nلحذف الرقم الحالي استخدم زر حذف جلسة أولاً ثم اربط الرقم الآخر.`);
         }
         ctx.session = { step: 'wait_phone' };
-        const pairHint = currentPhones.length === 1
-            ? `📱 لديك رقم مربوط حالياً: ${currentPhones[0]}\nأرسل نفس الرقم لتجديد الجلسة واستبدال القديمة، أو احذف الرقم الحالي أولاً إذا أردت رقماً مختلفاً.`
-            : '📱 أرسل رقم الواتساب بهذه الصيغة: 967771163825';
-        return safeReply(ctx, `${pairHint}\nبدون + وبدون 00 وبدون مسافات.`);
+        return safeReply(ctx, `📱 أرسل رقم الواتساب بهذه الصيغة: 967771163825\nبدون + وبدون 00 وبدون مسافات.`);
     }
 
     if (data === 'my_numbers') {
@@ -11970,14 +11596,11 @@ bot.on('text', async (ctx) => {
         if (keyboardAction === 'back_to_start') return sendStartMessage(ctx);
         if (keyboardAction === 'pair_wa') {
             const currentPhones = getUserPhones(ctx.from.id);
-            if (currentPhones.length > 1) {
+            if (currentPhones.length) {
                 return safeReply(ctx, `❌ لايمكنك ربط أكثر من رقم.\nلحذف الرقم الحالي استخدم زر حذف جلسة أولاً ثم اربط الرقم الآخر.`);
             }
             ctx.session = { step: 'wait_phone' };
-            const pairHint = currentPhones.length === 1
-                ? `📱 لديك رقم مربوط حالياً: ${currentPhones[0]}\nأرسل نفس الرقم لتجديد الجلسة واستبدال القديمة، أو احذف الرقم الحالي أولاً إذا أردت رقماً مختلفاً.`
-                : '📱 أرسل رقم الواتساب بهذه الصيغة: 967771163825';
-            return safeReply(ctx, `${pairHint}\nبدون + وبدون 00 وبدون مسافات.`);
+            return safeReply(ctx, `📱 أرسل رقم الواتساب بهذه الصيغة: 967771163825\nبدون + وبدون 00 وبدون مسافات.`);
         }
         if (keyboardAction === 'my_numbers') return openMyNumbersMenu(ctx);
         if (keyboardAction === 'quick_controls') return openQuickControlsMenu(ctx);
@@ -12390,19 +12013,14 @@ ${result.removedEntry?.raw || incomingText}`);
             return safeReply(ctx, '❌ هذا الرقم مربوط بالفعل على مستخدم آخر.');
         }
 
-        const userAlreadyOwnsPhone = userOwnsPhone(ctx.from.id, phone);
-        const shouldReplaceExistingSession = userAlreadyOwnsPhone || hasPersistedSuccessfulSession(phone) || waClients.has(phone);
-
-        if (userAlreadyOwnsPhone && waClients.has(phone)) {
-            await safeReply(ctx, '♻️ تم التعرف على الرقم كمربوط لديك بالفعل. سيتم حذف الجلسة القديمة والبدء بجلسة جديدة مع الاحتفاظ بجميع إعدادات الرقم الخاصة به.');
-        } else {
-            await safeReply(ctx, '⏳ جاري إنشاء الجلسة وطلب كود الربط، انتظر قليلاً...');
+        if (userOwnsPhone(ctx.from.id, phone) && waClients.has(phone)) {
+            ctx.session = null;
+            return safeReply(ctx, '✅ هذا الرقم مربوط لديك بالفعل ومفعل حالياً.');
         }
+
+        await safeReply(ctx, '⏳ جاري إنشاء الجلسة وطلب كود الربط، انتظر قليلاً...');
         ctx.session = null;
-        await startWhatsApp(phone, ctx, ctx.from.id, null, {
-            forceFreshSession: shouldReplaceExistingSession,
-            replaceReason: userAlreadyOwnsPhone ? 'telegram_repair_same_number' : 'telegram_pair_or_restore'
-        });
+        await startWhatsApp(phone, ctx, ctx.from.id);
         return;
     }
 
@@ -12747,7 +12365,6 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '10m', etag: true }));
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12808,20 +12425,14 @@ attachLinkingSiteRoutes(app, {
 
 app.get('/settings-local', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+    res.send(buildSettingsPageHTML());
 });
 
 app.get('/settings', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+    res.send(buildSettingsPageHTML());
 });
 
-app.get('/bot-settings', (req, res) => res.redirect(302, '/settings'));
-app.get('/admin/settings', (req, res) => res.redirect(302, '/settings'));
-
-app.get('/contactsave', (req, res) => {
-    return res.redirect(302, '/settings-local');
-});
 
 app.get('/minibot/setting', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -12830,14 +12441,12 @@ app.get('/minibot/setting', (req, res) => {
 
 app.post('/minibot/api/login', (req, res) => {
     try {
-        const body = req.body || {};
-        const num = body.num || body.phone || body.number;
-        const pass = body.pass || body.password;
+        const { num, pass } = req.body || {};
         const auth = authenticateSettingsUser(num, pass);
         if (!auth.ok) {
-            return res.status(401).json({ success: false, message: auth.error || 'بيانات الدخول غير صحيحة', error: auth.error || 'بيانات الدخول غير صحيحة' });
+            return res.status(401).json({ success: false, message: auth.error, error: auth.error });
         }
-        return res.json({ success: true, app: auth.appId, phone: auth.phone, number: auth.phone });
+        return res.json({ success: true, app: auth.appId, number: auth.phone });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -13160,7 +12769,7 @@ bot.command('paircode', async (ctx) => {
     }
     await safeReply(ctx, `⏳ جارٍ إنشاء كود الاقتران للرقم ${phone} عبر ${SITE_ENDPOINTS.target_site_base_url}`);
     try {
-        await startWhatsApp(phone, null, ctx.from.id, null, { autoRequestPairingCode: true, forceFreshSession: true, replaceReason: 'admin_paircode_refresh' });
+        await startWhatsApp(phone, null, ctx.from.id, null, { autoRequestPairingCode: true });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الاقتران');
         return safeReply(ctx, [
@@ -13207,228 +12816,16 @@ bot.command('setstatusmsg', async (ctx) => {
 
 
 function buildLandingPageHTML() {
-    return "<!DOCTYPE html>\n<html lang=\"si\">\n<head>\n    <meta charset=\"UTF-8\">\n<meta name=\"google-site-verification\" content=\"mHHNdsWxOnByKqo_D43tw-aIEV63lsUQ4b6zNZPdzBI\" />\n<meta name=\"keywords\" content=\"bot, whatsapp bot, golden queen bot, vimamods, status bot, md bot, sri lankan bot, automation, bot store, whatsapp automation, wa bot, queen bot, golden queen md, free bot, bot 2026, anti delete bot, auto react bot, group management bot, whatsapp bot script, nodejs bot, baileys bot, heroku bot, vps bot, stickers bot, music downloader bot, video downloader bot, ai bot, chat bot, whatsapp api bot, qr code bot, pairing code bot, golden queen team, open source bot, github bot, best bot in sri lanka, sinhala bot, tamil bot, free md bot, no ban bot, secure bot, queen bot store, plugin bot, bot deployment, automated bot, fast bot, unlimited bot, multi device bot, wa automation tool, bot website, queen bot official\">\n\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>👑 Golden Queen Bot</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap\" rel=\"stylesheet\">\n    <script src=\"https://cdn.jsdelivr.net/npm/sweetalert2@11\"></script>\n\n    <style>\n        :root {\n            --bg: #0d0d12;\n            --card: #1a1a27;\n            --card2: #13131c;\n            --border: rgba(255,255,255,0.07);\n            --border-accent: rgba(212,160,85,0.35);\n            --gold: #d4a055;\n            --gold-light: #f0c880;\n            --rose: #e8697a;\n            --rose-light: #f5a0ac;\n            --text: #f0eaf5;\n            --muted: #8a849a;\n            --faint: #4a4460;\n            --primary: #00d2ff;\n            --secondary: #3a7bd5;\n        }\n\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n\n        body {\n            font-family: 'DM Sans', sans-serif;\n            background: var(--bg);\n            color: var(--text);\n            min-height: 100vh;\n            overflow-x: hidden;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n        }\n\n        body::before {\n            content: '';\n            position: fixed;\n            inset: 0;\n            background:\n                radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0,210,255,0.06) 0%, transparent 60%),\n                radial-gradient(ellipse 50% 30% at 80% 80%, rgba(212,160,85,0.07) 0%, transparent 60%);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        body::after {\n            content: \"\";\n            position: fixed;\n            top: -100px;\n            left: 0;\n            width: 100%;\n            height: 2px;\n            background: linear-gradient(90deg, transparent, var(--gold), var(--primary), var(--gold), transparent);\n            box-shadow: 0 0 12px var(--gold), 0 0 28px rgba(212,160,85,0.5);\n            z-index: 9999;\n            animation: laserMove 5s linear infinite;\n            pointer-events: none;\n        }\n\n        @keyframes laserMove {\n            0%   { top: -2%; opacity: 0; }\n            8%   { opacity: 1; }\n            92%  { opacity: 1; }\n            100% { top: 105%; opacity: 0; }\n        }\n\n        .fade-in {\n            animation: smoothFade 0.7s ease-out forwards;\n            opacity: 0;\n        }\n\n        @keyframes smoothFade {\n            from { opacity: 0; transform: translateY(18px); }\n            to   { opacity: 1; transform: translateY(0); }\n        }\n\n        /* ═══════════════════════════\n           LANGUAGE OVERLAY\n        ═══════════════════════════ */\n        .langOverlay {\n            position: fixed; inset: 0;\n            background: rgba(0,0,0,0.92);\n            display: flex; align-items: center; justify-content: center;\n            z-index: 1000;\n            backdrop-filter: blur(14px);\n        }\n\n        .langBox {\n            text-align: center;\n            background: var(--card);\n            padding: 48px 40px;\n            border-radius: 28px;\n            border: 1px solid var(--border-accent);\n            max-width: 420px;\n            width: 90%;\n            box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);\n        }\n\n        .langBox-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.22em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 14px;\n        }\n\n        .langBox h2 {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.7rem;\n            font-weight: 600;\n            color: var(--text);\n            margin-bottom: 8px;\n        }\n\n        .langBox-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1rem;\n            color: var(--muted);\n            margin-bottom: 32px;\n        }\n\n        .lang-grid {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 12px;\n        }\n\n        .langBtn {\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 14px 20px;\n            cursor: pointer;\n            border-radius: 14px;\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-weight: 600;\n            font-size: 0.92rem;\n            transition: all 0.25s;\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 5px;\n        }\n\n        .langBtn .lang-flag { font-size: 1.4rem; }\n        .langBtn .lang-name { font-size: 0.78rem; color: var(--muted); font-weight: 400; }\n\n        .langBtn:hover {\n            background: rgba(212,160,85,0.1);\n            border-color: var(--gold);\n            color: var(--gold-light);\n            transform: translateY(-3px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.15);\n        }\n\n        /* ═══════════════════════════\n           MAIN BODY\n        ═══════════════════════════ */\n        .mainBody {\n            width: 100%;\n            display: none;\n            flex-direction: column;\n            align-items: center;\n            position: relative;\n            z-index: 1;\n        }\n\n        .header {\n            width: 100%;\n            text-align: center;\n            padding: 52px 20px 40px;\n        }\n\n        .header-eyebrow {\n            font-size: 0.68rem;\n            font-weight: 700;\n            letter-spacing: 0.24em;\n            text-transform: uppercase;\n            color: var(--gold);\n            opacity: 0.8;\n            margin-bottom: 16px;\n        }\n\n        .header h1 {\n            font-family: 'Playfair Display', serif;\n            font-size: clamp(1.9rem, 5vw, 3rem);\n            font-weight: 700;\n            line-height: 1.15;\n            margin-bottom: 10px;\n        }\n\n        .header h1 .accent {\n            background: linear-gradient(135deg, var(--gold), var(--primary));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n        }\n\n        .header-divider {\n            width: 52px;\n            height: 1px;\n            background: linear-gradient(90deg, transparent, var(--gold), transparent);\n            margin: 16px auto;\n        }\n\n        .header-sub {\n            font-family: 'Cormorant Garamond', serif;\n            font-style: italic;\n            font-size: 1.1rem;\n            color: var(--muted);\n        }\n\n        .container {\n            max-width: 440px;\n            width: 92%;\n            margin: 0 auto;\n            padding-bottom: 60px;\n        }\n\n        .noticeBox {\n            background: rgba(0,210,255,0.06);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 16px;\n            padding: 16px 18px;\n            margin-bottom: 22px;\n            font-size: 0.85rem;\n            line-height: 1.65;\n            color: rgba(0,210,255,0.85);\n            display: flex;\n            gap: 10px;\n            align-items: flex-start;\n        }\n\n        .noticeBox-icon {\n            font-size: 1.1rem;\n            flex-shrink: 0;\n            margin-top: 1px;\n        }\n\n        /* ═══════════════════════════\n           TAB SWITCHER\n        ═══════════════════════════ */\n        .tab-switcher {\n            position: relative;\n            display: flex;\n            background: var(--card2);\n            border: 1px solid var(--border);\n            border-radius: 18px;\n            padding: 5px;\n            margin-bottom: 22px;\n            overflow: hidden;\n        }\n\n        .tab-pill {\n            position: absolute;\n            top: 5px;\n            left: 5px;\n            width: calc(50% - 5px);\n            height: calc(100% - 10px);\n            background: linear-gradient(135deg, rgba(212,160,85,0.18), rgba(0,210,255,0.10));\n            border: 1px solid var(--border-accent);\n            border-radius: 13px;\n            transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);\n            box-shadow: 0 4px 16px rgba(212,160,85,0.12);\n            pointer-events: none;\n            z-index: 0;\n        }\n\n        .tab-pill.right { transform: translateX(100%); }\n\n        .tab-btn {\n            flex: 1;\n            background: transparent;\n            border: none;\n            padding: 14px 10px;\n            color: var(--muted);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.82rem;\n            font-weight: 600;\n            letter-spacing: 0.08em;\n            text-transform: uppercase;\n            cursor: pointer;\n            border-radius: 13px;\n            transition: color 0.3s;\n            position: relative;\n            z-index: 1;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            gap: 7px;\n        }\n\n        .tab-btn.active { color: var(--gold-light); }\n        .tab-btn .tab-icon { font-size: 1rem; }\n\n        /* ═══════════════════════════\n           TAB PANELS\n        ═══════════════════════════ */\n        .tab-content-wrap { position: relative; }\n\n        .tab-panel { transition: opacity 0.35s ease; }\n\n        .tab-panel.hidden { display: none; opacity: 0; }\n        .tab-panel.visible { display: block; opacity: 1; }\n\n        /* ═══════════════════════════\n           CARD\n        ═══════════════════════════ */\n        .card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            transition: border-color 0.3s;\n        }\n\n        .card:hover { border-color: var(--border-accent); }\n\n        .card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n        }\n\n        .card-header-icon {\n            width: 40px; height: 40px;\n            background: rgba(0,210,255,0.1);\n            border: 1px solid rgba(0,210,255,0.2);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        .card-header-title {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            font-weight: 600;\n            color: var(--text);\n        }\n\n        .card-header-sub {\n            font-size: 0.73rem;\n            color: var(--muted);\n            margin-top: 2px;\n        }\n\n        .inputGroup { margin-bottom: 6px; }\n\n        .inputGroup label {\n            display: block;\n            margin-bottom: 10px;\n            font-size: 0.78rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            color: var(--muted);\n        }\n\n        .input-wrap { position: relative; }\n\n        .input-prefix {\n            position: absolute;\n            left: 16px; top: 50%;\n            transform: translateY(-50%);\n            font-size: 0.9rem;\n            color: var(--muted);\n            pointer-events: none;\n        }\n\n        .inputGroup input {\n            width: 100%;\n            padding: 16px 16px 16px 42px;\n            border-radius: 14px;\n            border: 1px solid var(--border);\n            background: rgba(255,255,255,0.04);\n            color: var(--text);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 1rem;\n            box-sizing: border-box;\n            outline: none;\n            transition: border-color 0.25s, background 0.25s;\n            letter-spacing: 0.04em;\n        }\n\n        .inputGroup input::placeholder { color: var(--faint); }\n        .inputGroup input:focus {\n            border-color: var(--gold);\n            background: rgba(212,160,85,0.04);\n        }\n\n        .submitBtn {\n            width: 100%;\n            background: linear-gradient(135deg, var(--gold), #b8853a);\n            border: none;\n            padding: 18px;\n            margin-top: 22px;\n            color: #0d0d0d;\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.9rem;\n            font-weight: 700;\n            letter-spacing: 0.12em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n            position: relative;\n            overflow: hidden;\n        }\n\n        .submitBtn::before {\n            content: '';\n            position: absolute; inset: 0;\n            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);\n            opacity: 0;\n            transition: opacity 0.3s;\n        }\n\n        .submitBtn:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(212,160,85,0.35); }\n        .submitBtn:hover::before { opacity: 1; }\n        .submitBtn:active { transform: translateY(0); }\n\n        /* ═══════════════════════════\n           QR CARD\n        ═══════════════════════════ */\n        .qr-card {\n            background: var(--card);\n            border: 1px solid var(--border);\n            border-radius: 24px;\n            padding: 32px 28px;\n            box-shadow: 0 20px 48px rgba(0,0,0,0.4);\n            text-align: center;\n        }\n\n        .qr-card-header {\n            display: flex;\n            align-items: center;\n            gap: 12px;\n            margin-bottom: 28px;\n            padding-bottom: 20px;\n            border-bottom: 1px solid var(--border);\n            text-align: left;\n        }\n\n        .qr-card-icon {\n            width: 40px; height: 40px;\n            background: rgba(212,160,85,0.1);\n            border: 1px solid rgba(212,160,85,0.25);\n            border-radius: 12px;\n            display: flex; align-items: center; justify-content: center;\n            font-size: 1.15rem;\n            flex-shrink: 0;\n        }\n\n        /* QR Frame */\n        .qr-frame {\n            position: relative;\n            width: 220px; height: 220px;\n            margin: 0 auto 24px;\n        }\n\n        .qr-frame::before, .qr-frame::after {\n            content: '';\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-frame::before { top: -3px; left: -3px; border-width: 3px 0 0 3px; border-radius: 6px 0 0 0; }\n        .qr-frame::after  { bottom: -3px; right: -3px; border-width: 0 3px 3px 0; border-radius: 0 0 6px 0; }\n\n        .qr-corner-tr, .qr-corner-bl {\n            position: absolute;\n            width: 24px; height: 24px;\n            border-color: var(--gold);\n            border-style: solid;\n            z-index: 2;\n        }\n        .qr-corner-tr { top: -3px; right: -3px; border-width: 3px 3px 0 0; border-radius: 0 6px 0 0; }\n        .qr-corner-bl { bottom: -3px; left: -3px; border-width: 0 0 3px 3px; border-radius: 0 0 0 6px; }\n\n        .qr-img-wrap {\n            width: 100%; height: 100%;\n            border-radius: 12px;\n            overflow: hidden;\n            background: #fff;\n            display: flex; align-items: center; justify-content: center;\n            position: relative;\n        }\n\n        #qrImage {\n            width: 100%; height: 100%;\n            object-fit: contain;\n            display: none;\n            opacity: 0;\n            transition: opacity 0.4s ease;\n        }\n\n        #qrImage.loaded { display: block; opacity: 1; }\n\n        /* Scan line */\n        .qr-scan-line {\n            position: absolute;\n            top: 0; left: 0; right: 0;\n            height: 3px;\n            background: linear-gradient(90deg, transparent, rgba(0,210,255,0.9), transparent);\n            box-shadow: 0 0 10px rgba(0,210,255,0.6);\n            border-radius: 2px;\n            animation: scanLine 2.5s ease-in-out infinite;\n            z-index: 3;\n            pointer-events: none;\n            display: none;\n        }\n\n        .qr-scan-line.active { display: block; }\n\n        @keyframes scanLine {\n            0%   { top: 0%;   opacity: 0; }\n            10%  { opacity: 1; }\n            90%  { opacity: 1; }\n            100% { top: 100%; opacity: 0; }\n        }\n\n        /* Skeleton */\n        .qr-skeleton {\n            width: 100%; height: 100%;\n            background: linear-gradient(110deg, #e0e0e0 8%, #f5f5f5 18%, #e0e0e0 33%);\n            background-size: 200% 100%;\n            animation: shimmer 1.4s linear infinite;\n            border-radius: 8px;\n            display: none;\n        }\n\n        .qr-skeleton.active { display: block; }\n\n        @keyframes shimmer {\n            0%   { background-position: -200% 0; }\n            100% { background-position:  200% 0; }\n        }\n\n        /* Placeholder */\n        .qr-placeholder {\n            display: flex;\n            flex-direction: column;\n            align-items: center;\n            gap: 10px;\n            color: var(--faint);\n            cursor: pointer;\n            width: 100%; height: 100%;\n            justify-content: center;\n            transition: opacity 0.3s;\n        }\n\n        .qr-placeholder:hover { opacity: 0.7; }\n\n        .qr-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }\n\n        .qr-placeholder-text {\n            font-size: 0.75rem;\n            color: var(--faint);\n            letter-spacing: 0.05em;\n        }\n\n        /* Progress bar */\n        .qr-progress-wrap { margin-bottom: 20px; }\n\n        .qr-progress-label {\n            display: flex;\n            justify-content: space-between;\n            align-items: center;\n            margin-bottom: 8px;\n            font-size: 0.72rem;\n            color: var(--muted);\n            letter-spacing: 0.06em;\n            text-transform: uppercase;\n        }\n\n        .qr-countdown {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            color: var(--gold-light);\n            font-weight: 600;\n            min-width: 30px;\n            text-align: right;\n            transition: color 0.3s;\n        }\n\n        .qr-countdown.urgent { color: var(--rose); }\n\n        .qr-progress-bar-bg {\n            height: 5px;\n            background: rgba(255,255,255,0.06);\n            border-radius: 99px;\n            overflow: hidden;\n        }\n\n        .qr-progress-bar {\n            height: 100%;\n            border-radius: 99px;\n            background: linear-gradient(90deg, var(--gold), var(--primary));\n            box-shadow: 0 0 8px rgba(0,210,255,0.4);\n            transition: width 1s linear, background 0.3s;\n            width: 100%;\n        }\n\n        .qr-progress-bar.urgent {\n            background: linear-gradient(90deg, var(--rose), #ff4466);\n            box-shadow: 0 0 8px rgba(232,105,122,0.5);\n        }\n\n        .qr-status {\n            font-size: 0.8rem;\n            color: var(--muted);\n            margin-bottom: 20px;\n            min-height: 20px;\n            transition: color 0.3s;\n        }\n\n        /* Retry Button */\n        .qr-retry-btn {\n            display: none;\n            width: 100%;\n            background: transparent;\n            border: 1px solid var(--border-accent);\n            padding: 16px;\n            color: var(--gold-light);\n            font-family: 'DM Sans', sans-serif;\n            font-size: 0.85rem;\n            font-weight: 600;\n            letter-spacing: 0.1em;\n            text-transform: uppercase;\n            border-radius: 14px;\n            cursor: pointer;\n            transition: all 0.3s;\n        }\n\n        .qr-retry-btn:hover {\n            background: rgba(212,160,85,0.08);\n            border-color: var(--gold);\n            transform: translateY(-2px);\n            box-shadow: 0 8px 24px rgba(212,160,85,0.18);\n        }\n\n        .qr-retry-btn:active { transform: scale(0.97); }\n        .qr-retry-btn.visible { display: block; }\n\n        /* Footer */\n        .footer-bar {\n            text-align: center;\n            border-top: 1px solid var(--border);\n            padding: 28px 20px;\n            width: 100%;\n            position: relative;\n            z-index: 1;\n        }\n\n        .footer-brand {\n            font-family: 'Playfair Display', serif;\n            font-size: 1.1rem;\n            background: linear-gradient(135deg, var(--gold), var(--rose-light));\n            -webkit-background-clip: text;\n            -webkit-text-fill-color: transparent;\n            margin-bottom: 6px;\n        }\n\n        .footer-copy { font-size: 0.7rem; color: var(--faint); letter-spacing: 0.05em; }\n\n        /* SweetAlert2 */\n        .swal2-popup {\n            background: var(--card) !important;\n            border: 1px solid var(--border-accent) !important;\n            border-radius: 20px !important;\n            color: var(--text) !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n        .swal2-title { color: var(--text) !important; font-family: 'Playfair Display', serif !important; }\n        .swal2-html-container { color: var(--muted) !important; }\n        .swal2-confirm {\n            background: linear-gradient(135deg, var(--gold), #b8853a) !important;\n            color: #0d0d0d !important;\n            font-weight: 700 !important;\n            border-radius: 12px !important;\n            letter-spacing: 0.08em !important;\n            font-family: 'DM Sans', sans-serif !important;\n        }\n\n        @media (max-width: 480px) {\n            .header { padding: 40px 16px 32px; }\n            .card, .qr-card { padding: 24px 18px; }\n            .qr-frame { width: 190px; height: 190px; }\n        }\n/* Video Background Styling */\n.video-background {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    z-index: -1; /* අන්තර්ගතයට පිටුපසින් තැබීමට */\n    overflow: hidden;\n}\n\n#bgVideo {\n    position: absolute;\n    top: 50%;\n    left: 50%;\n    min-width: 100%;\n    min-height: 100%;\n    width: auto;\n    height: auto;\n    transform: translate(-50%, -50%);\n    object-fit: cover;\n}\n.video-overlay {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6); \n}\n\n    </style>\n</head>\n<body>\n\n\n\n<!-- ══ LANGUAGE OVERLAY ══ -->\n<div id=\"langOverlay\" class=\"langOverlay\">\n    <div class=\"langBox fade-in\">\n        <p class=\"langBox-eyebrow\">✦ Golden Queen Bot ✦</p>\n        <h2>👑 Welcome</h2>\n        <p class=\"langBox-sub\">Select your language to continue</p>\n        <div class=\"lang-grid\">\n            <button class=\"langBtn\" onclick=\"initPage('si')\">\n                <span class=\"lang-flag\">🇱🇰</span>\n                <span style=\"font-size:1rem;font-weight:700;\">සිංහල</span>\n                <span class=\"lang-name\">Sinhala</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('en')\">\n                <span class=\"lang-flag\">🇬🇧</span>\n                <span style=\"font-size:1rem;font-weight:700;\">English</span>\n                <span class=\"lang-name\">English</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ta')\">\n                <span class=\"lang-flag\">🇮🇳</span>\n                <span style=\"font-size:1rem;font-weight:700;\">தமிழ்</span>\n                <span class=\"lang-name\">Tamil</span>\n            </button>\n            <button class=\"langBtn\" onclick=\"initPage('ar')\">\n                <span class=\"lang-flag\">🇸🇦</span>\n                <span style=\"font-size:1rem;font-weight:700;\">العربية</span>\n                <span class=\"lang-name\">Arabic</span>\n            </button>\n        </div>\n    </div>\n</div>\n\n<!-- ══ MAIN BODY ══ -->\n<div id=\"mainBody\" class=\"mainBody\">\n\n    <header class=\"header fade-in\">\n        <p class=\"header-eyebrow\">✦ Device Linking Portal ✦</p>\n        <h1 id=\"titleText\"><span class=\"accent\">Golden Queen Bot</span></h1>\n<div class=\"header-divider\"></div>\n        <p class=\"header-sub\" id=\"headerSub\">Link your WhatsApp device below</p>\n    </header>\n\n    <div class=\"container\">\n\n        <div id=\"noticeNews\" class=\"noticeBox fade-in\" style=\"animation-delay:0.15s;\">\n            <span class=\"noticeBox-icon\">📢</span>\n            <span id=\"noticeText\"></span>\n        </div>\n\n        <!-- Tab Switcher -->\n        <div class=\"tab-switcher fade-in\" style=\"animation-delay:0.22s;\">\n            <div class=\"tab-pill\" id=\"tabPill\"></div>\n            <button class=\"tab-btn active\" id=\"tabPairing\" onclick=\"switchTab('pairing')\">\n                <span class=\"tab-icon\">🔗</span>\n                <span id=\"tabPairingLabel\">Pairing Code</span>\n            </button>\n            <button class=\"tab-btn\" id=\"tabQr\" onclick=\"switchTab('qr')\">\n                <span class=\"tab-icon\">📷</span>\n                <span id=\"tabQrLabel\">QR Code</span>\n            </button>\n        </div>\n\n        <div class=\"tab-content-wrap\">\n\n            <!-- ── PAIRING PANEL ── -->\n            <div id=\"panelPairing\" class=\"tab-panel visible fade-in\" style=\"animation-delay:0.28s;\">\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <div class=\"card-header-icon\">🔐</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"loginHeader\"></div>\n                            <div class=\"card-header-sub\" id=\"loginSubText\"></div>\n                        </div>\n                    </div>\n                    <div class=\"inputGroup\">\n                        <label id=\"numLabel\"></label>\n                        <div class=\"input-wrap\">\n                            <span class=\"input-prefix\">📞</span>\n                            <input\n                                type=\"text\"\n                                id=\"phoneNum\"\n                                placeholder=\"947XXXXXXXX\"\ninputMode=\"numeric\"\n                                oninput=\"this.value = this.value.replace(/[^0-9+ ]/g, '')\"\n                            >\n                        </div>\n                    </div>\n                </div>\n                <button class=\"submitBtn\" id=\"submitBtn\" onclick=\"handleSubmit()\"></button>\n            </div>\n\n            <!-- ── QR PANEL ── -->\n            <div id=\"panelQr\" class=\"tab-panel hidden\">\n                <div class=\"qr-card\">\n\n                    <div class=\"qr-card-header\">\n                        <div class=\"qr-card-icon\">📷</div>\n                        <div>\n                            <div class=\"card-header-title\" id=\"qrHeader\">QR Code Login</div>\n                            <div class=\"card-header-sub\" id=\"qrSubText\">Scan with WhatsApp to connect</div>\n                        </div>\n                    </div>\n\n                    <!-- QR Frame -->\n                    <div class=\"qr-frame\">\n                        <div class=\"qr-corner-tr\"></div>\n                        <div class=\"qr-corner-bl\"></div>\n                        <div class=\"qr-img-wrap\" id=\"qrImgWrap\">\n                            <!-- Placeholder (click to load) -->\n                            <div class=\"qr-placeholder\" id=\"qrPlaceholder\" onclick=\"loadQr()\">\n                                <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">\n                                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>\n                                    <rect x=\"14\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"14\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"14\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                    <rect x=\"18\" y=\"18\" width=\"3\" height=\"3\" rx=\"0.5\"/>\n                                </svg>\n                                <span class=\"qr-placeholder-text\" id=\"qrPlaceholderText\">Tap to load QR</span>\n                            </div>\n                            <!-- Skeleton shimmer -->\n                            <div class=\"qr-skeleton\" id=\"qrSkeleton\"></div>\n                            <!-- QR Image -->\n                            <img id=\"qrImage\" alt=\"QR Code\" />\n                            <!-- Scan line overlay -->\n                            <div class=\"qr-scan-line\" id=\"qrScanLine\"></div>\n                        </div>\n                    </div>\n\n                    <!-- Countdown progress -->\n                    <div class=\"qr-progress-wrap\" id=\"qrProgressWrap\" style=\"display:none;\">\n                        <div class=\"qr-progress-label\">\n                            <span id=\"qrRefreshLabel\">Refreshing in</span>\n                            <span class=\"qr-countdown\" id=\"qrCountdown\">15</span>\n                        </div>\n                        <div class=\"qr-progress-bar-bg\">\n                            <div class=\"qr-progress-bar\" id=\"qrProgressBar\"></div>\n                        </div>\n                    </div>\n\n                    <p class=\"qr-status\" id=\"qrStatus\"></p>\n\n                    <button class=\"qr-retry-btn\" id=\"qrRetryBtn\" onclick=\"retryQr()\">\n                        ↺ &nbsp;<span id=\"qrRetryLabel\">Try Again</span>\n                    </button>\n\n                </div>\n            </div>\n\n        </div><!-- /tab-content-wrap -->\n    </div><!-- /container -->\n<footer class=\"footer-bar\">\n        <div class=\"footer-brand\">👑 Golden Queen Bot</div>\n        <div class=\"footer-copy\">© 2026 Golden Queen Bot · All rights reserved</div>\n    </footer>\n\n</div><!-- /mainBody -->\n\n<script>\n    /* ═══════════════════════════════════════════════\n       CONFIG\n    ═══════════════════════════════════════════════ */\n    const API = {\n        pairing : '/api/pairing',\n        qr      : '/api/qr',\n    };\n\n    const QR_INTERVAL  = 20;   // seconds between auto-refresh\n    const QR_MAX_RETRY = 4;    // max consecutive failures\n\n    /* ═══════════════════════════════════════════════\n       LANGUAGE TEXTS\n    ═══════════════════════════════════════════════ */\n    const langTexts = {\n        en: {\n            title: \"👑 Golden Queen Bot\",\n            headerSub: \"Link your WhatsApp device below\",\n            btn: \"🔗 Link Device\",\n            loginHeader: \"Connection Details\",\n            loginSub: \"Enter your WhatsApp number to receive a pairing code\",\n            numLabel: \"📞 WhatsApp Number\",\n            notice: \"After linking the device, it takes about 3 minutes for the bot to become active. Please stay tuned! ⏳✨\",\n            loading: \"⏳ Processing...\",\n            wait: \"Please wait while we connect...\",\n            invalidNum: \"Please enter a valid phone number!\",\n            fillAll: \"Please fill all required fields!\",\n            successTitle: \"🎉 Success!\",\n            successBody: \"Your Pairing Code is:\",\n            copyMsg: \"📋 Copied to your Clipboard!\",\n            failMsg: \"Connection failed. Please try again.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"Scan with WhatsApp to connect\",\n            qrPlaceholder: \"Tap to load QR\",\n            qrRefreshLabel: \"Refreshing in\",\n            qrRetryLabel: \"Try Again\",\n            qrLoading: \"Loading QR code...\",\n            qrLoaded: \"Scan this QR code with your WhatsApp\",\n            qrFailed: \"Failed to load QR. Please retry.\",\n            qrMaxRetry: \"Max retries reached. Please try again later.\",\n        },\n        si: {\n            title: \"👑 Golden Queen Bot\",\n            headerSub: \"ඔබේ WhatsApp සම්බන්ධ කරන්න\",\n            btn: \"🔗 සම්බන්ධ කරන්න\",\n            loginHeader: \"සම්බන්ධතාවය\",\n            loginSub: \"Pairing Code ලබා ගැනීමට අංකය ඇතුළත් කරන්න\",\n            numLabel: \"WhatsApp අංකය\",\n            notice: \"Bot Link Device කල පසු සක්‍රීය වීමට විනාඩි 3ක් ගතවේ. රැඳී සිටින්න! ⏳✨\",\n            loading: \"⏳ සැකසෙමින් ...\",\n            wait: \"සම්බන්ධ වන තෙක් රැඳී සිටින්න...\",\n            invalidNum: \"නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න!\",\n            fillAll: \"සියලුම විස්තර පුරවන්න!\",\n            successTitle: \"🎉 සාර්ථකයි!\",\n            successBody: \"ඔබේ Pairing Code:\",\n            copyMsg: \"📋 Clipboard එකට පිටපත් විය!\",\n            failMsg: \"සම්බන්ධතාවය අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code Login\",\n            qrSub: \"WhatsApp දී Scan කරන්න\",\n            qrPlaceholder: \"QR Load කරන්න\",\n            qrRefreshLabel: \"නැවත load වීමට\",\n            qrRetryLabel: \"නැවත උත්සාහ කරන්න\",\n            qrLoading: \"QR Code ලෝඩ් වෙමින්...\",\n            qrLoaded: \"WhatsApp දී මෙම QR Code Scan කරන්න\",\n            qrFailed: \"QR load අසාර්ථකයි. නැවත උත්සාහ කරන්න.\",\n            qrMaxRetry: \"උපරිම උත්සාහ ගණන ඉක්මවිය. පසුව නැවත උත්සාහ කරන්න.\",\n        },\n        ta: {\n            title: \"👑 Golden Queen Bot\",\n            headerSub: \"உங்கள் WhatsApp இணைக்கவும்\",\n            btn: \"🔗 இணைக்கவும்\",\n            loginHeader: \"இணைப்பு விவரங்கள்\",\n            loginSub: \"இணைப்பு குறியீட்டிற்கு உங்கள் எண்ணை உள்ளிடவும்\",\n            numLabel: \"வாட்ஸ்அப் எண்\",\n            notice: \"சாதனத்தை இணைத்த பிறகு, பாட் செயலில் வர சுமார் 3 நிமிடங்கள் ஆகும். காத்திருக்கவும்! ⏳✨\",\n            loading: \"⏳ செயலாக்கம்...\",\n            wait: \"காத்திருக்கவும்...\",\n            invalidNum: \"சரியான எண்ணை உள்ளிடவும்!\",\n            fillAll: \"விவரங்களை நிரப்பவும்!\",\n            successTitle: \"🎉 வெற்றி!\",\n            successBody: \"உங்கள் குறியீடு:\",\n            copyMsg: \"📋 நகலெடுக்கப்பட்டது!\",\n            failMsg: \"தோல்வி. மீண்டும் முயற்சிக்கவும்.\",\n            tabPairing: \"Pairing Code\",\n            tabQr: \"QR Code\",\n            qrHeader: \"QR Code உள்நுழைவு\",\n            qrSub: \"WhatsApp மூலம் ஸ்கேன் செய்யவும்\",\n            qrPlaceholder: \"QR ஏற்றவும்\",\n            qrRefreshLabel: \"புதுப்பிக்கிறது\",\n            qrRetryLabel: \"மீண்டும் முயற்சி\",\n            qrLoading: \"QR Code ஏற்றுகிறது...\",\n            qrLoaded: \"WhatsApp மூலம் இந்த QR ஸ்கேன் செய்யவும்\",\n            qrFailed: \"QR ஏற்றல் தோல்வி. மீண்டும் முயற்சி.\",\n            qrMaxRetry: \"அதிகபட்ச முயற்சிகள் தோல்வி.\",\n        },\n        ar: {\n            title: \"👑 Golden Queen Bot\",\n            headerSub: \"قم بربط جهاز WhatsApp الخاص بك\",\n            btn: \"🔗 ربط الجهاز\",\n            loginHeader: \"تفاصيل الاتصال\",\n            loginSub: \"أدخل رقمك لتلقي رمز الإقران\",\n            numLabel: \"رقم الواتساب\",\n            notice: \"بعد ربط الجهاز، يستغرق تفعيل البوت حوالي 3 دقائق. يرجى الانتظار! ⏳✨\",\n            loading: \"⏳ جاري المعالجة...\",\n            wait: \"يرجى الانتظار...\",\n            invalidNum: \"أدخل رقماً صحيحاً!\",\n            fillAll: \"يرجى ملء الحقول!\",\n            successTitle: \"🎉 نجاح!\",\n            successBody: \"رمز الاقتران الخاص بك:\",\n            copyMsg: \"📋 تم النسخ!\",\n            failMsg: \"فشل. حاول مرة أخرى.\",\n            tabPairing: \"رمز الإقران\",\n            tabQr: \"رمز QR\",\n            qrHeader: \"تسجيل الدخول بـ QR\",\n            qrSub: \"امسح باستخدام WhatsApp للاتصال\",\n            qrPlaceholder: \"انقر لتحميل QR\",\n            qrRefreshLabel: \"التحديث في\",\n            qrRetryLabel: \"حاول مجدداً\",\n            qrLoading: \"جاري تحميل QR...\",\n            qrLoaded: \"امسح رمز QR هذا باستخدام WhatsApp\",\n            qrFailed: \"فشل تحميل QR. حاول مجدداً.\",\n            qrMaxRetry: \"تم تجاوز الحد الأقصى للمحاولات.\",\n        }\n    };\n\n    /* ═══════════════════════════════════════════════\n       STATE\n    ═══════════════════════════════════════════════ */\n    let currentLang = 'en';\n    let currentTab  = 'pairing';\n\n    const qrState = {\n        countdownInt : null,\n        retryCount   : 0,\n        everLoaded   : false,\n        loading      : false,\n        secondsLeft  : QR_INTERVAL,\n    };\n\n    /* ═══════════════════════════════════════════════\n       INIT\n    ═══════════════════════════════════════════════ */\n    function initPage(lang) {\n        currentLang = lang;\n        document.getElementById('langOverlay').style.display = 'none';\n        const mb = document.getElementById('mainBody');\n        mb.style.display = 'flex';\n        updateTexts();\n    }\n\n    function updateTexts() {\n        const t = langTexts[currentLang];\n        document.getElementById('headerSub').innerText         = t.headerSub;\n        document.getElementById('loginHeader').innerText       = t.loginHeader;\n        document.getElementById('loginSubText').innerText      = t.loginSub;\n        document.getElementById('numLabel').innerText          = t.numLabel;\n        document.getElementById('noticeText').innerText        = t.notice;\n        document.getElementById('submitBtn').innerText         = t.btn;\n        document.getElementById('tabPairingLabel').innerText   = t.tabPairing;\n        document.getElementById('tabQrLabel').innerText        = t.tabQr;\n        document.getElementById('qrHeader').innerText          = t.qrHeader;\n        document.getElementById('qrSubText').innerText         = t.qrSub;\n        document.getElementById('qrPlaceholderText').innerText = t.qrPlaceholder;\n        document.getElementById('qrRefreshLabel').innerText    = t.qrRefreshLabel;\n        document.getElementById('qrRetryLabel').innerText      = t.qrRetryLabel;\n    }\n\n    /* ═══════════════════════════════════════════════\n       TAB SWITCHING\n    ═══════════════════════════════════════════════ */\n    function switchTab(tab) {\n        if (tab === currentTab) return;\n        currentTab = tab;\n\n        const pill         = document.getElementById('tabPill');\n        const btnPairing   = document.getElementById('tabPairing');\n        const btnQr        = document.getElementById('tabQr');\n        const panelPairing = document.getElementById('panelPairing');\n        const panelQr      = document.getElementById('panelQr');\n\n        if (tab === 'qr') {\n            // ── Move pill right ──\n            pill.classList.add('right');\n            btnPairing.classList.remove('active');\n            btnQr.classList.add('active');\n\n            // ── Show QR panel ──\n            panelPairing.classList.remove('visible');\n            panelPairing.classList.add('hidden');\n            panelQr.classList.remove('hidden');\n            panelQr.classList.add('visible');\n\n            // ── Auto-load QR immediately on tab switch ──\n            setTimeout(() => loadQr(), 150);\n\n        } else {\n            // ── Move pill left ──\n            pill.classList.remove('right');\n            btnQr.classList.remove('active');\n            btnPairing.classList.add('active');\n\n            panelQr.classList.remove('visible');\n            panelQr.classList.add('hidden');\n            panelPairing.classList.remove('hidden');\n            panelPairing.classList.add('visible');\n\n            // ── Stop countdown when leaving QR tab ──\n            clearInterval(qrState.countdownInt);\n        }\n    }\n\n    /* ═══════════════════════════════════════════════\n       QR HELPERS\n    ═══════════════════════════════════════════════ */\n    function setQrStatus(msg, color) {\n        const el = document.getElementById('qrStatus');\n        el.innerText = msg;\n        el.style.color = color || 'var(--muted)';\n    }\n\n    function showSkeleton(show) {\n        const skeleton     = document.getElementById('qrSkeleton');\n        const placeholder  = document.getElementById('qrPlaceholder');\n        skeleton.classList.toggle('active', show);\n        placeholder.style.display = show ? 'none' : 'flex';\n    }\n\n    function revealQrImage() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        skeleton.classList.remove('active');\n        ph.style.display = 'none';\n        img.style.display = 'block';\n\n        // Small tick so the browser paints display:block first\n        requestAnimationFrame(() => {\n            img.classList.add('loaded');\n            scanLine.classList.add('active');\n        });\n    }\n\n    function resetToPlaceholder() {\n        const img      = document.getElementById('qrImage');\n        const scanLine = document.getElementById('qrScanLine');\n        const skeleton = document.getElementById('qrSkeleton');\n        const ph       = document.getElementById('qrPlaceholder');\n\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n        scanLine.classList.remove('active');\n        skeleton.classList.remove('active');\n        ph.style.display = 'flex';\n    }\n\n    function startCountdown() {\n        const progressBar  = document.getElementById('qrProgressBar');\n        const countdownEl  = document.getElementById('qrCountdown');\n        const progressWrap = document.getElementById('qrProgressWrap');\n        const retryBtn     = document.getElementById('qrRetryBtn');\n\n        progressWrap.style.display = 'block';\n        retryBtn.classList.remove('visible');\n\n        qrState.secondsLeft = QR_INTERVAL;\n        progressBar.style.width = '100%';\n        progressBar.classList.remove('urgent');\n        countdownEl.classList.remove('urgent');\n        countdownEl.innerText = QR_INTERVAL;\n\n        clearInterval(qrState.countdownInt);\n        qrState.countdownInt = setInterval(() => {\n            qrState.secondsLeft--;\n            const pct = (qrState.secondsLeft / QR_INTERVAL) * 100;\n            progressBar.style.width = pct + '%';\n            countdownEl.innerText = qrState.secondsLeft;\n\n            if (qrState.secondsLeft <= 5) {\n                progressBar.classList.add('urgent');\n                countdownEl.classList.add('urgent');\n            }\n\n            if (qrState.secondsLeft <= 0) {\n                clearInterval(qrState.countdownInt);\n                loadQr(); // auto-refresh\n            }\n        }, 1000);\n    }\n\n    /* ═══════════════════════════════════════════════\n       LOAD QR  ← main fix here\n    ═══════════════════════════════════════════════ */\n    function loadQr() {\n        // Prevent double-load\n        if (qrState.loading) return;\n        qrState.loading = true;\n\n        const t        = langTexts[currentLang] || langTexts.en;\n        const retryBtn = document.getElementById('qrRetryBtn');\n        const img      = document.getElementById('qrImage');\n\n        clearInterval(qrState.countdownInt);\n        retryBtn.classList.remove('visible');\n        document.getElementById('qrProgressWrap').style.display = 'none';\n\n        // Reset image first\n        img.classList.remove('loaded');\n        img.style.display = 'none';\n        img.src = '';\n\n        showSkeleton(true);\n        setQrStatus(t.qrLoading);\n\n        // Bust cache with timestamp\n        const qrUrl = `${API.qr}?t=${Date.now()}`;\n\n        // ── KEY FIX: Set handlers BEFORE setting src ──\n        img.onload = () => {\n            qrState.loading    = false;\n            qrState.everLoaded = true;\n            qrState.retryCount = 0;\n            revealQrImage();\n            setQrStatus(t.qrLoaded, 'rgba(109,212,154,0.85)');\n            startCountdown();\n        };\n\n        img.onerror = () => {\n            qrState.loading = false;\n            qrState.retryCount++;\n            resetToPlaceholder();\n            document.getElementById('qrProgressWrap').style.display = 'none';\n\n            if (qrState.retryCount >= QR_MAX_RETRY) {\n                setQrStatus(t.qrMaxRetry, 'var(--rose)');\n            } else {\n                setQrStatus(t.qrFailed, 'var(--rose)');\n            }\n            retryBtn.classList.add('visible');\n        };\n\n        // Now set src → triggers load or error\n        img.src = qrUrl;\n    }\n\n    function retryQr() {\n        qrState.retryCount = 0;\n        qrState.loading    = false;\n        loadQr();\n    }\n\n    /* ═══════════════════════════════════════════════\n       POST HELPER\n    ═══════════════════════════════════════════════ */\n    async function post(endpoint, payload) {\n        const res = await fetch(endpoint, {\n            method : 'POST',\n            headers: { 'Content-Type': 'application/json' },\n            body   : JSON.stringify(payload),\n        });\n        if (!res.ok) {\n            const err = await res.json().catch(() => ({}));\n            throw new Error(err.error || `HTTP ${res.status}`);\n        }\n        return res.json();\n    }\n\n    /* ═══════════════════════════════════════════════\n       PAIRING CODE\n    ═══════════════════════════════════════════════ */\n    async function handleSubmit() {\n    const t = langTexts[currentLang];\n    // Input එකෙන් අගය ලබා ගැනීම\n    let phoneInput = document.getElementById('phoneNum').value;\n\n    // 1. හිස්තැන් (Spaces) සහ අනවශ්‍ය දේවල් අයින් කිරීම\n    let phone = phoneInput.replace(/\\s+/g, '');\n\n    // 2. '+' තිබේ නම් එය ඉවත් කිරීම\n    if (phone.startsWith('+')) {\n        phone = phone.substring(1);\n    }\n\n    // 3. අංකය '0' කින් පටන් ගනී නම් (උදා: 077...)\n    // එම 0 ඉවත් කර 94 එකතු කිරීම (ප්‍රතිඵලය: 9477...)\n    if (phone.startsWith('0')) {\n        phone = '94' + phone.substring(1);\n    }\n\n    // Validation\n    if (!phone) return Swal.fire('Error', t.fillAll, 'warning');\n    \n    // සාමාන්‍යයෙන් 94771234567 වැනි අංකයක දිග 11-12 කි.\n    if (phone.length < 10) return Swal.fire('Error', t.invalidNum, 'error');\n\n    Swal.fire({\n        title: t.loading,\n        text: t.wait,\n        allowOutsideClick: false,\n        background: 'var(--card)',\n        color: 'var(--text)',\n        didOpen: () => Swal.showLoading()\n    });\n\n    try {\n        // මෙතනදී 'phone' variable එක දැන් හරියටම 947XXXXXXXX ලෙස සකස් වී ඇත\n        const result = await post(API.pairing, { num: phone });\n        \n        if (result.success && result.code) {\n            await navigator.clipboard.writeText(result.code).catch(() => {});\n            Swal.fire({\n                title: t.successTitle,\n                html: `<div style=\"padding:10px 0;\">\n                            <p style=\"color:var(--muted);margin-bottom:6px;\">${t.successBody}</p>\n                            <b style=\"color:var(--gold-light);font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;display:block;margin:18px 0;text-shadow:0 0 20px rgba(212,160,85,0.4);\">${result.code}</b>\n                            <p style=\"font-size:0.83rem;color:#6dd49a;\">${t.copyMsg}</p>\n                        </div>`,\n                icon: 'success'\n            });\n        } else {\n            throw new Error(result.error || t.failMsg);\n        }\n    } catch (err) {\n        Swal.fire('Failed', err.message || t.failMsg, 'error');\n    }\n}\n</script>\n\n\n</body>\n</html>\n\n\n";
+    return fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
 }
 
 function buildLandingSectionHTML(sectionId = '') {
-    const safeId = JSON.stringify(String(sectionId || ''));
-    return buildLandingPageHTML().replace('</body>', `<script>window.__OPEN_SECTION__=${safeId};window.addEventListener('DOMContentLoaded',()=>{const target=window.__OPEN_SECTION__;if(target){setTimeout(()=>{document.getElementById(target)?.scrollIntoView({behavior:'smooth',block:'start'});},120);}});</script></body>`);
-}
-
-function buildPairPageHTML() {
-    return buildLandingPageHTML();
+    const safeId = JSON.stringify(String(sectionId || '').replace(/[^a-zA-Z0-9_-]/g, ''));
+    return buildLandingPageHTML().replace('</body>', `<script>window.addEventListener('DOMContentLoaded',()=>{const target=${safeId};if(target){setTimeout(()=>{document.getElementById(target)?.scrollIntoView({behavior:'smooth',block:'start'});},120);}});</script></body>`);
 }
 
 function buildSettingsPageHTML() {
-    const labels = JSON.stringify(SITE_SETTINGS_FIELD_LABELS);
-    const defaults = JSON.stringify(DEFAULT_PHONE_SETTINGS);
-    const sections = JSON.stringify(PHONE_SETTINGS_SECTIONS);
-    const selects = JSON.stringify(PHONE_SETTINGS_SELECT_OPTIONS);
-    const toggles = JSON.stringify(Array.from(PHONE_SETTINGS_TOGGLE_FIELDS));
-    return `<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>إعدادات الرقم | Golden Queen Bot</title>
-  <style>
-    :root { --bg:#0d0d12; --card:#171722; --card2:#1f1f2c; --line:rgba(255,255,255,.08); --gold:#d4a055; --text:#f4eef8; --muted:#a79fb7; --ok:#35c76f; --danger:#ef5350; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:Tahoma,Arial,sans-serif; background:linear-gradient(180deg,#0c0c12,#141421); color:var(--text); }
-    .wrap { max-width:1200px; margin:0 auto; padding:24px; }
-    .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:20px; box-shadow:0 18px 40px rgba(0,0,0,.28); }
-    .hero { display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; margin-bottom:18px; }
-    .hero h1 { margin:0; font-size:28px; }
-    .hero p { margin:8px 0 0; color:var(--muted); }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
-    .field { display:flex; flex-direction:column; gap:8px; padding:14px; border-radius:14px; background:var(--card2); border:1px solid var(--line); }
-    .field label { font-size:13px; color:#f6d5a4; }
-    input, textarea, select, button { font:inherit; }
-    input, textarea, select { width:100%; background:#0f0f16; color:var(--text); border:1px solid var(--line); border-radius:12px; padding:12px; }
-    textarea { min-height:110px; resize:vertical; }
-    .actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:18px; }
-    button { cursor:pointer; border:none; border-radius:12px; padding:12px 18px; font-weight:700; }
-    .primary { background:linear-gradient(135deg,var(--gold),#b8853a); color:#111; }
-    .ghost { background:#242437; color:var(--text); border:1px solid var(--line); }
-    .section-title { margin:22px 0 12px; font-size:18px; color:#f6d5a4; }
-    .status { margin-top:12px; padding:12px 14px; border-radius:12px; display:none; }
-    .status.show { display:block; }
-    .status.ok { background:rgba(53,199,111,.13); color:#b7ffd0; border:1px solid rgba(53,199,111,.25); }
-    .status.err { background:rgba(239,83,80,.13); color:#ffd5d2; border:1px solid rgba(239,83,80,.25); }
-    .topbar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:14px; }
-    .muted { color:var(--muted); font-size:13px; }
-    .hidden { display:none; }
-    .login { max-width:460px; margin:40px auto; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div id="loginCard" class="card login">
-      <div class="hero">
-        <div>
-          <h1>تسجيل دخول إعدادات الرقم</h1>
-          <p>أدخل رقم الواتساب وكلمة السر الخاصة بنفس الرقم.</p>
-        </div>
-      </div>
-      <div class="grid">
-        <div class="field"><label>رقم الواتساب</label><input id="loginNum" placeholder="9677xxxxxxxx" /></div>
-        <div class="field"><label>كلمة السر</label><input id="loginPass" placeholder="كلمة السر" /></div>
-      </div>
-      <div class="actions"><button id="loginBtn" class="primary">دخول</button></div>
-      <div id="loginStatus" class="status"></div>
-    </div>
-
-    <div id="dashboard" class="hidden">
-      <div class="card">
-        <div class="topbar">
-          <div>
-            <h1 style="margin:0">لوحة إعدادات الرقم</h1>
-            <div class="muted">الرابط الجديد: ${PUBLIC_BASE_URL}/</div>
-          </div>
-          <div class="actions" style="margin-top:0">
-            <button id="reloadBtn" class="ghost">تحديث</button>
-            <button id="saveBtn" class="primary">حفظ الإعدادات</button>
-          </div>
-        </div>
-        <div id="meta" class="muted"></div>
-        <div id="saveStatus" class="status"></div>
-        <div id="sectionsRoot"></div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    const LABELS = ${labels};
-    const DEFAULTS = ${defaults};
-    const SECTIONS = ${sections};
-    const SELECTS = ${selects};
-    const TOGGLES = new Set(${toggles});
-    const TEXTAREAS = new Set(['description','customMsg','antiLinkList','antiBadWords','customAutoReplies','aliveMsg']);
-    const URL_FIELDS = new Set(['menu','alive','owner','voiceFooter']);
-    const state = { phone:'', app:'default', values:{...DEFAULTS} };
-
-    function showStatus(el, text, ok = true) {
-      el.textContent = text;
-      el.className = 'status show ' + (ok ? 'ok' : 'err');
-    }
-
-    function renderFields(values) {
-      const root = document.getElementById('sectionsRoot');
-      root.innerHTML = '';
-      for (const section of SECTIONS) {
-        const title = document.createElement('div');
-        title.className = 'section-title';
-        title.textContent = section.label;
-        root.appendChild(title);
-
-        const grid = document.createElement('div');
-        grid.className = 'grid';
-        for (const key of section.fields) {
-          const field = document.createElement('div');
-          field.className = 'field';
-          const label = document.createElement('label');
-          label.textContent = LABELS[key] || key;
-          field.appendChild(label);
-
-          let input;
-          if (SELECTS[key]) {
-            input = document.createElement('select');
-            for (const option of SELECTS[key]) {
-              const opt = document.createElement('option');
-              opt.value = option.value;
-              opt.textContent = option.label;
-              input.appendChild(opt);
-            }
-          } else if (TOGGLES.has(key)) {
-            input = document.createElement('select');
-            [['on','تشغيل'],['off','إيقاف']].forEach(([value,text]) => {
-              const opt = document.createElement('option');
-              opt.value = value;
-              opt.textContent = text;
-              input.appendChild(opt);
-            });
-          } else if (TEXTAREAS.has(key)) {
-            input = document.createElement('textarea');
-          } else {
-            input = document.createElement('input');
-            input.type = URL_FIELDS.has(key) ? 'url' : 'text';
-          }
-          input.id = 'field_' + key;
-          input.value = values[key] ?? DEFAULTS[key] ?? '';
-          grid.appendChild(field);
-          field.appendChild(input);
-        }
-        root.appendChild(grid);
-      }
-    }
-
-    async function login() {
-      const num = document.getElementById('loginNum').value.trim();
-      const pass = document.getElementById('loginPass').value.trim();
-      const status = document.getElementById('loginStatus');
-      try {
-        const response = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ num, pass })
-        });
-        const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || data.message || 'فشل تسجيل الدخول');
-        state.phone = data.number || num;
-        state.app = data.app || 'default';
-        document.getElementById('loginCard').classList.add('hidden');
-        document.getElementById('dashboard').classList.remove('hidden');
-        showStatus(status, 'تم تسجيل الدخول بنجاح.', true);
-        await loadSettings();
-      } catch (error) {
-        showStatus(status, error.message || 'فشل تسجيل الدخول', false);
-      }
-    }
-
-    async function loadSettings() {
-      const saveStatus = document.getElementById('saveStatus');
-      try {
-        const response = await fetch('/api/settings/load?num=' + encodeURIComponent(state.phone) + '&app=' + encodeURIComponent(state.app));
-        const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || 'تعذر تحميل الإعدادات');
-        state.values = { ...DEFAULTS, ...(data.settings || {}) };
-        document.getElementById('meta').textContent = 'الرقم: ' + state.phone + ' | التطبيق: ' + state.app;
-        renderFields(state.values);
-        showStatus(saveStatus, 'تم تحميل الإعدادات.', true);
-      } catch (error) {
-        showStatus(saveStatus, error.message || 'تعذر تحميل الإعدادات', false);
-      }
-    }
-
-    async function saveSettings() {
-      const payload = { num: state.phone, app: state.app };
-      for (const key of Object.keys(DEFAULTS)) {
-        const el = document.getElementById('field_' + key);
-        if (el) payload[key] = el.value;
-      }
-      const saveStatus = document.getElementById('saveStatus');
-      try {
-        const response = await fetch('/api/settings/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || 'تعذر حفظ الإعدادات');
-        state.values = { ...DEFAULTS, ...(data.settings || {}) };
-        renderFields(state.values);
-        showStatus(saveStatus, 'تم حفظ الإعدادات بنجاح.', true);
-      } catch (error) {
-        showStatus(saveStatus, error.message || 'تعذر حفظ الإعدادات', false);
-      }
-    }
-
-    document.getElementById('loginBtn').addEventListener('click', login);
-    document.getElementById('reloadBtn').addEventListener('click', loadSettings);
-    document.getElementById('saveBtn').addEventListener('click', saveSettings);
-  </script>
-</body>
-</html>`;
+    return fs.readFileSync(path.join(__dirname, 'public', 'settings.html'), 'utf8');
 }
 
 app.get('/publish-now', (req, res) => {
@@ -13444,12 +12841,13 @@ app.get('/auto-save', (req, res) => {
 
 app.get('/pair', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.send(buildLandingPageHTML());
 });
 
-app.get('/', (req, res) => res.redirect(302, '/pair'));
-app.get('/linking-site', (req, res) => res.redirect(302, '/pair'));
-app.get('/Freebot', (req, res) => res.redirect(302, '/pair'));
+app.get('/bots', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingPageHTML());
+});
 
 async function handlePairingCodeApiRequest(req, res) {
     try {
@@ -13459,147 +12857,30 @@ async function handlePairingCodeApiRequest(req, res) {
         const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(req.body || {}));
         if (!phoneValidation.ok) return res.status(400).json({ success: false, error: phoneValidation.error });
         const phone = phoneValidation.phone;
-
-        const existingJob = pairJobStatus.get(phone);
-        if (existingJob && existingJob.status === 'awaiting_link' && Date.now() - existingJob.startedAt < 75000) {
-            if (existingJob.code) {
-                return res.status(200).json({
-                    success: true,
-                    phone,
-                    num: phone,
-                    phoneNumber: phone,
-                    code: existingJob.code,
-                    jobId: existingJob.jobId,
-                    replacedExistingSession: existingJob.replacedExistingSession,
-                    website: SITE_ENDPOINTS.target_site_base_url,
-                    settingsPage: SITE_ENDPOINTS.target_settings_page_url
-                });
-            }
-            return res.status(202).json({
-                success: true,
-                phone,
-                jobId: existingJob.jobId,
-                pending: true,
-                website: SITE_ENDPOINTS.target_site_base_url,
-                settingsPage: SITE_ENDPOINTS.target_settings_page_url
-            });
+        if (sessionStartPromises.has(phone)) {
+            return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
         }
-
-        const alreadyLinkedAndLive = waClients.has(phone) && (typeof hasPersistedSuccessfulSession === 'function' ? hasPersistedSuccessfulSession(phone) : false);
-        if (alreadyLinkedAndLive && !req.body?.forceNewCode) {
-            return res.json({
-                success: true,
-                phone,
-                num: phone,
-                phoneNumber: phone,
-                status: 'already_linked',
-                alreadyLinked: true,
-                message: 'الرقم مربوط بالفعل على نفس الجلسة في البوت، لا حاجة لكود جديد.',
-                website: SITE_ENDPOINTS.target_site_base_url,
-                settingsPage: SITE_ENDPOINTS.target_settings_page_url
-            });
+        if (hasPersistedSuccessfulSession(phone) || waClients.has(phone)) {
+            await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, { autoRequestPairingCode: false, bootRestore: true });
+            return res.status(409).json({ success: false, error: 'هذا الرقم مرتبط بالفعل وتوجد له جلسة محفوظة، لذلك لن يتم إنشاء جلسة جديدة أو كود جديد' });
         }
-
-        const requesterId = String(req.body?.requesterId || req.body?.ownerId || req.body?.telegramId || '').trim();
-        const jobId = `pair_${phone}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const replacingExistingSession = typeof hasPersistedSuccessfulSession === 'function'
-            ? (hasPersistedSuccessfulSession(phone) || waClients.has(phone))
-            : waClients.has(phone);
-
-        pairJobStatus.set(phone, {
-            jobId,
-            phone,
-            requesterId,
-            startedAt: Date.now(),
-            status: 'pending',
-            code: null,
-            replacedExistingSession
-        });
-
-        if (requesterId && typeof addLinkedNumber === 'function') {
-            try { addLinkedNumber(requesterId, phone); } catch (_) {}
-        }
-
-        setImmediate(() => {
-            (async () => {
-                try {
-                    await startWhatsApp(phone, null, requesterId || (typeof getPhoneOwner === 'function' ? getPhoneOwner(phone) : null) || null, null, {
-                        autoRequestPairingCode: true,
-                        forceFreshSession: replacingExistingSession,
-                        replaceReason: replacingExistingSession ? 'pairing_api_replace_existing_session' : 'pairing_api_new_session'
-                    });
-                    const code = await waitForPairingCode(phone, 25000);
-                    if (!code) throw new Error('تعذر إنشاء كود الربط خلال المهلة');
-                    const job = pairJobStatus.get(phone) || {};
-                    job.code = code;
-                    job.status = 'awaiting_link';
-                    job.expiresAt = Date.now() + 60000;
-                    pairJobStatus.set(phone, job);
-                } catch (error) {
-                    const job = pairJobStatus.get(phone) || {};
-                    job.status = 'expired';
-                    job.lastError = error?.message || String(error);
-                    pairJobStatus.set(phone, job);
-                    if (typeof scheduleJobCleanup === 'function') scheduleJobCleanup(phone);
-                }
-            })().catch((err) => {
-                const job = pairJobStatus.get(phone) || {};
-                job.status = 'expired';
-                job.lastError = err?.message || String(err);
-                pairJobStatus.set(phone, job);
-            });
-        });
-
-        return res.status(202).json({
+        if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
+        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
+        const code = await waitForPairingCode(phone);
+        if (!code) throw new Error('تعذر إنشاء كود الربط');
+        return res.json({
             success: true,
             phone,
             num: phone,
             phoneNumber: phone,
-            jobId,
-            pending: true,
-            replacedExistingSession,
+            code,
             website: SITE_ENDPOINTS.target_site_base_url,
-            settingsPage: SITE_ENDPOINTS.target_settings_page_url,
-            statusUrl: `/api/pairing/status?phone=${encodeURIComponent(phone)}`
+            settingsPage: SITE_ENDPOINTS.target_settings_page_url
         });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'فشل إنشاء كود الربط' });
     }
 }
-
-app.get('/api/pairing/status', (req, res) => {
-    try {
-        const phone = normalizePhone(extractPairingPhoneCandidate(req.query || {}));
-        if (!phone) return res.status(400).json({ success: false, error: 'phone is required' });
-        const job = pairJobStatus.get(phone) || {};
-        const sock = waClients.get(phone);
-        const readyState = Number(sock?.ws?.readyState);
-        const isConnected = Boolean(sock && readyState === 1 && sock.user?.id);
-        const payload = {
-            success: true,
-            phone,
-            jobId: job.jobId || null,
-            status: isConnected ? 'connected' : (job.status || 'idle'),
-            code: job.code || null,
-            pending: Boolean(!isConnected && job.code),
-            timedOut: job.status === 'expired',
-            alreadyLinked: Boolean(!job.jobId && sock && isConnected),
-            lastError: job.lastError || null,
-            website: SITE_ENDPOINTS.target_site_base_url,
-            settingsPage: SITE_ENDPOINTS.target_settings_page_url
-        };
-        if (job.expiresAt) {
-            payload.expiresAt = job.expiresAt;
-            payload.expiresIn = Math.max(0, Math.round((job.expiresAt - Date.now()) / 1000));
-        }
-        if (isConnected) {
-            pairJobStatus.delete(phone);
-        }
-        return res.json(payload);
-    } catch (error) {
-        return res.status(500).json({ success: false, error: error.message || 'status failed' });
-    }
-});
 
 app.post('/api/pair', async (req, res) => handlePairingCodeApiRequest(req, res));
 
@@ -13757,10 +13038,7 @@ app.get('/health', (req, res) => {
         uptime: process.uptime(),
         mode: !TELEGRAM_ENABLED ? 'disabled' : USE_TELEGRAM_WEBHOOK ? 'webhook' : 'polling',
         baseUrl: PUBLIC_BASE_URL,
-        webhookPath: TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK ? TELEGRAM_WEBHOOK_PATH : null,
-        requestedRuntimeProfile: String(process.env.BOT_RUNTIME_PROFILE || 'standard').trim() || 'standard',
-        requestedMemoryMb: Number(process.env.BOT_MEMORY_MB || 0) || 0,
-        requestedStorageGb: Number(process.env.PLATFORM_STORAGE_GB || 0) || 0
+        webhookPath: TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK ? TELEGRAM_WEBHOOK_PATH : null
     });
 });
 
@@ -13814,12 +13092,8 @@ async function initTelegramTransport() {
     }
 }
 
-let serviceBootstrapStarted = false;
-
-async function bootstrapServiceInBackground() {
-    if (serviceBootstrapStarted) return;
-    serviceBootstrapStarted = true;
-
+const server = app.listen(APP_PORT, async () => {
+    console.log(`Server running on port ${APP_PORT}`);
     await restorePersistentFilesFromMongo().catch((error) => {
         console.error('Local restore warning:', error.message || error);
     });
@@ -13827,7 +13101,6 @@ async function bootstrapServiceInBackground() {
         console.error('Status media migration warning:', error.message || error);
     });
     await resetRuntimePhoneDataOnBoot();
-    runRuntimeMaintenance({ reason: 'service_boot' });
     await getStoredMongoSessionEntries().catch((error) => {
         console.error('Local session preload warning:', error.message || error);
     });
@@ -13850,23 +13123,6 @@ async function bootstrapServiceInBackground() {
     console.log(`Service linked successfully to ${PUBLIC_BASE_URL}`);
     console.log(`Storage root: ${STORAGE_ROOT}`);
     console.log(`Telegram transport mode: ${telegramStatus.mode}`);
-    console.log(`Requested runtime profile: ${String(process.env.BOT_RUNTIME_PROFILE || 'standard').trim() || 'standard'}`);
-    console.log(`Requested memory limit (MB): ${Number(process.env.BOT_MEMORY_MB || 0) || 0}`);
-    console.log(`Requested storage size (GB): ${Number(process.env.PLATFORM_STORAGE_GB || 0) || 0}`);
-}
-
-const server = app.listen(APP_PORT, () => {
-    console.log(`Server running on port ${APP_PORT}`);
-    const kickoff = () => {
-        bootstrapServiceInBackground().catch((error) => {
-            serviceBootstrapStarted = false;
-            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
-        });
-    };
-    const bootstrapTimer = setTimeout(kickoff, 10);
-    if (typeof bootstrapTimer.unref === 'function') {
-        bootstrapTimer.unref();
-    }
 });
 
 server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
@@ -13884,12 +13140,6 @@ async function gracefulShutdown(signal) {
         clearTimeout(timer);
     }
     reconnectTimers.clear();
-
-    for (const phone of Array.from(pendingContactSyncs.keys())) {
-        try {
-            flushQueuedPhoneContactsUpdates(phone);
-        } catch (_) {}
-    }
 
     for (const phone of channelPromotionTimers.keys()) {
         clearChannelPromotionTimer(phone);
