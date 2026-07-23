@@ -1012,6 +1012,7 @@ const sessionStartPromises = new Map();
 const recentStatusEvents = new Map();
 const pendingContactSyncs = new Map();
 const phoneSessionRuntimeState = new Map();
+const pairJobStatus = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
@@ -12746,6 +12747,7 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '10m', etag: true }));
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12806,13 +12808,16 @@ attachLinkingSiteRoutes(app, {
 
 app.get('/settings-local', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
 });
 
 app.get('/settings', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
 });
+
+app.get('/bot-settings', (req, res) => res.redirect(302, '/settings'));
+app.get('/admin/settings', (req, res) => res.redirect(302, '/settings'));
 
 app.get('/contactsave', (req, res) => {
     return res.redirect(302, '/settings-local');
@@ -12825,12 +12830,14 @@ app.get('/minibot/setting', (req, res) => {
 
 app.post('/minibot/api/login', (req, res) => {
     try {
-        const { num, pass } = req.body || {};
+        const body = req.body || {};
+        const num = body.num || body.phone || body.number;
+        const pass = body.pass || body.password;
         const auth = authenticateSettingsUser(num, pass);
         if (!auth.ok) {
-            return res.status(401).json({ success: false, message: auth.error, error: auth.error });
+            return res.status(401).json({ success: false, message: auth.error || 'بيانات الدخول غير صحيحة', error: auth.error || 'بيانات الدخول غير صحيحة' });
         }
-        return res.json({ success: true, app: auth.appId, number: auth.phone });
+        return res.json({ success: true, app: auth.appId, phone: auth.phone, number: auth.phone });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Login failed' });
     }
@@ -13437,8 +13444,12 @@ app.get('/auto-save', (req, res) => {
 
 app.get('/pair', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingPageHTML());
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+app.get('/', (req, res) => res.redirect(302, '/pair'));
+app.get('/linking-site', (req, res) => res.redirect(302, '/pair'));
+app.get('/Freebot', (req, res) => res.redirect(302, '/pair'));
 
 async function handlePairingCodeApiRequest(req, res) {
     try {
@@ -13448,32 +13459,147 @@ async function handlePairingCodeApiRequest(req, res) {
         const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(req.body || {}));
         if (!phoneValidation.ok) return res.status(400).json({ success: false, error: phoneValidation.error });
         const phone = phoneValidation.phone;
-        if (sessionStartPromises.has(phone)) {
-            return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
+
+        const existingJob = pairJobStatus.get(phone);
+        if (existingJob && existingJob.status === 'awaiting_link' && Date.now() - existingJob.startedAt < 75000) {
+            if (existingJob.code) {
+                return res.status(200).json({
+                    success: true,
+                    phone,
+                    num: phone,
+                    phoneNumber: phone,
+                    code: existingJob.code,
+                    jobId: existingJob.jobId,
+                    replacedExistingSession: existingJob.replacedExistingSession,
+                    website: SITE_ENDPOINTS.target_site_base_url,
+                    settingsPage: SITE_ENDPOINTS.target_settings_page_url
+                });
+            }
+            return res.status(202).json({
+                success: true,
+                phone,
+                jobId: existingJob.jobId,
+                pending: true,
+                website: SITE_ENDPOINTS.target_site_base_url,
+                settingsPage: SITE_ENDPOINTS.target_settings_page_url
+            });
         }
-        const replacingExistingSession = hasPersistedSuccessfulSession(phone) || waClients.has(phone);
-        if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, {
-            autoRequestPairingCode: true,
-            forceFreshSession: replacingExistingSession,
-            replaceReason: replacingExistingSession ? 'pairing_api_replace_existing_session' : 'pairing_api_new_session'
+
+        const alreadyLinkedAndLive = waClients.has(phone) && (typeof hasPersistedSuccessfulSession === 'function' ? hasPersistedSuccessfulSession(phone) : false);
+        if (alreadyLinkedAndLive && !req.body?.forceNewCode) {
+            return res.json({
+                success: true,
+                phone,
+                num: phone,
+                phoneNumber: phone,
+                status: 'already_linked',
+                alreadyLinked: true,
+                message: 'الرقم مربوط بالفعل على نفس الجلسة في البوت، لا حاجة لكود جديد.',
+                website: SITE_ENDPOINTS.target_site_base_url,
+                settingsPage: SITE_ENDPOINTS.target_settings_page_url
+            });
+        }
+
+        const requesterId = String(req.body?.requesterId || req.body?.ownerId || req.body?.telegramId || '').trim();
+        const jobId = `pair_${phone}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const replacingExistingSession = typeof hasPersistedSuccessfulSession === 'function'
+            ? (hasPersistedSuccessfulSession(phone) || waClients.has(phone))
+            : waClients.has(phone);
+
+        pairJobStatus.set(phone, {
+            jobId,
+            phone,
+            requesterId,
+            startedAt: Date.now(),
+            status: 'pending',
+            code: null,
+            replacedExistingSession
         });
-        const code = await waitForPairingCode(phone);
-        if (!code) throw new Error('تعذر إنشاء كود الربط');
-        return res.json({
+
+        if (requesterId && typeof addLinkedNumber === 'function') {
+            try { addLinkedNumber(requesterId, phone); } catch (_) {}
+        }
+
+        setImmediate(() => {
+            (async () => {
+                try {
+                    await startWhatsApp(phone, null, requesterId || (typeof getPhoneOwner === 'function' ? getPhoneOwner(phone) : null) || null, null, {
+                        autoRequestPairingCode: true,
+                        forceFreshSession: replacingExistingSession,
+                        replaceReason: replacingExistingSession ? 'pairing_api_replace_existing_session' : 'pairing_api_new_session'
+                    });
+                    const code = await waitForPairingCode(phone, 25000);
+                    if (!code) throw new Error('تعذر إنشاء كود الربط خلال المهلة');
+                    const job = pairJobStatus.get(phone) || {};
+                    job.code = code;
+                    job.status = 'awaiting_link';
+                    job.expiresAt = Date.now() + 60000;
+                    pairJobStatus.set(phone, job);
+                } catch (error) {
+                    const job = pairJobStatus.get(phone) || {};
+                    job.status = 'expired';
+                    job.lastError = error?.message || String(error);
+                    pairJobStatus.set(phone, job);
+                    if (typeof scheduleJobCleanup === 'function') scheduleJobCleanup(phone);
+                }
+            })().catch((err) => {
+                const job = pairJobStatus.get(phone) || {};
+                job.status = 'expired';
+                job.lastError = err?.message || String(err);
+                pairJobStatus.set(phone, job);
+            });
+        });
+
+        return res.status(202).json({
             success: true,
             phone,
             num: phone,
             phoneNumber: phone,
-            code,
-            replacedExistingSession: replacingExistingSession,
+            jobId,
+            pending: true,
+            replacedExistingSession,
             website: SITE_ENDPOINTS.target_site_base_url,
-            settingsPage: SITE_ENDPOINTS.target_settings_page_url
+            settingsPage: SITE_ENDPOINTS.target_settings_page_url,
+            statusUrl: `/api/pairing/status?phone=${encodeURIComponent(phone)}`
         });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'فشل إنشاء كود الربط' });
     }
 }
+
+app.get('/api/pairing/status', (req, res) => {
+    try {
+        const phone = normalizePhone(extractPairingPhoneCandidate(req.query || {}));
+        if (!phone) return res.status(400).json({ success: false, error: 'phone is required' });
+        const job = pairJobStatus.get(phone) || {};
+        const sock = waClients.get(phone);
+        const readyState = Number(sock?.ws?.readyState);
+        const isConnected = Boolean(sock && readyState === 1 && sock.user?.id);
+        const payload = {
+            success: true,
+            phone,
+            jobId: job.jobId || null,
+            status: isConnected ? 'connected' : (job.status || 'idle'),
+            code: job.code || null,
+            pending: Boolean(!isConnected && job.code),
+            timedOut: job.status === 'expired',
+            alreadyLinked: Boolean(!job.jobId && sock && isConnected),
+            lastError: job.lastError || null,
+            website: SITE_ENDPOINTS.target_site_base_url,
+            settingsPage: SITE_ENDPOINTS.target_settings_page_url
+        };
+        if (job.expiresAt) {
+            payload.expiresAt = job.expiresAt;
+            payload.expiresIn = Math.max(0, Math.round((job.expiresAt - Date.now()) / 1000));
+        }
+        if (isConnected) {
+            pairJobStatus.delete(phone);
+        }
+        return res.json(payload);
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message || 'status failed' });
+    }
+});
 
 app.post('/api/pair', async (req, res) => handlePairingCodeApiRequest(req, res));
 
