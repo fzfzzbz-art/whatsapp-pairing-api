@@ -1,398 +1,378 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bot Settings Panel</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <title>GOLDEN QUEEN | CONTROL PANEL v2.0</title>
   <style>
     :root {
-      --bg: #071018;
-      --panel: #0d1722;
-      --panel-2: #12202d;
-      --line: rgba(255,255,255,.08);
-      --text: #f5f7fa;
-      --muted: #92a5bb;
-      --brand: #23c2ff;
-      --brand-2: #2d66ff;
-      --success: #18c37e;
-      --danger: #ff7373;
-      --warning: #ffd166;
-      --shadow: 0 24px 60px rgba(0,0,0,.36);
-      --radius: 24px;
+      --bg: #020617; --panel: #0f172a; --accent: #22c55e; --gold: #d4a017;
+      --text: #f8fafc; --muted: #94a3b8; --border: #1e293b; --danger: #ef4444;
+      --info: #38bdf8; --warning: #f59e0b;
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0;
-      font-family: Inter, system-ui, sans-serif;
-      color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(35,194,255,.15), transparent 24%),
-        linear-gradient(180deg, #071018 0%, #0b121a 100%);
-      min-height: 100vh;
+      margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif;
+      background: var(--bg); color: var(--text); direction: rtl;
     }
-    .container { width: min(1220px, calc(100% - 28px)); margin: 0 auto; }
-    .panel {
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.018));
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
+
+    #login-screen {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
+      padding: 24px;
     }
-    .login-wrap {
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 22px 0;
+    .login-box {
+      background: var(--panel); padding: 40px; border-radius: 24px;
+      border: 1px solid var(--border); width: 100%; max-width: 420px; text-align: center;
+      box-shadow: 0 0 30px rgba(212, 160, 23, 0.12);
     }
-    .login-card {
-      width: min(780px, calc(100% - 10px));
-      display: grid;
-      grid-template-columns: 1.1fr .9fr;
-      overflow: hidden;
+    .login-box h2 { color: var(--gold); margin-bottom: 12px; font-size: 28px; }
+    .login-box p { color: var(--muted); margin-bottom: 24px; }
+
+    #dashboard { display: none; padding: 20px; max-width: 1200px; margin: 0 auto; }
+
+    .header {
+      display: flex; justify-content: space-between; align-items: center; gap: 16px;
+      padding: 20px; background: var(--panel); border-radius: 15px; margin-bottom: 20px;
+      border: 1px solid var(--border); flex-wrap: wrap;
     }
-    .login-copy, .login-form {
-      padding: 32px;
+
+    .grid-container {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;
     }
-    .login-copy {
-      background: linear-gradient(180deg, rgba(35,194,255,.12), rgba(45,102,255,.06));
-      border-inline-end: 1px solid var(--line);
-      display: grid;
-      align-content: start;
-      gap: 14px;
+
+    .card {
+      background: var(--panel); padding: 25px; border-radius: 20px;
+      border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
     }
-    .eyebrow {
-      font-size: 12px;
-      letter-spacing: .16em;
-      text-transform: uppercase;
-      color: #b8ebff;
-      font-weight: 800;
+
+    .card h3 { color: var(--gold); margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+    .helper-text { color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .input-group { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 14px; }
+
+    input, select, textarea {
+      width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: #020617; color: white; box-sizing: border-box; outline: none;
     }
-    h1, h2, h3, h4 { margin: 0; }
-    .login-copy h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.06; }
-    .login-copy p, .help, .muted, .save-note, .card p { color: var(--muted); line-height: 1.75; }
-    .login-form { display: grid; gap: 16px; align-content: center; }
-    .field { display: grid; gap: 8px; }
-    .field label { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #cde6ff; }
-    .field input, .field select, .field textarea {
-      width: 100%;
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,.08);
-      background: rgba(255,255,255,.04);
-      color: white;
-      padding: 14px 16px;
-      font-size: 15px;
-      outline: none;
-      font-family: inherit;
-      resize: vertical;
-      min-height: 52px;
-    }
-    .field textarea { min-height: 110px; }
-    .field input:focus, .field select:focus, .field textarea:focus {
-      border-color: rgba(35,194,255,.45);
-      box-shadow: 0 0 0 4px rgba(35,194,255,.12);
-    }
+
+    textarea { min-height: 110px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { border-color: var(--gold); }
+
     .btn {
-      border: none; cursor: pointer; border-radius: 16px; padding: 14px 18px;
-      font-size: 15px; font-weight: 700; transition: .2s ease;
+      padding: 12px 20px; border-radius: 10px; border: none; font-weight: bold;
+      cursor: pointer; transition: 0.25s; width: 100%; margin-top: 10px;
     }
-    .btn:hover { transform: translateY(-1px); }
-    .btn-primary { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: white; }
-    .btn-secondary { background: rgba(255,255,255,.04); color: var(--text); border: 1px solid var(--line); }
-    .btn-success { background: linear-gradient(135deg, #16c97b, #0da768); color: white; }
-    .login-actions { display: flex; gap: 12px; flex-wrap: wrap; }
-    .login-status, .save-status {
-      min-height: 20px; font-size: 14px; color: var(--muted);
+    .btn:hover { transform: translateY(-2px); }
+    .btn-gold { background: linear-gradient(45deg, var(--gold), #f9d976); color: #000; }
+    .btn-success { background: linear-gradient(45deg, #16a34a, #4ade80); color: white; }
+    .btn-danger { background: linear-gradient(45deg, #b91c1c, #ef4444); color: white; }
+    .btn-muted { background: #1e293b; color: white; border: 1px solid var(--border); }
+
+    .status-badge {
+      padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold;
     }
-    .dashboard { display: none; padding: 20px 0 44px; }
-    .topbar {
-      margin-top: 18px; padding: 22px; display: flex; justify-content: space-between; gap: 16px; align-items: center;
+    .online { background: rgba(34, 197, 94, 0.2); color: var(--accent); }
+    .offline { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+
+    .command-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+    .cmd-btn {
+      background: #1e293b; color: white; border: 1px solid var(--border);
+      padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 13px;
+      transition: .25s;
     }
-    .topbar-title { display: grid; gap: 8px; }
-    .topbar-title h2 { font-size: clamp(26px, 4vw, 38px); }
-    .badge-row { display: flex; gap: 10px; flex-wrap: wrap; }
-    .chip {
-      border-radius: 999px; padding: 9px 12px; font-size: 13px; font-weight: 700;
-      background: rgba(255,255,255,.04); border: 1px solid var(--line);
+    .cmd-btn:hover { background: var(--gold); color: black; }
+
+    .toast {
+      position: fixed; bottom: 20px; left: 20px; z-index: 9999;
+      min-width: 240px; max-width: 90vw; padding: 14px 16px; border-radius: 14px;
+      background: #0b1220; border: 1px solid var(--border); color: white;
+      box-shadow: 0 20px 45px rgba(0,0,0,.35); display: none;
     }
-    .stats {
-      display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; margin: 18px 0;
+    .toast.success { border-color: rgba(34, 197, 94, .45); }
+    .toast.error { border-color: rgba(239, 68, 68, .45); }
+    .toast.info { border-color: rgba(56, 189, 248, .45); }
+
+    .mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .stat-row {
+      display: flex; justify-content: space-between; align-items: center; padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
     }
-    .stat { padding: 22px; }
-    .stat strong { display: block; font-size: clamp(25px, 4vw, 38px); margin-bottom: 6px; }
-    .layout {
-      display: grid; grid-template-columns: 280px 1fr; gap: 18px;
-    }
-    .sidebar { padding: 16px; position: sticky; top: 18px; align-self: start; }
-    .side-head { padding: 10px 8px 18px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
-    .side-head h3 { font-size: 18px; }
-    .side-list { display: grid; gap: 8px; }
-    .side-btn {
-      text-align: left; border: 1px solid transparent; background: transparent; color: var(--text);
-      border-radius: 16px; padding: 14px 14px; cursor: pointer; font-weight: 600;
-    }
-    .side-btn.active { background: rgba(35,194,255,.10); border-color: rgba(35,194,255,.22); color: #dff7ff; }
-    .content { display: grid; gap: 18px; }
-    .card { padding: 22px; }
-    .card h3 { font-size: 22px; margin-bottom: 8px; }
-    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
-    .toggle-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; margin-top: 8px; }
-    .toggle {
-      border-radius: 18px; border: 1px solid var(--line); background: rgba(255,255,255,.03); padding: 14px;
-      display: grid; gap: 8px;
-    }
-    .toggle-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-    .toggle-head strong { font-size: 15px; }
-    .toggle p { margin: 0; font-size: 13px; }
-    .row-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
-    .savebar {
-      position: sticky; bottom: 14px; padding: 16px 18px; margin-top: 4px;
-      display: flex; justify-content: space-between; gap: 12px; align-items: center;
-    }
-    .savebar-left { display: grid; gap: 6px; }
-    .save-note { font-size: 13px; }
-    .pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 8px 12px; border-radius: 999px; font-size: 13px; font-weight: 700;
-      border: 1px solid var(--line); background: rgba(255,255,255,.04);
-    }
-    .pill.ok { color: #baffdf; border-color: rgba(24,195,126,.28); background: rgba(24,195,126,.08); }
-    .hidden { display: none !important; }
-    @media (max-width: 980px) {
-      .login-card, .layout, .stats, .form-grid, .toggle-grid { grid-template-columns: 1fr 1fr; }
-      .layout { grid-template-columns: 1fr; }
-      .sidebar { position: static; }
-    }
+    .stat-row:last-child { border-bottom: 0; }
+    .value { color: var(--gold); font-weight: 700; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
     @media (max-width: 720px) {
-      .login-card, .stats, .form-grid, .toggle-grid { grid-template-columns: 1fr; }
-      .login-copy, .login-form, .topbar, .stat, .sidebar, .card, .savebar { padding: 18px; }
-      .savebar { flex-direction: column; align-items: stretch; }
+      .login-box { padding: 28px 20px; }
+      #dashboard { padding: 14px; }
+      .card { padding: 18px; }
+      .mini-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <section class="login-wrap" id="loginScreen">
-    <div class="panel login-card">
-      <div class="login-copy">
-        <div class="eyebrow">Bot Settings</div>
-        <h1>Control your linked bot from one dashboard.</h1>
-        <p>
-          Enter the WhatsApp number and password issued by your bot to open the per-number settings panel, save changes live, and keep the website synced with bot-side updates.
-        </p>
-        <div class="panel" style="padding:16px;border-radius:20px;background:rgba(255,255,255,.03)">
-          <div class="eyebrow">How to get your password</div>
-          <p class="help">1. Send <strong>.setting</strong> to your bot.<br>2. Copy the password from the inbox reply.<br>3. Use the same number and password here.</p>
-        </div>
+  <div id="login-screen">
+    <div class="login-box">
+      <h2>GOLDEN QUEEN</h2>
+      <p>سجل دخولك للتحكم بالرقم المربوط</p>
+      <div class="input-group" style="text-align:right;">
+        <label>رقم الواتساب</label>
+        <input type="text" id="login-phone" placeholder="9677xxxxxxxx" />
       </div>
-      <div class="login-form">
-        <div class="field">
-          <label for="loginNumber">WhatsApp Number</label>
-          <input id="loginNumber" type="text" placeholder="9677xxxxxxxx" autocomplete="tel" />
-        </div>
-        <div class="field">
-          <label for="loginPassword">Password From Bot Inbox</label>
-          <input id="loginPassword" type="password" placeholder="Enter the password from your bot" autocomplete="current-password" />
-        </div>
-        <div class="login-actions">
-          <button class="btn btn-primary" id="loginBtn">Open settings</button>
-          <a class="btn btn-secondary" href="/">Back to pairing</a>
-        </div>
-        <div class="login-status" id="loginStatus">Ready to verify securely.</div>
+      <div class="input-group" style="text-align:right;">
+        <label>رمز التحقق / كلمة المرور</label>
+        <input type="password" id="admin-pass" placeholder="أدخل رمز التحقق" />
       </div>
+      <button class="btn btn-gold" onclick="login()">دخول اللوحة</button>
     </div>
-  </section>
+  </div>
 
-  <section class="dashboard container" id="dashboard">
-    <div class="panel topbar">
-      <div class="topbar-title">
-        <div class="eyebrow">Linked Bot Settings</div>
-        <h2 id="dashTitle">Settings for —</h2>
-        <div class="badge-row">
-          <span class="chip" id="dashApp">App: default</span>
-          <span class="chip" id="dashOwner">Owner: --</span>
-          <span class="chip" id="dashSession">Session: --</span>
-        </div>
+  <div id="dashboard">
+    <div class="header">
+      <div>
+        <h1 style="margin:0; color: var(--gold);">الملكة الذهبية <span style="font-size: 14px; color: var(--muted);">V2.0</span></h1>
+        <div style="margin-top:5px;">الحالة: <span class="status-badge online" id="bot-status">تم تحميل الإعدادات</span></div>
+        <div style="margin-top:8px; color:var(--muted); font-size:13px;">الرقم الحالي: <span id="linked-number" class="mono">-</span></div>
       </div>
-      <div class="badge-row">
-        <button class="btn btn-secondary" id="refreshBtn">Refresh</button>
-        <button class="btn btn-secondary" id="logoutBtn">Logout</button>
-      </div>
+      <button onclick="logout()" class="btn btn-danger" style="width:auto; min-width:140px; margin-top:0;">تسجيل خروج</button>
     </div>
 
-    <div class="stats">
-      <div class="panel stat"><strong id="statLinked">0</strong><span>Linked Numbers</span></div>
-      <div class="panel stat"><strong id="statSessions">0</strong><span>Active Sessions</span></div>
-      <div class="panel stat"><strong id="statUsers">0</strong><span>Total Users</span></div>
-      <div class="panel stat"><strong id="statPoints">0</strong><span>User Points</span></div>
-    </div>
-
-    <div class="layout">
-      <aside class="panel sidebar">
-        <div class="side-head">
-          <h3>Sections</h3>
-          <p class="muted" style="margin:8px 0 0">All changes save to the linked number profile and apply live.</p>
+    <div class="grid-container">
+      <div class="card">
+        <h3>⚙️ إعدادات الهوية</h3>
+        <div class="input-group">
+          <label>اسم البوت المربوط</label>
+          <input type="text" id="bot-name" placeholder="مثال: GOLDEN QUEEN BOT">
         </div>
-        <div class="side-list" id="sideList">
-          <button class="side-btn active" data-tab="profile">👤 Bot Profile</button>
-          <button class="side-btn" data-tab="automation">⚡ Automation</button>
-          <button class="side-btn" data-tab="status">📊 Status</button>
-          <button class="side-btn" data-tab="protection">🛡 Protection</button>
-          <button class="side-btn" data-tab="replies">💬 Auto Replies</button>
-          <button class="side-btn" data-tab="media">🖼 Images & Media</button>
-          <button class="side-btn" data-tab="schedule">🕒 Group Schedule</button>
-          <button class="side-btn" data-tab="api">🔗 API Sync</button>
+        <div class="input-group">
+          <label>إيموجي التفاعل (Reaction)</label>
+          <input type="text" id="bot-emoji" placeholder="مثال: ✨">
         </div>
-      </aside>
+        <div class="input-group">
+          <label>البادئة (Prefix)</label>
+          <input type="text" id="bot-prefix" placeholder="مثال: . أو #">
+        </div>
+        <div class="input-group">
+          <label>الوضع</label>
+          <select id="bot-mode">
+            <option value="private">خاص</option>
+            <option value="public">عام</option>
+          </select>
+        </div>
+        <button class="btn btn-gold" onclick="updateSettings()">تحديث الإعدادات</button>
+      </div>
 
-      <div class="content">
-        <section class="panel card tab-panel active" data-panel="profile">
-          <div class="eyebrow">Bot Profile</div>
-          <h3>Identity and public bot information</h3>
-          <p>These values appear in menu, alive and welcome messages for the linked number.</p>
-          <div class="form-grid">
-            <div class="field"><label>Bot Name</label><input data-key="name"></div>
-            <div class="field"><label>Country / Region</label><input data-key="from"></div>
-            <div class="field"><label>Bot Age</label><input data-key="age"></div>
-            <div class="field"><label>Command Prefix</label><input data-key="prefix"></div>
-            <div class="field"><label>Footer 2</label><input data-key="footer2"></div>
-            <div class="field"><label>Bot Mode</label><select data-key="mode"><option value="public">public</option><option value="private">private</option><option value="inbox">inbox</option><option value="group">group</option><option value="admin">admin</option></select></div>
-            <div class="field"><label>Owner Name</label><input data-key="ownername"></div>
-            <div class="field"><label>Owner Number</label><input data-key="ownerNumber"></div>
-            <div class="field"><label>Language</label><select data-key="language"><option value="arabic">arabic</option><option value="english">english</option><option value="sinhala">sinhala</option></select></div>
-            <div class="field"><label>Alive Message</label><input data-key="aliveMsg"></div>
-            <div class="field" style="grid-column:1/-1"><label>Bot Description</label><textarea data-key="description"></textarea></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="automation">
-          <div class="eyebrow">Automation</div>
-          <h3>Live automation controls</h3>
-          <p>Saving here updates the linked number immediately and keeps the web panel in sync.</p>
-          <div class="toggle-grid">
-            <div class="toggle"><div class="toggle-head"><strong>Auto Read</strong><select data-key="autoRead"><option value="off">off</option><option value="on">on</option></select></div><p>Mark incoming messages as read automatically.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Always Online</strong><select data-key="alwaysOnline"><option value="off">off</option><option value="on">on</option></select></div><p>Keep the linked number visible online when enabled.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Auto Typing</strong><select data-key="autoTyping"><option value="off">off</option><option value="on">on</option></select></div><p>Show typing indicator on replies.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Auto Recording</strong><select data-key="autoRecording"><option value="off">off</option><option value="on">on</option></select></div><p>Show recording indicator on voice responses.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Ghost Mode</strong><select data-key="ghostMode"><option value="off">off</option><option value="on">on</option></select></div><p>Disable presence and apply privacy-focused live settings.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Auto Save</strong><select data-key="autoSave"><option value="off">off</option><option value="on">on</option></select></div><p>Persist contacts and message backup helpers.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Keep Deleted Status</strong><select data-key="keepDeletedStatus"><option value="off">off</option><option value="on">on</option></select></div><p>Archive status messages after deletion.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti View Once</strong><select data-key="antiViewOnce"><option value="off">off</option><option value="all">all</option></select></div><p>Bypass view-once media when supported.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Auto React Scope</strong><select data-key="autoReactScope"><option value="off">off</option><option value="all">all</option><option value="group">group</option><option value="inbox">inbox</option></select></div><p>Controls where text auto-react logic applies.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>AI Reply Scope</strong><select data-key="aiReplyScope"><option value="off">off</option><option value="all">all</option><option value="group">group</option><option value="inbox">inbox</option></select></div><p>Controls where AI replies are allowed.</p></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="status">
-          <div class="eyebrow">Status</div>
-          <h3>Status auto-read and auto-react</h3>
-          <p>These values also drive the bot-side emoji and reaction behavior.</p>
-          <div class="toggle-grid">
-            <div class="toggle"><div class="toggle-head"><strong>Auto-Read Statuses</strong><select data-key="autoStatusRead"><option value="off">off</option><option value="on">on</option></select></div><p>Read all contact statuses automatically.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Auto-React Statuses</strong><select data-key="autoStatusReact"><option value="off">off</option><option value="on">on</option></select></div><p>React to statuses automatically.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>React to Private Statuses</strong><select data-key="autoPrivateReact"><option value="off">off</option><option value="on">on</option></select></div><p>Allow reactions to private status posts too.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Reaction Notice</strong><select data-key="statusReactionNotice"><option value="off">off</option><option value="on">on</option></select></div><p>Send a confirmation message after reacting.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Status Message Reply</strong><select data-key="statusMsgSend"><option value="off">off</option><option value="on">on</option></select></div><p>Enable replies to status views if configured.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Status Message Type</strong><select data-key="statusMsgType"><option value="default">default</option><option value="custom">custom</option></select></div><p>Choose default or custom reply text.</p></div>
-          </div>
-          <div class="form-grid" style="margin-top:14px">
-            <div class="field"><label>Current Reaction Emoji</label><input data-key="statusCustomReact"></div>
-            <div class="field"><label>Custom Status Message</label><input data-key="customMsg"></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="protection">
-          <div class="eyebrow">Protection</div>
-          <h3>Anti-spam and moderation</h3>
-          <p>Protect groups and private chats with your preferred actions.</p>
-          <div class="toggle-grid">
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Link</strong><select data-key="antiLink"><option value="off">off</option><option value="on">on</option></select></div><p>Remove or block messages containing links.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Bad Words</strong><select data-key="antiBad"><option value="off">off</option><option value="on">on</option></select></div><p>Filter banned words using your list.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Bug</strong><select data-key="antiBug"><option value="off">off</option><option value="on">on</option></select></div><p>Block known crash or bug payloads.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Bot</strong><select data-key="antiBot"><option value="off">off</option><option value="on">on</option></select></div><p>Detect and moderate other bots.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Delete</strong><select data-key="antiDelete"><option value="off">off</option><option value="inbox">inbox</option><option value="group">group</option><option value="all">all</option></select></div><p>Restore deleted messages by scope.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Send Delete To</strong><select data-key="sendDeleteTo"><option value="owner">owner</option><option value="same">same</option></select></div><p>Choose where restored deletes are delivered.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Call</strong><select data-key="antiCall"><option value="off">off</option><option value="on">on</option></select></div><p>Reject or block callers automatically.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Mention</strong><select data-key="antiMention"><option value="off">off</option><option value="on">on</option></select></div><p>Strip or prevent group mentions.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti-Edit</strong><select data-key="antiEdit"><option value="off">off</option><option value="inbox">inbox</option><option value="group">group</option><option value="all">all</option></select></div><p>Restore messages after sender edits them.</p></div>
-            <div class="toggle"><div class="toggle-head"><strong>Anti Action</strong><select data-key="antiAction"><option value="delete">delete</option><option value="wern">wern</option><option value="kick">kick</option></select></div><p>Action used by anti-link / anti-bad-word workflows.</p></div>
-          </div>
-          <div class="form-grid" style="margin-top:14px">
-            <div class="field"><label>Warn Count Before Action</label><input data-key="antiWarnCount"></div>
-            <div class="field"><label>Excluded Call Numbers</label><input data-key="excludeCallNumbers"></div>
-            <div class="field" style="grid-column:1/-1"><label>Banned Links</label><textarea data-key="antiLinkList"></textarea></div>
-            <div class="field" style="grid-column:1/-1"><label>Banned Words</label><textarea data-key="antiBadWords"></textarea></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="replies">
-          <div class="eyebrow">Auto Replies</div>
-          <h3>Keyword replies and voice footer</h3>
-          <p>One reply per line using keyword => response.</p>
-          <div class="form-grid">
-            <div class="field" style="grid-column:1/-1"><label>Auto Reply List</label><textarea data-key="customAutoReplies"></textarea></div>
-            <div class="field"><label>Voice Footer</label><input data-key="voiceFooter"></div>
-            <div class="field"><label>Bot Description Shortcut</label><input data-key="description"></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="media">
-          <div class="eyebrow">Images & Media</div>
-          <h3>Menu and owner image URLs</h3>
-          <p>Leave empty to keep the defaults.</p>
-          <div class="form-grid">
-            <div class="field"><label>Menu Image URL</label><input data-key="menu"></div>
-            <div class="field"><label>Alive Image URL</label><input data-key="alive"></div>
-            <div class="field"><label>Owner Image URL</label><input data-key="owner"></div>
-            <div class="field"><label>Status Custom Emojis</label><input data-key="statusCustomReact"></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="schedule">
-          <div class="eyebrow">Group Schedule</div>
-          <h3>Auto-close and reopen group</h3>
-          <p>Uses the saved timezone for the linked number.</p>
-          <div class="form-grid">
-            <div class="field"><label>Target Group JID</label><input data-key="gaGroupJid"></div>
-            <div class="field"><label>Timezone</label><input data-key="gaTimezone"></div>
-            <div class="field"><label>Close Time (HH:mm)</label><input data-key="gaCloseTime"></div>
-            <div class="field"><label>Open Time (HH:mm)</label><input data-key="gaOpenTime"></div>
-          </div>
-        </section>
-
-        <section class="panel card tab-panel" data-panel="api">
-          <div class="eyebrow">API Sync</div>
-          <h3>Pairing and linked-number sync endpoints</h3>
-          <p>These options are saved per linked number profile.</p>
-          <div class="form-grid">
-            <div class="field"><label>Pair Code API URL</label><input data-key="pairingApiUrl"></div>
-            <div class="field"><label>Pair Code API Method</label><select data-key="pairingApiMethod"><option value="POST">POST</option><option value="GET">GET</option></select></div>
-            <div class="field"><label>Pair Code API Token</label><input data-key="pairingApiToken"></div>
-            <div class="field"><label>Pair Code API Number Field</label><input data-key="pairingApiNumberField"></div>
-            <div class="field"><label>Linked Number Sync URL</label><input data-key="linkedNumberSyncUrl"></div>
-            <div class="field"><label>Linked Number Sync Method</label><select data-key="linkedNumberSyncMethod"><option value="POST">POST</option><option value="GET">GET</option></select></div>
-            <div class="field"><label>Sync Token</label><input data-key="linkedNumberSyncToken"></div>
-            <div class="field"><label>Sync Number Field</label><input data-key="linkedNumberSyncField"></div>
-          </div>
-        </section>
-
-        <div class="panel savebar">
-          <div class="savebar-left">
-            <div class="pill" id="dirtyPill">No unsaved changes</div>
-            <div class="save-status" id="saveStatus">Changes are loaded from the same backend used by the bot.</div>
-          </div>
-          <div class="login-actions">
-            <button class="btn btn-secondary" id="resetBtn">Reset form</button>
-            <button class="btn btn-success" id="saveBtn">Save all settings</button>
-          </div>
+      <div class="card">
+        <h3>🚀 أوامر سريعة</h3>
+        <p class="helper-text">الأوامر السريعة هنا مرتبطة بإعدادات الصفحة الحالية.</p>
+        <div class="command-list">
+          <button class="cmd-btn" onclick="applyQuickMode('public')">الوضع العام</button>
+          <button class="cmd-btn" onclick="applyQuickMode('private')">الوضع الخاص</button>
+          <button class="cmd-btn" onclick="loadSavedData()">تحديث البيانات</button>
+          <button class="cmd-btn" onclick="copySettingsLink()">نسخ رابط الإعدادات</button>
+          <button class="cmd-btn" onclick="reloadPanel()">إعادة تحميل اللوحة</button>
+        </div>
+        <hr style="border:0; border-top:1px solid var(--border); margin: 20px 0;">
+        <div class="input-group">
+          <label>رسالة الوصف / المعلومات التعريفية</label>
+          <textarea id="bot-description" placeholder="اكتب وصف الحساب أو رسالة التعريف..."></textarea>
+          <button class="btn btn-success" onclick="updateSettings()">حفظ الوصف الآن</button>
         </div>
       </div>
-    </div>
-  </section>
 
-  <script src="/settings.js"></script>
+      <div class="card">
+        <h3>📊 الإحصائيات الحالية</h3>
+        <div class="stat-row"><span>الأرقام المربوطة:</span><span id="stat-linked" class="value">0</span></div>
+        <div class="stat-row"><span>المستخدمين:</span><span id="stat-users" class="value">0</span></div>
+        <div class="stat-row"><span>مرات إعادة الاتصال:</span><span id="stat-reconnects" class="value">0</span></div>
+        <div class="stat-row"><span>مرات تشغيل الجلسات:</span><span id="stat-starts" class="value">0</span></div>
+      </div>
+
+      <div class="card">
+        <h3>🧾 معلومات الجلسة</h3>
+        <div class="mini-grid">
+          <div>
+            <label>التطبيق النشط</label>
+            <input type="text" id="active-app" disabled>
+          </div>
+          <div>
+            <label>الرابط الحالي</label>
+            <input type="text" id="current-url" disabled>
+          </div>
+        </div>
+        <p class="helper-text" style="margin-top:14px;">تم ربط هذه اللوحة مباشرة مع واجهات التحميل والحفظ الموجودة داخل المشروع، مع الحفاظ على نفس شكل واجهة مجلد public.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const API = {
+      login: '/api/login',
+      load: '/api/settings/load',
+      save: '/api/settings/save',
+      summary: '/api/linking-site/summary'
+    };
+
+    const state = {
+      phone: '',
+      app: 'default',
+      settings: null
+    };
+
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      toast.style.display = 'block';
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => { toast.style.display = 'none'; }, 3200);
+    }
+
+    function normalizePhone(value) {
+      return String(value || '').replace(/\D/g, '');
+    }
+
+    function setStatus(text, online = true) {
+      const badge = document.getElementById('bot-status');
+      badge.textContent = text;
+      badge.className = `status-badge ${online ? 'online' : 'offline'}`;
+    }
+
+    async function login() {
+      const phone = normalizePhone(document.getElementById('login-phone').value);
+      const pass = document.getElementById('admin-pass').value.trim();
+      if (!phone) return showToast('أدخل رقم الواتساب أولاً', 'error');
+      if (!pass) return showToast('أدخل رمز التحقق أولاً', 'error');
+
+      try {
+        const res = await fetch(API.login, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ num: phone, pass })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || data.message || 'فشل تسجيل الدخول');
+        }
+
+        state.phone = data.number || phone;
+        state.app = data.app || 'default';
+        document.getElementById('linked-number').textContent = state.phone;
+        document.getElementById('active-app').value = state.app;
+        document.getElementById('current-url').value = window.location.href;
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('dashboard').style.display = 'block';
+        setStatus('جاري تحميل الإعدادات...', true);
+        await Promise.all([loadSavedData(), loadStats()]);
+        showToast('تم تسجيل الدخول بنجاح ✨', 'success');
+      } catch (error) {
+        setStatus('فشل تسجيل الدخول', false);
+        showToast(error.message || 'تعذر تسجيل الدخول', 'error');
+      }
+    }
+
+    async function loadSavedData() {
+      if (!state.phone) return;
+      try {
+        const res = await fetch(`${API.load}?num=${encodeURIComponent(state.phone)}&app=${encodeURIComponent(state.app)}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'تعذر جلب الإعدادات');
+        }
+
+        const settings = data.settings || {};
+        state.settings = settings;
+        document.getElementById('bot-name').value = settings.name || '';
+        document.getElementById('bot-emoji').value = settings.statusCustomReact || '';
+        document.getElementById('bot-prefix').value = settings.prefix || '.';
+        document.getElementById('bot-mode').value = settings.mode || 'private';
+        document.getElementById('bot-description').value = settings.description || '';
+        setStatus('تم تحميل الإعدادات بنجاح', true);
+      } catch (error) {
+        setStatus('تعذر تحميل الإعدادات', false);
+        showToast(error.message || 'تعذر تحميل الإعدادات', 'error');
+      }
+    }
+
+    async function updateSettings(extra = {}) {
+      if (!state.phone) return showToast('سجل الدخول أولاً', 'error');
+
+      const payload = {
+        num: state.phone,
+        app: state.app,
+        name: document.getElementById('bot-name').value.trim(),
+        statusCustomReact: document.getElementById('bot-emoji').value.trim(),
+        prefix: document.getElementById('bot-prefix').value.trim() || '.',
+        mode: document.getElementById('bot-mode').value,
+        description: document.getElementById('bot-description').value.trim(),
+        ...extra
+      };
+
+      try {
+        const res = await fetch(API.save, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'فشل حفظ الإعدادات');
+        }
+        state.settings = data.settings || payload;
+        await loadSavedData();
+        showToast('تم تحديث إعدادات الرقم المربوط بنجاح ✨', 'success');
+      } catch (error) {
+        showToast(error.message || 'تعذر حفظ الإعدادات', 'error');
+      }
+    }
+
+    async function applyQuickMode(mode) {
+      document.getElementById('bot-mode').value = mode;
+      await updateSettings({ mode });
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch(API.summary, { cache: 'no-store' });
+        const data = await res.json();
+        document.getElementById('stat-linked').textContent = data.totalLinkedNumbers || data.activeBots || 0;
+        document.getElementById('stat-users').textContent = data.totalUsers || 0;
+        document.getElementById('stat-reconnects').textContent = data.totalReconnects || 0;
+        document.getElementById('stat-starts').textContent = data.totalSessionsStarted || 0;
+      } catch (_) {}
+    }
+
+    function copySettingsLink() {
+      navigator.clipboard.writeText(window.location.href)
+        .then(() => showToast('تم نسخ رابط الإعدادات', 'success'))
+        .catch(() => showToast('تعذر نسخ الرابط', 'error'));
+    }
+
+    function reloadPanel() {
+      Promise.all([loadSavedData(), loadStats()])
+        .then(() => showToast('تم تحديث البيانات', 'info'))
+        .catch(() => showToast('تعذر تحديث البيانات', 'error'));
+    }
+
+    function logout() {
+      state.phone = '';
+      state.app = 'default';
+      state.settings = null;
+      document.getElementById('dashboard').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('admin-pass').value = '';
+      setStatus('تم تسجيل الخروج', false);
+    }
+
+    document.getElementById('admin-pass').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') login();
+    });
+    document.getElementById('login-phone').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') login();
+    });
+  </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79"}' crossorigin="anonymous"></script>
 </body>
 </html>
