@@ -1,209 +1,500 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GOLDEN QUEEN | CONTROL PANEL v2.0</title>
-  <style>
-    :root {
-      --bg: #020617; --panel: #0f172a; --accent: #22c55e; --gold: #d4a017;
-      --text: #f8fafc; --muted: #94a3b8; --border: #1e293b; --danger: #ef4444;
-    }
-    body {
-      margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif;
-      background: var(--bg); color: var(--text); direction: rtl;
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Bot Settings — control your WhatsApp bot">
+    <meta name="theme-color" content="#020408">
+    <title>Bot Settings · Control Panel</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2325D366'><path d='M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 7.5l-5 5-5-5z'/></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        :root {
+            --bg: #020408;
+            --bg-2: #050912;
+            --panel: #0a1525;
+            --panel-2: #0e1d35;
+            --border: rgba(255,255,255,0.06);
+            --border-accent: rgba(37,211,102,0.35);
+            --green: #25D366;
+            --green-dark: #128c4d;
+            --green-light: #4ade80;
+            --cyan: #00d2ff;
+            --purple: #8a5cff;
+            --pink: #ff5ca8;
+            --gold: #d4a017;
+            --text: #f0f6ff;
+            --muted: #8a96ad;
+            --faint: #4a546a;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html, body { background: var(--bg); color: var(--text); font-family:'Inter',system-ui,sans-serif; min-height:100vh; }
+        body::before {
+            content:''; position:fixed; inset:0; z-index:-2;
+            background:
+                radial-gradient(ellipse 900px 600px at 18% 12%, rgba(0,210,255,0.07), transparent 60%),
+                radial-gradient(ellipse 900px 600px at 82% 88%, rgba(138,92,255,0.07), transparent 60%),
+                radial-gradient(ellipse 800px 500px at 50% 50%, rgba(37,211,102,0.05), transparent 60%),
+                linear-gradient(180deg, #020408 0%, #050912 100%);
+        }
+        body::after {
+            content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+        .container { max-width: 1100px; margin: 0 auto; padding: 36px 22px 60px; position:relative; z-index:1; }
 
-    /* شاشة تسجيل الدخول */
-    #login-screen {
-      height: 100vh; display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
-    }
-    .login-box {
-      background: var(--panel); padding: 40px; border-radius: 24px;
-      border: 1px solid var(--border); width: 90%; max-width: 400px; text-align: center;
-      box-shadow: 0 0 30px rgba(212, 160, 23, 0.1);
-    }
-    .login-box h2 { color: var(--gold); margin-bottom: 25px; font-size: 28px; }
+        .top-bar { display:flex; align-items:center; justify-content:space-between; margin-bottom: 26px; flex-wrap:wrap; gap: 16px; }
+        .brand { display:flex; align-items:center; gap:12px; }
+        .brand-icon {
+            width:46px; height:46px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+            background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%);
+            box-shadow: 0 0 28px rgba(37,211,102,0.4); color:#fff;
+        }
+        .brand-name { font-family:'Playfair Display',serif; font-size:1.2rem; font-weight:600; background: linear-gradient(90deg, var(--green-light), var(--cyan)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
 
-    /* واجهة التحكم الأساسية */
-    #dashboard { display: none; padding: 20px; max-width: 1200px; margin: 0 auto; }
-    
-    .header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 20px; background: var(--panel); border-radius: 15px; margin-bottom: 20px;
-      border: 1px solid var(--border);
-    }
+        /* ===== Login Screen ===== */
+        #loginScreen {
+            min-height: 70vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap: 18px;
+        }
+        #loginScreen .lockup { display:flex; flex-direction:column; align-items:center; gap:14px; margin-bottom: 22px; }
+        #loginScreen .lock-icon {
+            width:78px; height:78px; border-radius:22px; display:flex; align-items:center; justify-content:center;
+            background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%);
+            box-shadow: 0 0 32px rgba(37,211,102,0.5); color:#fff; font-size:36px;
+        }
+        #loginScreen h1 { font-size: clamp(1.6rem, 4.5vw, 2.2rem); font-weight:700; text-align:center; }
+        #loginScreen .sub { color: var(--muted); font-size:0.95rem; }
 
-    .grid-container {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;
-    }
+        .login-card {
+            width: 100%; max-width: 460px;
+            background: linear-gradient(180deg, rgba(14,29,53,0.7), rgba(8,14,28,0.85));
+            border:1px solid var(--border-accent); border-radius:22px; padding: 28px 24px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 0 30px rgba(37,211,102,0.10);
+        }
+        .login-card .section-title {
+            display:flex; align-items:center; gap:8px;
+            font-size:0.72rem; letter-spacing:0.18em; text-transform:uppercase; color: var(--green-light); font-weight:700; margin-bottom: 12px;
+        }
+        .login-card .how-to { display:flex; flex-direction:column; gap: 10px; padding: 14px 16px; border-radius:14px; background: rgba(37,211,102,0.06); border:1px solid rgba(37,211,102,0.18); margin-bottom: 16px; }
+        .how-step { display:flex; align-items:center; gap:10px; }
+        .how-step .n { width:24px; height:24px; border-radius:8px; background: linear-gradient(135deg, var(--green), var(--green-dark)); color:#04250f; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:0.8rem; flex:0 0 auto; }
+        .how-step small { color: var(--text); font-size:0.85rem; }
+        .how-step b { color: var(--green-light); }
+        .login-card label { display:block; font-size:0.72rem; letter-spacing:0.18em; text-transform:uppercase; color: var(--cyan); margin: 14px 0 8px; font-weight:700; }
+        .login-card input {
+            width: 100%; background: rgba(2,4,8,0.7); border:1px solid var(--border); border-radius:12px; color: var(--text);
+            padding: 13px 16px 13px 44px; font-size:1rem; outline:none; transition: all 0.2s;
+        }
+        .login-card input:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(37,211,102,0.15); }
+        .login-card input::placeholder { color: var(--faint); }
+        .input-wrap { position:relative; }
+        .input-wrap .ic { position:absolute; left: 14px; top:50%; transform: translateY(-50%); color: var(--muted); font-size: 1.05rem; }
+        .cf-zone {
+            margin-top: 18px; padding: 12px 16px; border-radius:12px; border:1px solid var(--border-accent); background: linear-gradient(135deg, rgba(37,211,102,0.08), rgba(0,210,255,0.06));
+            display:flex; align-items:center; justify-content:space-between;
+        }
+        .cf-zone .status { display:flex; align-items:center; gap:10px; font-size:0.9rem; }
+        .cf-zone .status .ring { width:18px; height:18px; border-radius:50%; background: radial-gradient(circle at center, rgba(74,222,128,0.85), rgba(74,222,128,0.35)); box-shadow:0 0 12px rgba(74,222,128,0.5); animation: pulseRing 1.6s infinite; }
+        @keyframes pulseRing { 0%,100% { transform: scale(1); opacity:1 } 50% { transform: scale(1.15); opacity:0.65 } }
+        .cf-zone .meta { text-align:right; }
+        .cf-zone .meta b { display:block; color: #ffb84a; font-size:0.7rem; letter-spacing:0.18em; }
+        .cf-zone .meta small { color: var(--muted); font-size:0.68rem; }
 
-    .card {
-      background: var(--panel); padding: 25px; border-radius: 20px;
-      border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-    }
+        .btn {
+            display:inline-flex; align-items:center; justify-content:center; gap:10px; width:100%;
+            padding:14px 18px; border:none; cursor:pointer; font-weight:700; font-size:1rem; border-radius:14px; margin-top:18px;
+            background: linear-gradient(90deg, var(--green) 0%, var(--green-dark) 100%); color:#04250f;
+            box-shadow: 0 14px 30px -10px rgba(37,211,102,0.5); transition: transform 0.15s, opacity 0.15s;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn:disabled { opacity:0.6; cursor:not-allowed; transform:none; }
 
-    .card h3 { color: var(--gold); margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        .secure-line { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:14px; color: var(--muted); font-size:0.82rem; }
 
-    /* أدوات التحكم */
-    .input-group { margin-bottom: 15px; }
-    label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 14px; }
-    
-    input, select {
-      width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border);
-      background: #020617; color: white; box-sizing: border-box; outline: none;
-    }
-    
-    input:focus { border-color: var(--gold); }
+        /* ===== Dashboard ===== */
+        #dashScreen { display: none; }
 
-    .btn {
-      padding: 12px 20px; border-radius: 10px; border: none; font-weight: bold;
-      cursor: pointer; transition: 0.3s; width: 100%; margin-top: 10px;
-    }
-    .btn-gold { background: linear-gradient(45deg, var(--gold), #f9d976); color: #000; }
-    .btn-gold:hover { opacity: 0.9; transform: translateY(-2px); }
-    
-    .status-badge {
-      padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold;
-    }
-    .online { background: rgba(34, 197, 94, 0.2); color: var(--accent); }
+        .dash-top { display:flex; align-items:center; justify-content:space-between; gap: 12px; flex-wrap:wrap; margin-bottom: 18px; }
+        .nav-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+        .nav-tab {
+            padding:10px 16px; border-radius:12px; background: rgba(255,255,255,0.02); border:1px solid var(--border);
+            color: var(--muted); cursor:pointer; font-weight:600; font-size:0.85rem; transition: all 0.2s;
+        }
+        .nav-tab.active { background: linear-gradient(135deg, rgba(37,211,102,0.15), rgba(0,210,255,0.10)); border-color: var(--border-accent); color: var(--green-light); }
+        .nav-tab:hover { transform: translateY(-1px); }
 
-    /* قسم الأوامر المباشرة */
-    .command-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
-    .cmd-btn {
-      background: #1e293b; color: white; border: 1px solid var(--border);
-      padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 13px;
-    }
-    .cmd-btn:hover { background: var(--gold); color: black; }
+        .panel {
+            background: linear-gradient(180deg, rgba(14,29,53,0.85), rgba(8,14,28,0.85));
+            border:1px solid var(--border); border-radius:18px; padding:22px; backdrop-filter: blur(10px);
+        }
+        .panel h2 { font-size:1.05rem; margin-bottom:6px; display:flex; align-items:center; gap:10px; }
+        .panel h2 .e { width:30px; height:30px; border-radius:10px; background: rgba(0,210,255,0.12); display:flex; align-items:center; justify-content:center; font-size:0.95rem; }
+        .panel .desc { color: var(--muted); font-size:0.85rem; margin-bottom:16px; }
 
-  </style>
+        .grid-2 { display:grid; grid-template-columns: repeat(2, 1fr); gap:14px; }
+        @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
+        .field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+        .field label { font-size:0.72rem; letter-spacing:0.16em; text-transform:uppercase; color: var(--cyan); font-weight:700; }
+        .field .desc { color: var(--faint); font-size:0.78rem; }
+        .field input[type=text], .field input[type=number], .field input[type=tel], .field textarea, .field select {
+            width:100%; background: rgba(2,4,8,0.7); border:1px solid var(--border); border-radius:10px;
+            color: var(--text); padding: 10px 14px; font-size:0.95rem; outline:none; transition: all 0.2s;
+        }
+        .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(37,211,102,0.15); }
+        .field textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, monospace; font-size:0.85rem; }
+
+        .switch { display:flex; align-items:center; justify-content:space-between; padding: 12px 14px; border-radius:12px; background: rgba(255,255,255,0.02); border:1px solid var(--border); margin-bottom: 10px; gap: 10px; }
+        .switch .lbl { display:flex; flex-direction:column; gap:2px; }
+        .switch .lbl b { font-size:0.92rem; }
+        .switch .lbl small { color: var(--muted); font-size:0.78rem; }
+        .switch .ttl { position:relative; width:44px; height:24px; flex:0 0 auto; }
+        .switch .ttl input { opacity:0; width:0; height:0; }
+        .switch .ttl .slider { position:absolute; inset:0; background:#1f2937; border-radius:24px; cursor:pointer; transition: all 0.2s; }
+        .switch .ttl .slider::before { content:''; position:absolute; height:18px; width:18px; left:3px; top:3px; background:#fff; border-radius:50%; transition: all 0.2s; }
+        .switch .ttl input:checked + .slider { background: linear-gradient(90deg, var(--green), var(--green-dark)); }
+        .switch .ttl input:checked + .slider::before { transform: translateX(20px); }
+
+        .section { display: none; }
+        .section.active { display: block; }
+
+        .actions-row { display:flex; gap:10px; flex-wrap:wrap; margin-top: 18px; }
+        .btn-secondary { background: rgba(255,255,255,0.04); color: var(--text); border:1px solid var(--border); box-shadow:none; }
+        .btn-secondary:hover { transform: translateY(-1px); border-color: var(--border-accent); }
+        .btn-save { background: linear-gradient(90deg, var(--cyan) 0%, var(--purple) 100%); color:#fff; box-shadow: 0 12px 24px -10px rgba(0,210,255,0.5); }
+        .btn-green { background: linear-gradient(90deg, var(--green) 0%, var(--green-dark) 100%); color:#04250f; }
+        .btn-danger { background: linear-gradient(90deg, #ff5c6e 0%, #d43346 100%); color: #fff; }
+
+        .stats-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
+        @media (max-width: 720px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+        .stat-tile { padding:14px; border-radius:14px; background: rgba(255,255,255,0.02); border:1px solid var(--border); display:flex; align-items:center; gap:12px; }
+        .stat-tile .ic { width:38px; height:38px; border-radius:10px; background: rgba(0,210,255,0.12); display:flex; align-items:center; justify-content:center; color: var(--cyan); }
+        .stat-tile b { display:block; font-size:1.2rem; background: linear-gradient(90deg, var(--green-light), var(--cyan)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .stat-tile small { color: var(--muted); font-size:0.72rem; text-transform: uppercase; letter-spacing: 0.14em; }
+
+        .logout-link { color: var(--muted); cursor:pointer; font-size:0.85rem; text-decoration:none; padding: 8px 14px; border:1px solid var(--border); border-radius:10px; background: rgba(255,255,255,0.02); }
+        .logout-link:hover { border-color: var(--border-accent); color: var(--green-light); }
+
+        .swal2-popup { background: #0a1525 !important; color: var(--text) !important; border:1px solid var(--border-accent); border-radius:16px; }
+        .swal2-title { color: var(--text) !important; font-family:'Inter',sans-serif !important; }
+        .swal2-confirm { background: linear-gradient(90deg, var(--green), var(--green-dark)) !important; color: #04250f !important; }
+
+        .footer { margin-top: 30px; text-align:center; color: var(--muted); font-size:0.82rem; }
+        .footer a { color: var(--cyan); text-decoration: none; }
+        .toast-msg { padding: 10px 14px; border-radius: 10px; background: rgba(37,211,102,0.10); border:1px solid var(--border-accent); color: var(--green-light); font-size:0.88rem; margin-top:14px; display:none; }
+        .toast-msg.show { display:block; }
+        .toast-err { background: rgba(255,92,110,0.10); border-color: rgba(255,92,110,0.35); color: #ff9aa6; }
+    </style>
 </head>
 <body>
+    <div class="container">
+        <div class="top-bar">
+            <div class="brand">
+                <div class="brand-icon">🤖</div>
+                <div>
+                    <div class="brand-name">Bot Settings</div>
+                    <div style="color: var(--muted); font-size:0.82rem;">WhatsApp Pair · Control your bot</div>
+                </div>
+            </div>
+            <div id="topRight">
+                <a class="logout-link" id="linkBack" href="/pair">← Back to Pair</a>
+                <a class="logout-link" id="linkLogout" onclick="logout()" style="display:none; margin-left:8px;">Logout</a>
+            </div>
+        </div>
 
-  <!-- شاشة الدخول -->
-  <div id="login-screen">
-    <div class="login-box">
-      <h2>GOLDEN QUEEN</h2>
-      <p style="color: var(--muted);">سجل دخولك للتحكم بالبوت</p>
-      <input type="password" id="admin-pass" placeholder="أدخل رمز التحقق">
-      <button class="btn btn-gold" onclick="login()">دخول اللوحة</button>
+        <!-- Login screen -->
+        <div id="loginScreen">
+            <div class="lockup">
+                <div class="lock-icon">🔒</div>
+                <h1>Bot Settings</h1>
+                <div class="sub">Enter the WhatsApp number and the password issued by your bot to access its settings.</div>
+            </div>
+
+            <div class="login-card">
+                <div class="section-title">⚙ HOW TO GET YOUR PASSWORD</div>
+                <div class="how-to">
+                    <div class="how-step"><div class="n">1</div><small>Use <b>.setting</b> command to your bot 📱</small></div>
+                    <div class="how-step"><div class="n">2</div><small>Bot will reply with your password in inbox 📥</small></div>
+                    <div class="how-step"><div class="n">3</div><small>Copy & paste the password below 🔑</small></div>
+                </div>
+
+                <label>WHATSAPP NUMBER (with country code)</label>
+                <div class="input-wrap">
+                    <span class="ic">📞</span>
+                    <input type="tel" id="phoneInput" placeholder="e.g. 9677XXXXXXXX" autocomplete="off">
+                </div>
+
+                <label>PASSWORD FROM BOT INBOX</label>
+                <div class="input-wrap">
+                    <span class="ic">🔒</span>
+                    <input type="text" id="passwordInput" placeholder="Paste password here…" autocomplete="off">
+                </div>
+
+                <div class="cf-zone">
+                    <div class="status">
+                        <span class="ring"></span>
+                        <div>
+                            <div id="cfStatus"><b>Checking…</b></div>
+                            <small style="color: var(--muted); font-size:0.72rem;">Verifying your request securely</small>
+                        </div>
+                    </div>
+                    <div class="meta">
+                        <b>CLOUDFLARE</b>
+                        <small>Privacy · Help</small>
+                    </div>
+                </div>
+
+                <button class="btn" id="accessBtn" onclick="login()">🤖 Access Bot Settings</button>
+                <div class="secure-line">🔒 Settings saved securely to MongoDB</div>
+            </div>
+        </div>
+
+        <!-- Dashboard -->
+        <div id="dashScreen">
+            <div class="dash-top">
+                <div>
+                    <h1 style="font-size:1.4rem;">Settings for <span id="dashboardPhone" style="background: linear-gradient(90deg, var(--green-light), var(--cyan)); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">—</span></h1>
+                    <div style="color: var(--muted); font-size:0.85rem;">All settings are saved <b style="color: var(--green-light);">per WhatsApp number</b>. Switch numbers to manage another bot.</div>
+                </div>
+                <div>
+                    <button class="btn btn-secondary" onclick="saveAll()" style="margin:0; width:auto; padding: 10px 18px; font-size: 0.85rem;">💾 Save All</button>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-tile"><div class="ic">👥</div><div><b id="stBots">0</b><small>Linked Numbers</small></div></div>
+                <div class="stat-tile"><div class="ic">⚡</div><div><b id="stCommands">120+</b><small>Commands</small></div></div>
+                <div class="stat-tile"><div class="ic">⏱</div><div><b>99.9%</b><small>Uptime</small></div></div>
+                <div class="stat-tile"><div class="ic">🎧</div><div><b>24/7</b><small>Support</small></div></div>
+            </div>
+
+            <div class="nav-tabs" id="navTabs">
+                <div class="nav-tab active" data-section="secProfile">👤 Profile</div>
+                <div class="nav-tab" data-section="secAutomation">⚡ Automation</div>
+                <div class="nav-tab" data-section="secStatus">📊 Status</div>
+                <div class="nav-tab" data-section="secAnti">🛡 Anti-protection</div>
+                <div class="nav-tab" data-section="secAutoReply">💬 Auto Replies</div>
+                <div class="nav-tab" data-section="secImages">🖼 Custom Images</div>
+                <div class="nav-tab" data-section="secGroup">🕒 Group Schedule</div>
+                <div class="nav-tab" data-section="secApi">🔗 API Sync</div>
+            </div>
+
+            <!-- PROFILE -->
+            <div class="section active" id="secProfile">
+                <div class="panel">
+                    <h2><span class="e">👤</span> Bot Profile</h2>
+                    <p class="desc">These are shown on commands and welcome messages. Each number has its own profile.</p>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label>Bot Name</label>
+                            <input type="text" data-key="name" placeholder="e.g. SULA MD">
+                        </div>
+                        <div class="field">
+                            <label>Country / Region</label>
+                            <input type="text" data-key="from" placeholder="e.g. Yemen">
+                        </div>
+                        <div class="field">
+                            <label>Bot Age</label>
+                            <input type="text" data-key="age" placeholder="e.g. 24">
+                        </div>
+                        <div class="field">
+                            <label>Command Prefix</label>
+                            <input type="text" data-key="prefix" placeholder=".">
+                        </div>
+                        <div class="field">
+                            <label>Footer 2</label>
+                            <input type="text" data-key="footer2" placeholder="SULA MD">
+                        </div>
+                        <div class="field">
+                            <label>Bot Mode</label>
+                            <select data-key="mode">
+                                <option value="public">Public (anyone can use)</option>
+                                <option value="private">Private (owner only)</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Owner Name</label>
+                            <input type="text" data-key="ownername" placeholder="Owner display name">
+                        </div>
+                        <div class="field">
+                            <label>Owner Number</label>
+                            <input type="tel" data-key="ownerNumber" placeholder="Phone number">
+                        </div>
+                        <div class="field" style="grid-column: 1 / -1;">
+                            <label>Bot Description</label>
+                            <textarea data-key="description" placeholder="Short description shown in .menu / .alive"></textarea>
+                        </div>
+                        <div class="field">
+                            <label>Language</label>
+                            <select data-key="language">
+                                <option value="en">English</option>
+                                <option value="ar">Arabic</option>
+                                <option value="si">Sinhala</option>
+                                <option value="ur">Urdu</option>
+                                <option value="hi">Hindi</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Alive Message</label>
+                            <input type="text" data-key="aliveMsg" placeholder="Custom alive text">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AUTOMATION -->
+            <div class="section" id="secAutomation">
+                <div class="panel">
+                    <h2><span class="e">⚡</span> Automation</h2>
+                    <p class="desc">Auto features that apply whenever this number is online.</p>
+                    <label class="switch"><div class="lbl"><b>Auto Read Messages</b><small>Mark incoming messages as read automatically.</small></div><label class="ttl"><input type="checkbox" data-key="autoRead" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Always Online (Presence)</b><small>Show online presence continuously.</small></div><label class="ttl"><input type="checkbox" data-key="alwaysOnline" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Auto Typing</b><small>Show typing indicator on responses.</small></div><label class="ttl"><input type="checkbox" data-key="autoTyping" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Auto Recording</b><small>Show recording indicator on voice replies.</small></div><label class="ttl"><input type="checkbox" data-key="autoRecording" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Ghost Mode</b><small>Disable presence even when auto presence is on.</small></div><label class="ttl"><input type="checkbox" data-key="ghostMode" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Auto Save Contacts/Messages</b><small>Persist contacts and message backups.</small></div><label class="ttl"><input type="checkbox" data-key="autoSave" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Keep Deleted Status</b><small>Archive status messages when deleted.</small></div><label class="ttl"><input type="checkbox" data-key="keepDeletedStatus" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Anti View Once Bypass</b><small>View view-once media anyway.</small></div><label class="ttl"><input type="checkbox" data-key="antiViewOnce" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Auto React Scope — All chats</b><small>If enabled, react in DMs too. Otherwise groups only.</small></div><label class="ttl"><input type="checkbox" data-key="autoReactScope" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>AI Reply Scope — All chats</b><small>If enabled, AI replies in DMs too.</small></div><label class="ttl"><input type="checkbox" data-key="aiReplyScope" data-type="toggle"><span class="slider"></span></label></label>
+                </div>
+            </div>
+
+            <!-- STATUS -->
+            <div class="section" id="secStatus">
+                <div class="panel">
+                    <h2><span class="e">📊</span> Status</h2>
+                    <p class="desc">Auto-reactions on WhatsApp Status posts and auto-replies. Set the emoji used.</p>
+                    <label class="switch"><div class="lbl"><b>Auto-Read Statuses</b><small>Mark all contact statuses as read.</small></div><label class="ttl"><input type="checkbox" data-key="autoStatusRead" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Auto-React Statuses</b><small>Auto-react to contacts' status updates.</small></div><label class="ttl"><input type="checkbox" data-key="autoStatusReact" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>React to Private Statuses</b><small>React on private (DM-only) status posts too.</small></div><label class="ttl"><input type="checkbox" data-key="autoPrivateReact" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Reaction Notice</b><small>Send a confirmation message after reacting.</small></div><label class="ttl"><input type="checkbox" data-key="statusReactionNotice" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Auto-react messages (DM/Groups)</b><small>Auto-react on text messages.</small></div><label class="ttl"><input type="checkbox" data-key="status_reaction" data-type="toggle"><span class="slider"></span></label></label>
+                    <div class="grid-2" style="margin-top:12px;">
+                        <div class="field">
+                            <label>Current Reaction Emoji</label>
+                            <input type="text" data-key="current_emoji" placeholder="❤️" maxlength="6">
+                            <div class="desc">Applies if no per-contact emoji is set.</div>
+                        </div>
+                        <div class="field">
+                            <label>Per-Contact Map (JSON or comma)</label>
+                            <input type="text" data-key="emojiMap" placeholder="967xxx:🔥, 967xxx:💚">
+                            <div class="desc">Phone:Emoji pairs separated by , or new lines.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ANTI -->
+            <div class="section" id="secAnti">
+                <div class="panel">
+                    <h2><span class="e">🛡</span> Anti-protection</h2>
+                    <p class="desc">Protections against spammers, bad words, link droppers and unwanted edits.</p>
+                    <label class="switch"><div class="lbl"><b>Anti-Link</b><small>Block messages containing links.</small></div><label class="ttl"><input type="checkbox" data-key="antiLink" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Anti-Bad Words</b><small>Block messages containing banned words.</small></div><label class="ttl"><input type="checkbox" data-key="antiBadWord" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Anti-Bug</b><small>Remove bug / crash messages.</small></div><label class="ttl"><input type="checkbox" data-key="antiBug" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Anti-Bot</b><small>Detect and remove other bots.</small></div><label class="ttl"><input type="checkbox" data-key="antiBot" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Anti-Mention</b><small>Strip @mentions in groups.</small></div><label class="ttl"><input type="checkbox" data-key="antiMention" data-type="toggle"><span class="slider"></span></label></label>
+                    <label class="switch"><div class="lbl"><b>Anti-Edit</b><small>Restore messages when sender edits them.</small></div><label class="ttl"><input type="checkbox" data-key="antiEdit" data-type="toggle"><span class="slider"></span></label></label>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label>Anti-Action</label>
+                            <select data-key="antiAction">
+                                <option value="warn">Warn then kick</option>
+                                <option value="kick">Kick immediately</option>
+                                <option value="delete">Delete only</option>
+                                <option value="off">Off</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Warn Count Before Action</label>
+                            <input type="number" data-key="antiWarnCount" placeholder="3" min="1" max="9">
+                        </div>
+                        <div class="field" style="grid-column: 1 / -1;">
+                            <label>Banned Links (comma or new line)</label>
+                            <textarea data-key="antiLinkList" placeholder="https://spam.example.com, t.me/spam"></textarea>
+                        </div>
+                        <div class="field" style="grid-column: 1 / -1;">
+                            <label>Banned Words (comma or new line)</label>
+                            <textarea data-key="antiBadWords" placeholder="bad1, bad2"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AUTO REPLIES -->
+            <div class="section" id="secAutoReply">
+                <div class="panel">
+                    <h2><span class="e">💬</span> Custom Auto Replies</h2>
+                    <p class="desc">Format: <code style="background: rgba(0,210,255,0.08); padding: 2px 8px; border-radius: 6px;">keyword =&gt; reply text</code> (one pair per line, max 30 pairs).</p>
+                    <div class="field">
+                        <label>Auto Reply List</label>
+                        <textarea data-key="customAutoReplies" style="min-height: 200px;" placeholder="hi => Hello! 👋&#10;price => Please contact support.&#10;off => (send 'off' from bot chat to clear)"></textarea>
+                    </div>
+                    <label class="switch"><div class="lbl"><b>AI Auto Reply Enabled</b><small>Replies via AI when no keyword matches.</small></div><label class="ttl"><input type="checkbox" data-key="auto_reply_enabled" data-type="toggle"><span class="slider"></span></label></label>
+                </div>
+            </div>
+
+            <!-- IMAGES -->
+            <div class="section" id="secImages">
+                <div class="panel">
+                    <h2><span class="e">🖼</span> Custom Images</h2>
+                    <p class="desc">Image URLs shown on menu / alive / owner / status-message commands (optional, leave empty to use defaults).</p>
+                    <div class="grid-2">
+                        <div class="field"><label>Menu Image URL</label><input type="text" data-key="menu" placeholder="https://…/menu.jpg"></div>
+                        <div class="field"><label>Alive Image URL</label><input type="text" data-key="alive" placeholder="https://…/alive.jpg"></div>
+                        <div class="field"><label>Owner Image URL</label><input type="text" data-key="owner" placeholder="https://…/owner.jpg"></div>
+                        <div class="field"><label>Status Custom Emojis (≤ 10)</label><input type="text" data-key="statusCustomReact" placeholder="❤️, 💚, 🔥, 😂, 😍"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GROUP SCHEDULE -->
+            <div class="section" id="secGroup">
+                <div class="panel">
+                    <h2><span class="e">🕒</span> Group Schedule (Close/Open)</h2>
+                    <p class="desc">Auto-close groups at the configured time and reopen them at the open time. Uses Timezone.</p>
+                    <div class="grid-2">
+                        <div class="field"><label>Target Group JID</label><input type="text" data-key="gaGroupJid" placeholder="120363…@g.us"></div>
+                        <div class="field"><label>Timezone</label><input type="text" data-key="gaTimezone" placeholder="Asia/Aden"></div>
+                        <div class="field"><label>Close Time (HH:mm)</label><input type="text" data-key="gaCloseTime" placeholder="23:00"></div>
+                        <div class="field"><label>Open Time (HH:mm)</label><input type="text" data-key="gaOpenTime" placeholder="07:00"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API SYNC -->
+            <div class="section" id="secApi">
+                <div class="panel">
+                    <h2><span class="e">🔗</span> API Sync (Pairing + Linked numbers)</h2>
+                    <p class="desc">Forward pair events and linked numbers to your own backend. These options are per-number.</p>
+                    <div class="grid-2">
+                        <div class="field"><label>Pair Code API URL</label><input type="text" data-key="pair_code_api_url" placeholder="https://your-api.example.com/pair"></div>
+                        <div class="field"><label>Pair Code API Method</label><select data-key="pair_code_api_method"><option>POST</option><option>GET</option></select></div>
+                        <div class="field"><label>Pair Code API Token</label><input type="text" data-key="pair_code_api_token" placeholder="Bearer token"></div>
+                        <div class="field"><label>Pair Code API Number Field</label><input type="text" data-key="pair_code_api_number_field" placeholder="phone"></div>
+                        <div class="field"><label>Linked Number Sync URL</label><input type="text" data-key="linked_number_sync_url" placeholder="https://your-api…/linked"></div>
+                        <div class="field"><label>Linked Number Sync Method</label><select data-key="linked_number_sync_method"><option>POST</option><option>GET</option></select></div>
+                        <div class="field"><label>Sync Token</label><input type="text" data-key="linked_number_sync_token" placeholder="Bearer token"></div>
+                        <div class="field"><label>Sync Number Field</label><input type="text" data-key="linked_number_sync_number_field" placeholder="phoneNumber"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="toast-msg" id="toast"></div>
+
+            <div class="footer">
+                Always Online · Auto Reconnect · No Account Needed · <a href="/pair">Pair page →</a>
+            </div>
+        </div>
     </div>
-  </div>
 
-  <!-- لوحة التحكم -->
-  <div id="dashboard">
-    <div class="header">
-      <div>
-        <h1 style="margin:0; color: var(--gold);">الملكة الذهبية <span style="font-size: 14px; color: var(--muted);">V2.0</span></h1>
-        <div style="margin-top:5px;">الحالة: <span class="status-badge online" id="bot-status">متصل بالرقم المربوط</span></div>
-      </div>
-      <button onclick="location.reload()" class="btn" style="width:auto; background:var(--danger); color:white;">تسجيل خروج</button>
-    </div>
-
-    <div class="grid-container">
-      <!-- إعدادات البوت الأساسية -->
-      <div class="card">
-        <h3>⚙️ إعدادات الهوية</h3>
-        <div class="input-group">
-          <label>اسم البوت المربوط</label>
-          <input type="text" id="bot-name" placeholder="مثال: GOLDEN QUEEN BOT">
-        </div>
-        <div class="input-group">
-          <label>إيموجي التفاعل (Reaction)</label>
-          <input type="text" id="bot-emoji" placeholder="مثال: ✨">
-        </div>
-        <div class="input-group">
-          <label>البادئة (Prefix)</label>
-          <input type="text" id="bot-prefix" placeholder="مثال: . أو #">
-        </div>
-        <button class="btn btn-gold" onclick="updateSettings()">تحديث الإعدادات</button>
-      </div>
-
-      <!-- التحكم في الأوامر -->
-      <div class="card">
-        <h3>🚀 أوامر سريعة</h3>
-        <p style="font-size: 13px; color: var(--muted);">نفذ الأوامر مباشرة على الرقم المربوط:</p>
-        <div class="command-list">
-          <button class="cmd-btn" onclick="sendCommand('تشغيل الوضع العام')">الوضع العام</button>
-          <button class="cmd-btn" onclick="sendCommand('تشغيل الوضع الخاص')">الوضع الخاص</button>
-          <button class="cmd-btn" onclick="sendCommand('تصفية المجموعات')">تصفية</button>
-          <button class="cmd-btn" onclick="sendCommand('فحص التحديثات')">تحديث السورس</button>
-          <button class="cmd-btn" onclick="sendCommand('إعادة تشغيل')">إعادة تشغيل</button>
-        </div>
-        <hr style="border:0; border-top:1px solid var(--border); margin: 20px 0;">
-        <div class="input-group">
-          <label>إرسال رسالة برودكاست للكل</label>
-          <input type="text" id="broadcast-msg" placeholder="اكتب الرسالة هنا...">
-          <button class="btn btn-gold" style="background: var(--accent); color: white;" onclick="broadcast()">إرسال الآن</button>
-        </div>
-      </div>
-
-      <!-- إحصائيات -->
-      <div class="card">
-        <h3>📊 الإحصائيات الحالية</h3>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span>المجموعات:</span>
-          <span id="stat-groups" style="color:var(--gold)">142</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span>المستخدمين:</span>
-          <span id="stat-users" style="color:var(--gold)">1,205</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span>الأوامر المنفذة:</span>
-          <span id="stat-cmds" style="color:var(--gold)">8,432</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    // نظام تسجيل دخول بسيط
-    function login() {
-      const pass = document.getElementById('admin-pass').value;
-      if(pass === "1234") { // يمكنك تغيير الرمز هنا
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('dashboard').style.display = 'block';
-        loadSavedData();
-      } else {
-        alert("رمز التحقق غير صحيح!");
-      }
-    }
-
-    // تحديث الإعدادات وحفظها
-    function updateSettings() {
-      const name = document.getElementById('bot-name').value;
-      const emoji = document.getElementById('bot-emoji').value;
-      const prefix = document.getElementById('bot-prefix').value;
-
-      // حفظ في المتصفح (كمثال) - في الواقع يتم الربط بـ API الخاص بك
-      localStorage.setItem('bot_name', name);
-      localStorage.setItem('bot_emoji', emoji);
-      localStorage.setItem('bot_prefix', prefix);
-
-      alert("تم تحديث إعدادات الرقم المربوط بنجاح ✨");
-    }
-
-    // إرسال أوامر (محاكاة)
-    function sendCommand(cmd) {
-      const emoji = localStorage.getItem('bot_emoji') || '✨';
-      console.log(`Sending command: ${cmd}`);
-      alert(`${emoji} تم إرسال أمر [ ${cmd} ] للرقم المربوط`);
-    }
-
-    function broadcast() {
-      const msg = document.getElementById('broadcast-msg').value;
-      if(!msg) return alert("اكتب رسالة أولاً");
-      alert("جاري نشر الرسالة لجميع المحادثات...");
-    }
-
-    // تحميل البيانات المحفوظة عند فتح اللوحة
-    function loadSavedData() {
-      document.getElementById('bot-name').value = localStorage.getItem('bot_name') || "GOLDEN QUEEN";
-      document.getElementById('bot-emoji').value = localStorage.getItem('bot_emoji') || "👑";
-      document.getElementById('bot-prefix').value = localStorage.getItem('bot_prefix') || ".";
-    }
-  </script>
+    <script src="/settings.js"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79"}' crossorigin="anonymous"></script>
 </body>
 </html>

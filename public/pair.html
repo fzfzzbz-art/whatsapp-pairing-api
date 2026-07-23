@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="WhatsApp Bot Platform - Pair code or QR scan, 100% free">
+    <meta name="theme-color" content="#020408">
+    <title>WhatsApp Pair · Connect in 30s</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300d2ff'><path d='M13 2L3 14h7l-1 8 10-12h-7l1-8z'/></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        :root {
+            --bg: #020408;
+            --bg-2: #050a14;
+            --panel: #0a1224;
+            --panel-2: #0e1a30;
+            --border: rgba(255,255,255,0.06);
+            --border-accent: rgba(0,210,255,0.35);
+            --cyan: #00d2ff;
+            --cyan-dark: #3a7bd5;
+            --purple: #8a5cff;
+            --pink: #ff5ca8;
+            --green: #25D366;
+            --green-light: #4ade80;
+            --text: #f0f6ff;
+            --muted: #8a96ad;
+            --faint: #4a546a;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html, body { background: var(--bg); color: var(--text); font-family:'Inter',system-ui,sans-serif; min-height:100vh; overflow-x:hidden; }
+        body::before {
+            content:''; position:fixed; inset:0; z-index:-2;
+            background:
+                radial-gradient(ellipse 900px 600px at 18% 12%, rgba(0,210,255,0.10), transparent 60%),
+                radial-gradient(ellipse 900px 600px at 82% 88%, rgba(138,92,255,0.10), transparent 60%),
+                radial-gradient(ellipse 700px 500px at 50% 50%, rgba(255,92,168,0.05), transparent 60%),
+                linear-gradient(180deg, #020408 0%, #050912 100%);
+        }
+        body::after {
+            content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        .container { max-width:1180px; margin:0 auto; padding:36px 22px 60px; position:relative; z-index:1; }
+        .top-bar { display:flex; align-items:center; justify-content:space-between; margin-bottom:28px; }
+        .brand { display:flex; align-items:center; gap:12px; }
+        .brand-icon {
+            width:46px; height:46px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+            background: linear-gradient(135deg, var(--cyan) 0%, var(--purple) 100%);
+            box-shadow: 0 0 32px rgba(0,210,255,0.4);
+            color:#fff; font-weight:800;
+        }
+        .brand-name { font-family:'Playfair Display',serif; font-size:1.25rem; font-weight:600; background: linear-gradient(90deg, var(--cyan), var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .pill {
+            display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px;
+            background: rgba(255,255,255,0.04); border:1px solid var(--border); color:var(--muted); font-size:0.82rem;
+        }
+        .dot { width:8px; height:8px; border-radius:50%; background: var(--green); box-shadow:0 0 10px var(--green); animation: pulse 1.6s infinite; }
+        @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.35 } }
+        .hero { text-align:center; padding:34px 12px 20px; }
+        .badge {
+            display:inline-flex; align-items:center; gap:10px; padding:8px 16px; border-radius:999px;
+            background: linear-gradient(90deg, rgba(0,210,255,0.10), rgba(138,92,255,0.10));
+            border:1px solid var(--border-accent); color: var(--cyan); font-size:0.78rem; letter-spacing:0.18em; text-transform:uppercase; font-weight:600;
+            margin-bottom: 18px;
+        }
+        .badge-gradient {
+            background: linear-gradient(90deg, #ff5ca8, #8a5cff); color:#fff; padding:6px 12px; border-radius:999px; font-size:0.72rem; font-weight:700;
+        }
+        h1 { font-size: clamp(2.2rem, 5.5vw, 3.6rem); font-weight:800; line-height:1.05; margin: 6px 0 14px; }
+        h1 .gradient { background: linear-gradient(90deg, var(--cyan), var(--purple) 50%, var(--pink)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .sub { color: var(--muted); font-size:1.05rem; max-width:680px; margin: 0 auto 28px; }
+        .stats { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin: 22px 0 34px; }
+        .stat {
+            padding:12px 22px; border-radius:14px; background: rgba(10,18,36,0.6);
+            border:1px solid var(--border); backdrop-filter: blur(8px);
+        }
+        .stat b { display:block; font-size:1.4rem; background: linear-gradient(90deg, var(--cyan), var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .stat span { font-size:0.72rem; color: var(--muted); text-transform:uppercase; letter-spacing:0.14em; }
+        .layout { display:grid; grid-template-columns: 1.2fr 1fr; gap:22px; align-items:stretch; }
+        @media (max-width: 920px) { .layout { grid-template-columns: 1fr; } }
+        .panel {
+            background: linear-gradient(180deg, rgba(14,26,48,0.92), rgba(8,14,28,0.92));
+            border:1px solid var(--border); border-radius:22px; padding:26px;
+            backdrop-filter: blur(10px);
+        }
+        .panel h2 { font-size:1.15rem; margin-bottom:4px; display:flex; align-items:center; gap:10px; }
+        .panel h2 .ico { width:34px; height:34px; border-radius:10px; background: linear-gradient(135deg, var(--cyan), var(--cyan-dark)); display:inline-flex; align-items:center; justify-content:center; }
+        .panel .desc { color: var(--muted); font-size:0.85rem; margin-bottom:18px; }
+        .label { display:block; font-size:0.72rem; letter-spacing:0.16em; text-transform:uppercase; color: var(--cyan); margin: 10px 0 8px; font-weight:700; }
+        input[type=tel], textarea {
+            width:100%; background: rgba(2,4,8,0.7); border:1px solid var(--border); border-radius:12px;
+            color: var(--text); padding:14px 16px; font-size:1rem; outline:none; transition:all 0.2s;
+        }
+        input[type=tel]:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 4px rgba(0,210,255,0.15); }
+        input[type=tel]::placeholder { color: var(--faint); }
+        .check-row { display:flex; align-items:flex-start; gap:10px; margin: 12px 0; padding:10px 12px; background: rgba(255,255,255,0.02); border-radius:10px; }
+        .check-row input { accent-color: var(--cyan); margin-top:3px; }
+        .check-row span { color: var(--muted); font-size:0.85rem; }
+        .check-row a { color: var(--cyan); }
+        .btn {
+            display:inline-flex; align-items:center; justify-content:center; gap:10px; width:100%;
+            padding:15px 18px; border:none; cursor:pointer; font-weight:700; font-size:1rem; border-radius:14px; margin-top:14px;
+            background: linear-gradient(90deg, var(--cyan) 0%, var(--purple) 100%);
+            color:#fff; transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+            box-shadow: 0 14px 30px -10px rgba(0,210,255,0.5);
+        }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 18px 38px -10px rgba(138,92,255,0.6); }
+        .btn:disabled { opacity:0.6; cursor:not-allowed; transform:none; box-shadow:none; }
+        .btn-green { background: linear-gradient(90deg, var(--green) 0%, #1faa55 100%); box-shadow: 0 14px 30px -10px rgba(37,211,102,0.5); }
+        .btn-max { background: linear-gradient(90deg, var(--pink) 0%, var(--purple) 100%); box-shadow: 0 14px 30px -10px rgba(255,92,168,0.5); }
+        .code-card { display:none; padding:0; margin-top:18px; border-radius:18px; overflow:hidden; border:1px solid var(--border-accent); background: linear-gradient(180deg, rgba(0,210,255,0.04), transparent); }
+        .code-card.visible { display:block; }
+        .code-card .head { padding:14px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+        .head .badge-sm { padding:4px 10px; background: rgba(0,210,255,0.12); border:1px solid var(--border-accent); border-radius:999px; color: var(--cyan); font-size:0.72rem; font-weight:700; letter-spacing:0.14em; }
+        .code-card .body { padding:24px 18px; text-align:center; }
+        .pair-code { font-family:'JetBrains Mono',ui-monospace,monospace; font-size: clamp(1.7rem, 4.5vw, 2.6rem); font-weight:800; letter-spacing:6px; color: var(--cyan); text-shadow:0 0 24px rgba(0,210,255,0.4); margin-bottom:16px; }
+        .timer { font-size:0.9rem; color: var(--muted); }
+        .timer .t { color: var(--pink); font-weight:700; }
+        .copy-btn { padding:9px 14px; border-radius:10px; background: rgba(0,210,255,0.16); border:1px solid var(--border-accent); color: var(--cyan); cursor:pointer; font-weight:600; font-size:0.85rem; }
+        .copy-btn:hover { background: rgba(0,210,255,0.28); }
+        .sub-actions { display:flex; gap:10px; margin-top:14px; justify-content:center; flex-wrap:wrap; }
+        .error-msg { color:#ff5c6e; background: rgba(255,92,110,0.08); border:1px solid rgba(255,92,110,0.3); padding:12px; border-radius:10px; margin-top:14px; font-size:0.88rem; display:none; }
+        .error-msg.visible { display:block; }
+        .steps { display:grid; gap:12px; }
+        .step { display:flex; gap:14px; padding:14px 16px; border-radius:14px; background: rgba(255,255,255,0.02); border:1px solid var(--border); }
+        .step .num { width:34px; height:34px; border-radius:10px; flex:0 0 auto; background: linear-gradient(135deg, var(--cyan), var(--purple)); color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; }
+        .step .body strong { display:block; font-size:0.95rem; margin-bottom:4px; }
+        .step .body small { color: var(--muted); font-size:0.82rem; }
+        .feat-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; margin-top:18px; }
+        @media (max-width:720px) { .feat-grid { grid-template-columns: repeat(3, 1fr); } }
+        .feat { padding:14px 8px; border-radius:12px; background: rgba(255,255,255,0.02); border:1px solid var(--border); text-align:center; font-size:0.78rem; color: var(--muted); transition: transform 0.15s, border-color 0.15s; }
+        .feat:hover { transform: translateY(-2px); border-color: var(--border-accent); }
+        .feat .e { font-size:1.4rem; display:block; margin-bottom:4px; }
+        .important { margin-top:26px; padding:18px; border-radius:16px; border:1px dashed rgba(255,92,168,0.45); background: rgba(255,92,168,0.06); }
+        .important h3 { color: var(--pink); font-size:1rem; margin-bottom:6px; }
+        .important p { color: var(--muted); font-size:0.88rem; }
+        .status-bar { display:flex; align-items:center; gap:12px; padding:14px 16px; border-radius:14px; background: rgba(10,18,36,0.6); border:1px solid var(--border); margin-top:14px; }
+        .status-bar .ic { width:34px; height:34px; border-radius:10px; background: rgba(0,210,255,0.12); display:flex; align-items:center; justify-content:center; color: var(--cyan); }
+        .status-bar .txt { font-size:0.85rem; color: var(--muted); }
+        .status-bar .ok { color: var(--green-light); }
+        .swal2-popup { background: #0a1224 !important; color: var(--text) !important; border:1px solid var(--border-accent); border-radius:16px; }
+        .swal2-title { color: var(--text) !important; }
+        .swal2-confirm { background: linear-gradient(90deg, var(--cyan), var(--purple)) !important; }
+        .footer { text-align:center; padding:34px 16px 8px; color: var(--muted); font-size:0.82rem; }
+        .footer a { color: var(--cyan); text-decoration:none; }
+        .wa-emoji { font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="top-bar">
+            <div class="brand">
+                <div class="brand-icon">⚡</div>
+                <div>
+                    <div class="brand-name">WA Pair · Connect</div>
+                    <div class="pill"><span class="dot"></span>Live · Free · Always Online</div>
+                </div>
+            </div>
+            <div class="pill"><span>🌐</span> Multi-Device · v7.0</div>
+        </div>
+
+        <div class="hero">
+            <div class="badge">
+                <span class="badge-gradient">VERIFIED</span>
+                <span>Deploy your WhatsApp Bot in 30 seconds</span>
+            </div>
+            <h1>
+                <span class="wa-emoji">💬</span>
+                Connect <span class="gradient">WhatsApp</span><br>
+                Pair code or QR scan
+            </h1>
+            <p class="sub">Pair your secondary WhatsApp number through a 60-second connection. The bot will stay online, auto-reconnect, and run normally until you sign out.</p>
+            <div class="stats">
+                <div class="stat"><b>100+</b><span>APIs</span></div>
+                <div class="stat"><b>2.4K+</b><span>Active Bots</span></div>
+                <div class="stat"><b>99.9%</b><span>Uptime</span></div>
+                <div class="stat"><b>30s</b><span>Setup Time</span></div>
+            </div>
+        </div>
+
+        <div class="layout">
+            <div class="panel" id="panelPair">
+                <h2><span class="ico">📞</span> Connect your WhatsApp</h2>
+                <p class="desc">Enter the phone number (with country code) for the SECONDARY WhatsApp that will run the bot. A pairing code will be issued instantly and stays valid for 60 seconds.</p>
+
+                <label class="label">WHATSAPP NUMBER</label>
+                <input type="tel" id="phoneInput" placeholder="e.g. 9677XXXXXXXX" autocomplete="off">
+
+                <label class="check-row">
+                    <input type="checkbox" id="agree" checked>
+                    <span>I understand this is for a secondary WhatsApp number only. I accept the bot's <a href="#" onclick="return false">Terms of Service</a>.</span>
+                </label>
+
+                <button class="btn" id="generateBtn" onclick="generatePairCode()">
+                    <span>⚡</span> Generate Pair Code
+                </button>
+
+                <div class="error-msg" id="errBox"></div>
+
+                <div class="code-card" id="codeCard">
+                    <div class="head">
+                        <span class="badge-sm">✅ CODE READY</span>
+                        <div style="margin-left:auto;"><button class="copy-btn" id="copyBtn" onclick="copyCode()">📋 Copy</button></div>
+                    </div>
+                    <div class="body">
+                        <div class="pair-code" id="pairCode">——</div>
+                        <div class="timer">⏳ Code expires in <span class="t" id="timer">60</span> seconds</div>
+                        <div class="sub-actions">
+                            <button class="btn" onclick="generatePairCode()" style="margin-top:0; padding:9px 14px; font-size:0.85rem;">🔄 Get another code</button>
+                            <a class="copy-btn" href="/settings" style="text-decoration:none;">⚙ Bot Settings</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="status-bar" id="statusBar" style="display:none;">
+                    <div class="ic">✅</div>
+                    <div class="txt">WhatsApp Connected — Bot is running. <span class="ok" id="livePhone"></span></div>
+                </div>
+
+                <div class="status-bar" id="pendingBar" style="display:none;">
+                    <div class="ic">⏳</div>
+                    <div class="txt">Pair code sent. Open <b>WhatsApp → Linked Devices → Link a Device</b>, then enter the code above.</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2><span class="ico">📖</span> How to connect</h2>
+                <p class="desc">Four simple steps. No app install needed.</p>
+                <div class="steps">
+                    <div class="step"><div class="num">01</div><div class="body"><strong>Enter your WhatsApp number with country code</strong><small>Include + sign, no spaces</small></div></div>
+                    <div class="step"><div class="num">02</div><div class="body"><strong>Generate and copy the 8-letter pair code</strong><small>Valid for 60 seconds</small></div></div>
+                    <div class="step"><div class="num">03</div><div class="body"><strong>Open WhatsApp → Linked Devices → Link a Device</strong><small>iPhone or Android</small></div></div>
+                    <div class="step"><div class="num">04</div><div class="body"><strong>Enter the code — bot connects instantly</strong><small>And stays online with auto-reconnect</small></div></div>
+                </div>
+
+                <div class="feat-grid">
+                    <div class="feat"><span class="e">🧠</span>AI Chat</div>
+                    <div class="feat"><span class="e">🎨</span>Image Gen</div>
+                    <div class="feat"><span class="e">🎵</span>TikTok DL</div>
+                    <div class="feat"><span class="e">📹</span>YT DL</div>
+                    <div class="feat"><span class="e">😄</span>Stickers</div>
+                    <div class="feat"><span class="e">👥</span>Groups</div>
+                    <div class="feat"><span class="e">🎶</span>Music</div>
+                    <div class="feat"><span class="e">📰</span>News</div>
+                    <div class="feat"><span class="e">🌐</span>Translate</div>
+                    <div class="feat"><span class="e">⛅</span>Weather</div>
+                </div>
+
+                <div class="important">
+                    <h3>⚠ IMPORTANT</h3>
+                    <p>Use a <b>secondary</b> WhatsApp number only. The bot must stay connected to function. If you log out from your phone, the bot session ends.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            💚 Always Online · Auto Reconnect · No Account Needed · <a href="/settings">Bot Settings →</a>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79"}' crossorigin="anonymous"></script>
+</body>
+</html>
