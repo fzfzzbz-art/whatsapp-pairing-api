@@ -1,170 +1,381 @@
 <!DOCTYPE html>
-<html lang="ar">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>👑 Golden Queen - بوابة الربط</title>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>
-        :root {
-            --gold: #d4a055;
-            --dark-bg: #0f0f0f;
-            --card-bg: #1a1a1a;
-            --text: #ffffff;
-            --muted: #a0a0a0;
-        }
-        body {
-            font-family: 'Cairo', sans-serif;
-            background-color: var(--dark-bg);
-            color: var(--text);
-            margin: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-        }
-        .langOverlay {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9);
-            display: flex; justify-content: center; align-items: center;
-            z-index: 1000;
-        }
-        .langBox {
-            background: var(--card-bg);
-            padding: 30px;
-            border-radius: 20px;
-            text-align: center;
-            border: 1px solid var(--gold);
-        }
-        .lang-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 20px;
-        }
-        .langBtn {
-            background: transparent;
-            border: 1px solid var(--gold);
-            color: white;
-            padding: 10px;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: 0.3s;
-        }
-        .langBtn:hover { background: var(--gold); color: black; }
-        
-        .mainBody { display: none; width: 100%; max-width: 400px; padding: 20px; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .accent { color: var(--gold); }
-        .card {
-            background: var(--card-bg);
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            margin-bottom: 20px;
-        }
-        .input-wrap {
-            display: flex;
-            align-items: center;
-            background: #222;
-            border-radius: 10px;
-            padding: 10px;
-            margin-top: 10px;
-        }
-        input {
-            background: transparent;
-            border: none;
-            color: white;
-            width: 100%;
-            outline: none;
-            font-size: 16px;
-        }
-        .submitBtn {
-            width: 100%;
-            padding: 15px;
-            background: var(--gold);
-            border: none;
-            border-radius: 10px;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        .qr-frame {
-            background: white;
-            padding: 10px;
-            border-radius: 10px;
-            margin: 20px auto;
-            width: 200px; height: 200px;
-            display: flex; justify-content: center; align-items: center;
-        }
-        #qrImage { width: 100%; display: none; }
-        .tab-switcher {
-            display: flex;
-            background: #222;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        .tab-btn {
-            flex: 1; padding: 10px; border: none; background: transparent;
-            color: white; cursor: pointer;
-        }
-        .tab-btn.active { background: var(--gold); border-radius: 10px; color: black; }
-        .hidden { display: none; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SULA-style Pairing Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #071018;
+      --panel: #0c1620;
+      --panel-soft: #101c29;
+      --border: rgba(255,255,255,.08);
+      --text: #f4f7fb;
+      --muted: #93a4b8;
+      --brand: #23c2ff;
+      --brand-2: #2d66ff;
+      --accent: #11d07a;
+      --warning: #ffd166;
+      --danger: #ff6b6b;
+      --shadow: 0 24px 60px rgba(0,0,0,.35);
+      --radius: 24px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(35,194,255,.16), transparent 24%),
+        radial-gradient(circle at top right, rgba(17,208,122,.10), transparent 20%),
+        linear-gradient(180deg, #071018 0%, #0a121b 100%);
+      min-height: 100vh;
+    }
+    a { color: inherit; }
+    .container { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid rgba(35,194,255,.22);
+      background: rgba(35,194,255,.08);
+      color: #b8ebff;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 13px; font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .hero {
+      padding: 36px 0 22px;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 26px;
+      align-items: stretch;
+    }
+    .hero-copy, .hero-card, .section-card, .cookie, .how, .metric, .feature {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+    .hero-copy {
+      border-radius: 32px;
+      padding: 36px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .hero-copy h1 {
+      margin: 0;
+      font-size: clamp(34px, 5vw, 64px);
+      line-height: 1.02;
+      font-weight: 800;
+      letter-spacing: -.04em;
+    }
+    .hero-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.75;
+      max-width: 740px;
+    }
+    .hero-actions {
+      display: flex; gap: 12px; flex-wrap: wrap;
+    }
+    .btn {
+      border: none; border-radius: 16px; cursor: pointer;
+      padding: 14px 18px;
+      font-size: 15px; font-weight: 700;
+      transition: .2s ease;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      color: white;
+      box-shadow: 0 16px 36px rgba(35,194,255,.22);
+    }
+    .btn-secondary {
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .hero-points {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 8px;
+    }
+    .hero-points div {
+      background: rgba(255,255,255,.035);
+      border: 1px solid rgba(255,255,255,.06);
+      border-radius: 18px;
+      padding: 14px;
+    }
+    .hero-points strong { display: block; font-size: 13px; color: #dff7ff; margin-bottom: 6px; }
+    .hero-points span { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .hero-card {
+      border-radius: 32px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: #b8ebff;
+      font-weight: 800;
+    }
+    .hero-card h2, .section-head h2, .how h3, .cookie h4 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.15;
+    }
+    .hero-card p, .section-head p, .how p, .cookie p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .field { display: grid; gap: 8px; }
+    .field label { font-size: 12px; color: #cde6ff; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .field input {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(255,255,255,.04);
+      color: white;
+      padding: 16px 18px;
+      font-size: 16px;
+      outline: none;
+    }
+    .field input:focus { border-color: rgba(35,194,255,.45); box-shadow: 0 0 0 4px rgba(35,194,255,.12); }
+    .checkline {
+      display: flex; gap: 10px; align-items: flex-start;
+      color: var(--muted); font-size: 14px; line-height: 1.7;
+    }
+    .code-box {
+      display: none;
+      border-radius: 22px;
+      padding: 18px;
+      background: rgba(17,208,122,.07);
+      border: 1px solid rgba(17,208,122,.25);
+      gap: 12px;
+      flex-direction: column;
+    }
+    .code-box.show { display: flex; }
+    .code-box strong { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #bbffe1; }
+    .code-value {
+      font-size: clamp(28px, 5vw, 42px);
+      font-weight: 800;
+      letter-spacing: .18em;
+      color: white;
+    }
+    .status-line { min-height: 20px; color: var(--muted); font-size: 14px; }
+    .qr-box {
+      border-radius: 24px;
+      border: 1px dashed rgba(255,255,255,.18);
+      min-height: 280px;
+      display: grid;
+      place-items: center;
+      background: rgba(255,255,255,.025);
+      overflow: hidden;
+    }
+    .qr-box img { width: 100%; max-width: 280px; display: none; background: #fff; border-radius: 20px; padding: 10px; }
+    .qr-box.loaded img { display: block; }
+    .qr-placeholder { text-align: center; color: var(--muted); padding: 28px; }
+    .sections { padding: 14px 0 60px; display: grid; gap: 24px; }
+    .section-head { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 16px; }
+    .metrics {
+      display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px;
+    }
+    .metric {
+      border-radius: 24px; padding: 22px;
+    }
+    .metric strong { display: block; font-size: clamp(26px, 4vw, 40px); margin-bottom: 6px; }
+    .metric span { color: var(--muted); }
+    .how {
+      border-radius: 28px; padding: 24px;
+    }
+    .steps {
+      display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; margin-top: 18px;
+    }
+    .step {
+      border-radius: 22px; padding: 18px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06);
+    }
+    .step strong {
+      width: 38px; height: 38px; border-radius: 12px; display: inline-grid; place-items: center;
+      background: rgba(35,194,255,.12); color: #b8ebff; margin-bottom: 12px;
+    }
+    .step h4 { margin: 0 0 8px; font-size: 16px; }
+    .step p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .features {
+      display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px;
+    }
+    .feature { border-radius: 24px; padding: 22px; }
+    .feature .icon { font-size: 24px; margin-bottom: 12px; }
+    .feature h4 { margin: 0 0 8px; font-size: 17px; }
+    .feature p { margin: 0; color: var(--muted); line-height: 1.7; font-size: 14px; }
+    .cookie {
+      border-radius: 24px; padding: 20px 22px;
+      display: flex; justify-content: space-between; gap: 16px; align-items: center;
+    }
+    .cookie .mini { font-size: 13px; color: var(--muted); }
+    .footer { padding: 0 0 50px; color: var(--muted); font-size: 14px; }
+    .toast {
+      position: fixed; right: 18px; bottom: 18px; z-index: 90;
+      max-width: min(420px, calc(100% - 36px));
+      background: rgba(9,17,28,.95);
+      border: 1px solid rgba(255,255,255,.08);
+      border-left: 4px solid var(--brand);
+      color: var(--text); padding: 14px 16px; border-radius: 16px; box-shadow: var(--shadow);
+      display: none;
+    }
+    .toast.show { display: block; }
+    .toast.error { border-left-color: var(--danger); }
+    @media (max-width: 980px) {
+      .hero-grid, .metrics, .steps, .features { grid-template-columns: 1fr 1fr; }
+      .hero-points { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 680px) {
+      .container { width: min(100% - 20px, 1180px); }
+      .hero { padding-top: 20px; }
+      .hero-grid, .metrics, .steps, .features, .hero-points { grid-template-columns: 1fr; }
+      .hero-copy, .hero-card, .how, .feature, .metric, .cookie { border-radius: 24px; padding: 22px; }
+      .section-head { flex-direction: column; align-items: start; }
+      .cookie { flex-direction: column; align-items: start; }
+    }
+  </style>
 </head>
 <body>
-
-<div id="langOverlay" class="langOverlay">
-    <div class="langBox">
-        <h2>👑 Welcome</h2>
-        <div class="lang-grid">
-            <button class="langBtn" onclick="initPage('ar')">العربية</button>
-            <button class="langBtn" onclick="initPage('en')">English</button>
+  <main class="hero">
+    <div class="container hero-grid">
+      <section class="hero-copy">
+        <span class="badge">🚀 Live · Free · No account needed</span>
+        <div>
+          <div class="eyebrow">Deploy WhatsApp Bot</div>
+          <h1>Connect your WhatsApp in <span style="background:linear-gradient(135deg,var(--brand),#7edcff);-webkit-background-clip:text;background-clip:text;color:transparent;">30 seconds</span>.</h1>
         </div>
-    </div>
-</div>
-
-<div id="mainBody" class="mainBody">
-    <header class="header">
-        <h1><span class="accent">Golden Queen</span> Bot</h1>
-        <p id="headerSub">Link your WhatsApp device</p>
-    </header>
-
-    <div class="tab-switcher">
-        <button class="tab-btn active" id="tabPairing" onclick="switchTab('pairing')">Pairing Code</button>
-        <button class="tab-btn" id="tabQr" onclick="switchTab('qr')">QR Code</button>
-    </div>
-
-    <div id="panelPairing" class="tab-panel">
-        <div class="card">
-            <h3 id="loginHeader">Connection</h3>
-            <p id="loginSubText" style="font-size: 12px; color: var(--muted);"></p>
-            <div class="inputGroup">
-                <label id="numLabel">WhatsApp Number</label>
-                <div class="input-wrap">
-                    <span>📞</span>
-                    <input type="text" id="phoneNum" placeholder="9677xxxxxxxx">
-                </div>
-            </div>
+        <p>
+          Pair code or QR scan, automatic session recovery, live settings sync, and always-on protection for your linked number.
+        </p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" onclick="document.getElementById('pairCard').scrollIntoView({behavior:'smooth'})">Start pairing</button>
+          <a class="btn btn-secondary" href="/settings">Open settings</a>
         </div>
-        <button class="submitBtn" id="submitBtn" onclick="handleSubmit()">Link Device</button>
-        <p id="noticeText" style="font-size: 11px; margin-top: 15px; color: var(--gold); text-align: center;"></p>
-    </div>
-
-    <div id="panelQr" class="tab-panel hidden">
-        <div class="card" style="text-align: center;">
-            <h3 id="qrHeader">QR Code</h3>
-            <div class="qr-frame">
-                <div id="qrPlaceholder" onclick="loadQr()" style="color: black; cursor: pointer;">Tap to Load</div>
-                <img id="qrImage" src="" alt="QR">
-            </div>
-            <p id="qrStatus" style="font-size: 12px;"></p>
+        <div class="hero-points">
+          <div><strong>127+ APIs</strong><span>Bot tools, automation and protected runtime.</span></div>
+          <div><strong>AI Powered</strong><span>Smart replies, automation and status actions.</span></div>
+          <div><strong>Always Online</strong><span>Reconnect monitoring with stable session handling.</span></div>
+          <div><strong>100% Free</strong><span>No extra account required to pair your device.</span></div>
         </div>
+      </section>
+      <aside class="hero-card" id="pairCard">
+        <div>
+          <div class="eyebrow">Pair Code</div>
+          <h2>Link your WhatsApp number</h2>
+        </div>
+        <p>Enter your WhatsApp number with country code. The pairing code stays valid for 60 seconds.</p>
+        <div class="field">
+          <label for="phone">WhatsApp Number</label>
+          <input id="phone" type="text" placeholder="9677xxxxxxxx" autocomplete="tel" />
+        </div>
+        <label class="checkline">
+          <input id="terms" type="checkbox" />
+          <span>I understand this is for a secondary WhatsApp number only and I accept the usage terms.</span>
+        </label>
+        <button id="pairBtn" class="btn btn-primary">Generate pair code</button>
+        <div class="status-line" id="pairStatus">Ready to generate a code.</div>
+        <div id="pairCodeBox" class="code-box">
+          <strong>Pair code</strong>
+          <div id="pairCodeValue" class="code-value">--------</div>
+          <div class="hero-actions">
+            <button class="btn btn-secondary" id="copyCodeBtn">Copy code</button>
+            <a class="btn btn-secondary" href="/settings">Settings panel</a>
+          </div>
+        </div>
+        <div class="qr-box" id="qrBox">
+          <div class="qr-placeholder" id="qrPlaceholder">
+            <div style="font-size:40px;margin-bottom:10px">📷</div>
+            <div style="font-weight:700;margin-bottom:6px">QR bridge</div>
+            <div>Tap the button below to fetch the live QR when needed.</div>
+          </div>
+          <img id="qrImage" alt="WhatsApp QR" />
+        </div>
+        <button id="loadQrBtn" class="btn btn-secondary">Load QR code</button>
+      </aside>
     </div>
-</div>
+  </main>
 
-<script src="app.js"></script>
+  <section class="sections">
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Realtime stats</div>
+          <h2>Platform overview</h2>
+          <p>Live counters pulled from your bot backend.</p>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><strong id="statBots">--</strong><span>Active Bots</span></div>
+        <div class="metric"><strong id="statNumbers">--</strong><span>Linked Numbers</span></div>
+        <div class="metric"><strong id="statUsers">--</strong><span>Total Users</span></div>
+        <div class="metric"><strong id="statUptime">99.9%</strong><span>Runtime Uptime</span></div>
+      </div>
+    </div>
+
+    <div class="container how">
+      <div class="eyebrow">How to connect</div>
+      <h3>Four quick steps</h3>
+      <p>Use the same flow as the reference site: number, code, linked devices, done.</p>
+      <div class="steps">
+        <div class="step"><strong>01</strong><h4>Enter your number</h4><p>Include country code, no spaces or symbols except an optional leading +.</p></div>
+        <div class="step"><strong>02</strong><h4>Generate code</h4><p>Copy the 8-letter pair code and keep it ready within the 60-second window.</p></div>
+        <div class="step"><strong>03</strong><h4>Open linked devices</h4><p>Go to WhatsApp → Linked Devices → Link a Device on Android or iPhone.</p></div>
+        <div class="step"><strong>04</strong><h4>Enter the code</h4><p>Paste the code and the bot will connect instantly to the same session.</p></div>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">127+ bot features</div>
+          <h2>Everything important is one click away</h2>
+          <p>Built around the same pairing, settings and automation flow.</p>
+        </div>
+      </div>
+      <div class="features">
+        <div class="feature"><div class="icon">🧠</div><h4>AI Chat</h4><p>Automatic reply controls and AI reply scopes for private or group chats.</p></div>
+        <div class="feature"><div class="icon">🎨</div><h4>Image Tools</h4><p>Menu, alive and owner images can be customized from the settings panel.</p></div>
+        <div class="feature"><div class="icon">📊</div><h4>Status Automation</h4><p>Auto-read, auto-react, private status reaction and notice confirmations.</p></div>
+        <div class="feature"><div class="icon">🛡️</div><h4>Protection</h4><p>Anti-link, anti-bad words, anti-bot, anti-bug and live moderation options.</p></div>
+        <div class="feature"><div class="icon">⚡</div><h4>Always Online</h4><p>Reconnect monitoring keeps an already-linked number on the same session.</p></div>
+        <div class="feature"><div class="icon">👥</div><h4>Owner Sync</h4><p>Linked-number stats, settings access and owner credentials stay in sync.</p></div>
+        <div class="feature"><div class="icon">🔗</div><h4>API Sync</h4><p>Pair-code API and linked-number sync endpoints can be managed per number.</p></div>
+        <div class="feature"><div class="icon">⚙️</div><h4>Live Settings</h4><p>Save once and apply instantly to the linked number without waiting for restart.</p></div>
+      </div>
+    </div>
+
+    <div class="container cookie">
+      <div>
+        <div class="eyebrow">Important</div>
+        <h4>Use a secondary WhatsApp number only.</h4>
+        <p>The bot must stay connected to function correctly, and all settings are tied to the linked number session.</p>
+      </div>
+      <div class="mini">We use cookies-like local preferences only for this page experience.</div>
+    </div>
+  </section>
+
+  <footer class="footer container">
+    <p>Settings panel: <a href="/settings">/settings</a> · Pairing API: <a href="/api/pairing">/api/pairing</a></p>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
 </body>
 </html>
