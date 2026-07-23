@@ -8631,6 +8631,69 @@ async function waitForPairingCode(phone, timeoutMs = 20000) {
     return '';
 }
 
+function isRetryablePairingBootstrapError(error) {
+    const statusCode = Number(error?.output?.statusCode || error?.statusCode || error?.data?.statusCode || 0);
+    const rawText = String(
+        error?.data ||
+        error?.message ||
+        error?.output?.payload?.message ||
+        ''
+    ).toLowerCase();
+    return statusCode === 428 || /(connection\s*closed|precondition\s*required|timed\s*out|stream\s*errored|not\s*connected)/i.test(rawText);
+}
+
+async function waitForPairingSocketReady(sock, timeoutMs = 25000) {
+    const bootstrapTimeoutMs = Math.max(5000, Number(timeoutMs) || 25000);
+    const wsReadyState = Number(sock?.ws?.readyState);
+    if (wsReadyState === 1) {
+        return;
+    }
+
+    await new Promise((resolve, reject) => {
+        let settled = false;
+        let timeout = null;
+        let poller = null;
+        const cleanup = () => {
+            if (timeout) clearTimeout(timeout);
+            if (poller) clearInterval(poller);
+            sock?.ev?.off?.('connection.update', handleUpdate);
+            sock?.ev?.removeListener?.('connection.update', handleUpdate);
+        };
+        const finishResolve = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve();
+        };
+        const finishReject = (error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+        const handleUpdate = (update = {}) => {
+            if (update?.connection === 'connecting' || update?.connection === 'open' || !!update?.qr) {
+                finishResolve();
+            }
+        };
+        timeout = setTimeout(() => {
+            finishReject(new Error('انتهت مهلة انتظار تهيئة اتصال واتساب قبل طلب كود الربط'));
+        }, bootstrapTimeoutMs);
+        poller = setInterval(() => {
+            const readyState = Number(sock?.ws?.readyState);
+            if (readyState === 1) {
+                finishResolve();
+            }
+        }, 150);
+        if (typeof timeout.unref === 'function') timeout.unref();
+        if (typeof poller.unref === 'function') poller.unref();
+        sock?.ev?.on?.('connection.update', handleUpdate);
+    });
+
+    const stabilizeDelayMs = Math.max(600, Number(process.env.PAIRING_CODE_STABILIZE_DELAY_MS || 1800));
+    await delay(stabilizeDelayMs);
+}
+
 function startSessionSupervisor() {
     if (sessionSupervisorStarted) return;
     sessionSupervisorStarted = true;
@@ -9741,13 +9804,39 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         void (async () => {
             try {
-                const requestDelayMs = Math.max(100, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 250));
-                const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
-                await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
-                const code = await Promise.race([
-                    sock.requestPairingCode(normalizedPhone),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
-                ]);
+                const bootstrapTimeoutMs = Math.max(10000, Number(process.env.PAIRING_BOOTSTRAP_TIMEOUT_MS || 25000));
+                const requestDelayMs = Math.max(250, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
+                const requestTimeoutMs = Math.max(12000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 30000));
+                const retryDelayMs = Math.max(1000, Number(process.env.PAIRING_CODE_RETRY_DELAY_MS || 2500));
+                const maxAttempts = Math.max(1, Math.min(3, Number(process.env.PAIRING_CODE_REQUEST_RETRIES || 2)));
+                await waitForPairingSocketReady(sock, bootstrapTimeoutMs);
+                await delay(requestDelayMs);
+
+                let code = '';
+                let lastPairingError = null;
+                for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                    try {
+                        code = await Promise.race([
+                            sock.requestPairingCode(normalizedPhone),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
+                        ]);
+                        if (code) break;
+                        throw new Error('لم يتم استلام كود الربط من واتساب');
+                    } catch (error) {
+                        lastPairingError = error;
+                        if (attempt >= maxAttempts || !isRetryablePairingBootstrapError(error)) {
+                            throw error;
+                        }
+                        console.warn(`Retrying pairing code request (${attempt}/${maxAttempts}) for ${normalizedPhone}:`, error?.message || error);
+                        await waitForPairingSocketReady(sock, Math.max(5000, Math.floor(bootstrapTimeoutMs / 2))).catch(() => null);
+                        await delay(retryDelayMs);
+                    }
+                }
+
+                if (!code) {
+                    throw lastPairingError || new Error('تعذر إنشاء كود الربط');
+                }
+
                 schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
                 pairingRequests.set(normalizedPhone, {
                     ...(pairingRequests.get(normalizedPhone) || {}),
