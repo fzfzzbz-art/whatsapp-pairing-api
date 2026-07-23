@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
 if [ ! -d node_modules ]; then
-  npm install
+  npm install --legacy-peer-deps
 fi
-node index.js
+npm run start:optimized

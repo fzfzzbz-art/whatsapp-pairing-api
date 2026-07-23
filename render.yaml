@@ -2,21 +2,15 @@ services:
   - type: web
     name: whatsapp-pairing-bot
     env: node
-    plan: starter
+    plan: free
     buildCommand: npm install --legacy-peer-deps
-    startCommand: npm run start:premium
-    disk:
-      name: whatsapp-pairing-bot-data
-      mountPath: /opt/render/project/src/.render-disk
-      sizeGB: 25
+    startCommand: npm run start:optimized
     envVars:
       - key: NODE_VERSION
         value: 20.x
-      - key: BOT_MEMORY_MB
-        value: "24576"
-      - key: PLATFORM_STORAGE_GB
-        value: "25"
-      - key: BOT_RUNTIME_PROFILE
-        value: premium-30d
+      - key: MEMORY_MAX_RSS_MB
+        value: "1024"
+      - key: SESSION_BOOT_PARALLELISM
+        value: "2"
       - key: BOT_TOKEN
         sync: false # سيطلب منك إدخاله يدوياً في الموقع لزيادة الأمان
