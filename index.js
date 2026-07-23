@@ -1011,10 +1011,6 @@ const phoneJobQueues = new Map();
 const sessionStartPromises = new Map();
 const recentStatusEvents = new Map();
 const pendingContactSyncs = new Map();
-let lastMemoryCleanupAt = 0;
-let lastMemoryRecycleAt = 0;
-let memoryRecycleInProgress = false;
-let shutdownExitCode = 0;
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
@@ -1048,14 +1044,10 @@ const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
-const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 2)));
+const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
 const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
 const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
-const MEMORY_MAX_RSS_MB = Math.max(256, Number(process.env.MEMORY_MAX_RSS_MB || 1024));
-const MEMORY_CLEANUP_COOLDOWN_MS = Math.max(30000, Number(process.env.MEMORY_CLEANUP_COOLDOWN_MS || 120000));
-const MEMORY_RESTART_COOLDOWN_MS = Math.max(60000, Number(process.env.MEMORY_RESTART_COOLDOWN_MS || 900000));
-const MEMORY_GC_PASSES = Math.max(1, Math.min(5, Number(process.env.MEMORY_GC_PASSES || 2)));
 let sessionSupervisorStarted = false;
 let lastRuntimeCleanupAt = 0;
 const DATABASE_ENABLED = false;
@@ -2439,7 +2431,7 @@ function bootStorage() {
 bootStorage();
 
 async function getStoredSessionEntries() {
-    const entries = await getStoredMongoSessionEntries();
+    const entries = await listLocalSessionEntries();
     return entries
         .map((entry) => ({
             phone: normalizePhone(entry?.phone || entry?.sessionId || ''),
@@ -8066,7 +8058,8 @@ function isPermanentDisconnect(lastDisconnect = null) {
     ).toLowerCase();
     if (isTransientCryptoDisconnect(lastDisconnect)) return false;
     if (statusCode === Number(DisconnectReason.loggedOut)) return true;
-    return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced|device\s*logout|multidevice\s*logout)/i.test(rawMessage);
+    if ([401, 403, 405].includes(statusCode)) return true;
+    return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced)/i.test(rawMessage);
 }
 
 function shouldDiscardCorruptedBootSession(lastDisconnect = null) {
@@ -8214,14 +8207,24 @@ function touchClient(phone) {
     clientActivity.set(normalized, Date.now());
 }
 
+function hasStoredSessionPayload(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    if (sessionHasLocalAuthFiles(normalized)) return true;
+    const store = getSessionStoreDB();
+    const record = store.sessions?.[normalized] || {};
+    return Number(record?.fileCount || 0) > 0;
+}
+
 function hasPersistedSuccessfulSession(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
     const meta = readLocalSessionMeta(normalized);
-    if (meta?.registered === true) return true;
     const store = getSessionStoreDB();
     const record = store.sessions?.[normalized] || {};
-    return record?.registered === true;
+    const registered = meta?.registered === true || record?.registered === true;
+    if (!registered) return false;
+    return hasStoredSessionPayload(normalized);
 }
 
 function clearReconnectTimer(phone) {
@@ -8314,30 +8317,29 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
     const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
-    const retryLimit = hasSuccessfulSession ? MAX_RECONNECT_ATTEMPTS : ORPHAN_SESSION_RETRY_LIMIT;
+    if (!hasSuccessfulSession) {
+        console.warn(`Skipping reconnect for orphan/unregistered session ${normalized}; purging session immediately.`);
+        clearReconnectTimer(normalized);
+        resetReconnectAttempts(normalized);
+        void purgeSessionData(normalized, {
+            keepProfile: false,
+            ownerId: ownerId || getPhoneOwner(normalized) || ''
+        }).then(async () => {
+            const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
+            if (resolvedOwnerId) {
+                await notifyTelegramUser(
+                    resolvedOwnerId,
+                    `🧹 تم حذف الرقم ${normalized} لأن جلسته غير مكتملة أو غير صالحة، ولن تتم إعادة الاتصال له تلقائياً.`
+                );
+            }
+        }).catch((error) => {
+            console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
+        });
+        return;
+    }
+
     let attemptNumber = bumpReconnectAttempts(normalized);
-
-    if (attemptNumber > retryLimit) {
-        if (!hasSuccessfulSession) {
-            console.warn(`Reconnect attempts exceeded for orphan session ${normalized}; purging session and ownership records.`);
-            void purgeSessionData(normalized, {
-                keepProfile: false,
-                ownerId: ownerId || getPhoneOwner(normalized) || ''
-            }).then(async () => {
-                const resolvedOwnerId = String(ownerId || getPhoneOwner(normalized) || '');
-                if (resolvedOwnerId) {
-                    await notifyTelegramUser(
-                        resolvedOwnerId,
-                        `🧹 تم حذف الرقم ${normalized} نهائياً من الجلسات والإحصائيات بعد تكرار محاولة الاستعادة بدون نجاح.`
-                    );
-                }
-            }).catch((error) => {
-                console.error(`Orphan Session Purge Error (${normalized}):`, error?.message || error);
-            });
-            resetReconnectAttempts(normalized);
-            return;
-        }
-
+    if (attemptNumber > MAX_RECONNECT_ATTEMPTS) {
         console.warn(`Reconnect attempts exceeded for ${normalized}; preserving established session and recycling retry counter.`);
         resetReconnectAttempts(normalized);
         attemptNumber = bumpReconnectAttempts(normalized);
@@ -8348,7 +8350,10 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
-            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized));
+            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, {
+                autoRequestPairingCode: false,
+                bootRestore: true
+            });
         } catch (error) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
@@ -8438,9 +8443,6 @@ function startSessionSupervisor() {
             pruneStatusArchive();
             pruneUploadsDir();
             pruneProblematicRuntimeFiles();
-            void enforceMemoryBudget('session-supervisor').catch((error) => {
-                console.error('Memory Watchdog Error:', error?.message || error);
-            });
         }
 
         const phones = getAllLinkedPhones();
@@ -8642,91 +8644,6 @@ function pruneUploadsDir() {
         if (!fs.existsSync(UPLOADS_DIR)) return;
         pruneFilesOlderThan(UPLOADS_DIR, 30 * 60 * 1000, { recursive: false });
     } catch(_) {}
-}
-
-function getProcessMemorySnapshot() {
-    const usage = process.memoryUsage();
-    const toMb = (value) => Math.round((Number(value) || 0) / (1024 * 1024));
-    return {
-        rssMb: toMb(usage.rss),
-        heapTotalMb: toMb(usage.heapTotal),
-        heapUsedMb: toMb(usage.heapUsed),
-        externalMb: toMb(usage.external),
-        arrayBuffersMb: toMb(usage.arrayBuffers)
-    };
-}
-
-function releaseRuntimeMemoryCaches() {
-    recentStatusEvents.clear();
-    statusReactionNoticeCache.clear();
-    autoReplyCooldowns.clear();
-    ownerControlBypassMessageIds.clear();
-    phoneSettingsAuthSessions.clear();
-    directContactMessageSessions.clear();
-    deletedMessageBackups.clear();
-    JSON_MIRROR_CACHE.clear();
-    invalidateUsersDBCache();
-    invalidatePhoneSettingsDBCache();
-}
-
-async function enforceMemoryBudget(reason = 'runtime') {
-    const now = Date.now();
-    const before = getProcessMemorySnapshot();
-    if (before.rssMb < MEMORY_MAX_RSS_MB) {
-        return { ok: true, recycled: false, before, after: before };
-    }
-
-    if (lastMemoryCleanupAt && (now - lastMemoryCleanupAt) < MEMORY_CLEANUP_COOLDOWN_MS && !memoryRecycleInProgress) {
-        return { ok: true, recycled: false, before, after: before, skipped: 'cooldown' };
-    }
-
-    lastMemoryCleanupAt = now;
-
-    for (const phone of Array.from(pendingContactSyncs.keys())) {
-        try {
-            flushQueuedPhoneContactsUpdates(phone);
-        } catch (_) {}
-    }
-
-    try { pruneExpiredStatusBackups(); } catch (_) {}
-    try { pruneStatusArchive(); } catch (_) {}
-    try { pruneUploadsDir(); } catch (_) {}
-    try { pruneProblematicRuntimeFiles(); } catch (_) {}
-
-    releaseRuntimeMemoryCaches();
-
-    for (let index = 0; index < MEMORY_GC_PASSES; index += 1) {
-        if (typeof global.gc === 'function') {
-            try { global.gc(); } catch (_) {}
-        }
-        await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-
-    const after = getProcessMemorySnapshot();
-    console.log(`Memory Watchdog (${reason}): RSS ${before.rssMb}MB -> ${after.rssMb}MB | Heap ${before.heapUsedMb}MB -> ${after.heapUsedMb}MB`);
-
-    if (after.rssMb < MEMORY_MAX_RSS_MB) {
-        return { ok: true, recycled: false, before, after };
-    }
-
-    if (memoryRecycleInProgress) {
-        return { ok: true, recycled: true, before, after, skipped: 'already-recycling' };
-    }
-
-    if (lastMemoryRecycleAt && (now - lastMemoryRecycleAt) < MEMORY_RESTART_COOLDOWN_MS) {
-        return { ok: true, recycled: false, before, after, skipped: 'restart-cooldown' };
-    }
-
-    memoryRecycleInProgress = true;
-    lastMemoryRecycleAt = now;
-    shutdownExitCode = 1;
-
-    console.warn(`Memory limit exceeded (${after.rssMb}MB >= ${MEMORY_MAX_RSS_MB}MB). Recycling process to fully free RAM.`);
-    setTimeout(() => {
-        void gracefulShutdown('MEMORY_PRESSURE');
-    }, 250).unref?.();
-
-    return { ok: true, recycled: true, before, after };
 }
 
 function pruneExpiredStatusBackups() {
@@ -9655,16 +9572,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 }
             } catch (error) {
                 console.error(`Pairing Error (${normalizedPhone}):`, error);
-                await purgeSessionData(normalizedPhone, {
-                    keepProfile: false,
-                    ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || ''
-                }).catch(() => {});
                 clearPairingRequest(normalizedPhone);
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
                 clearChannelPromotionTimer(normalizedPhone);
                 clearPresenceTimer(normalizedPhone);
-                const failMessage = '❌ فشل في طلب كود الربط، وتم حذف الجلسة غير المكتملة نهائياً من القاعدة والإحصائيات. اطلب كود جديد من الصفر بعد دقيقة.';
+                const failMessage = '❌ فشل في طلب كود الربط. تأكد من الرقم ثم حاول مرة أخرى بعد دقيقة.';
                 if (telegramCtx) {
                     await safeReply(telegramCtx, failMessage);
                 }
@@ -9777,7 +9690,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 incrementAnalytics('totalSessionsStarted');
                 clearReconnectTimer(normalizedPhone);
                 resetReconnectAttempts(normalizedPhone);
-                flushQueuedPhoneContactsUpdates(normalizedPhone);
                 startPresenceKeepAlive(sock, normalizedPhone);
                 startSessionPing(sock, normalizedPhone);
                 const connectionMetadata = {
@@ -9862,7 +9774,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             }
 
             if (connection === 'close') {
-                flushQueuedPhoneContactsUpdates(normalizedPhone);
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
                 clearSessionPingTimer(normalizedPhone);
@@ -9907,6 +9818,12 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 }
 
                 if (pendingPair?.timedOut || stoppedPairings.has(normalizedPhone)) {
+                    clearReconnectTimer(normalizedPhone);
+                    return;
+                }
+
+                if (pendingPair && pendingPair.completed !== true) {
+                    console.log(`Pairing session closed before completion: ${normalizedPhone}`);
                     clearReconnectTimer(normalizedPhone);
                     return;
                 }
@@ -9971,10 +9888,10 @@ async function initializeSessions() {
             }
             const preparation = await ensureSessionStateReady(session.sessionId);
             if (!preparation.ready) {
-                console.log(`⚠️ جلسة ${session.sessionId} لا تحتوي على ملفات ربط صالحة حالياً، سيتم تشغيلها في وضع ربط جديد مع الاحتفاظ بإعداداتها.`);
-                await startWhatsApp(session.sessionId, null, session.ownerId || getPhoneOwner(session.sessionId), null, {
-                    autoRequestPairingCode: true,
-                    bootRestore: false
+                console.log(`⚠️ جلسة ${session.sessionId} لا تحتوي على ملفات ربط صالحة، سيتم حذفها ولن تتم إعادة الاتصال لها تلقائياً.`);
+                await purgeSessionData(session.sessionId, {
+                    keepProfile: false,
+                    ownerId: session.ownerId || getPhoneOwner(session.sessionId) || ''
                 });
                 return;
             }
@@ -9989,7 +9906,11 @@ async function initializeSessions() {
             const errorText = String(error?.data || error?.message || error?.stack || '').toLowerCase();
             const shouldDeleteSession = statusCode === 401 || /(decrypt|decryption|failed to decrypt|cannot decrypt|closed session|session closed|no session|prekey|pre-key|bad mac|invalid mac|message counter|stale key|sender key)/i.test(errorText);
             if (shouldDeleteSession) {
-                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وتم الاحتفاظ بها لإعادة المحاولة أو الاستعادة من التخزين البعيد.`);
+                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وسيتم حذفها لمنع تكرار إعادة الاتصال.`);
+                await purgeSessionData(session.sessionId, {
+                    keepProfile: false,
+                    ownerId: session.ownerId || getPhoneOwner(session.sessionId) || ''
+                });
             }
         }
     });
@@ -10013,7 +9934,9 @@ async function startAllSavedSessions() {
     const restoredEntries = await rebuildLinkedUsersFromStoredSessions();
     const fallbackEntries = restoredEntries.length
         ? []
-        : getAllLinkedPhones().map((phone) => ({ phone: normalizePhone(phone), ownerId: String(getPhoneOwner(phone) || '') }));
+        : getAllLinkedPhones()
+            .map((phone) => ({ phone: normalizePhone(phone), ownerId: String(getPhoneOwner(phone) || '') }))
+            .filter((entry) => entry.phone && hasPersistedSuccessfulSession(entry.phone));
     const mergedEntries = [...restoredEntries, ...fallbackEntries]
         .filter((entry) => entry?.phone)
         .filter((entry, index, arr) => arr.findIndex((item) => item.phone === entry.phone) === index);
@@ -12531,6 +12454,11 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.static(path.join(__dirname, 'public')));
+
+function sendPublicPage(res, fileName) {
+    return res.sendFile(path.join(__dirname, 'public', fileName));
+}
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12589,24 +12517,15 @@ attachLinkingSiteRoutes(app, {
     adminPassword: SITE_PASSWORD
 });
 
-app.get('/settings-local', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
-});
+app.get('/settings-local', (req, res) => sendPublicPage(res, 'settings.html'));
 
-app.get('/settings', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
-});
+app.get('/settings', (req, res) => sendPublicPage(res, 'settings.html'));
 
 app.get('/contactsave', (req, res) => {
     return res.redirect(302, '/settings-local');
 });
 
-app.get('/minibot/setting', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
-});
+app.get('/minibot/setting', (req, res) => sendPublicPage(res, 'settings.html'));
 
 app.post('/minibot/api/login', (req, res) => {
     try {
@@ -13209,21 +13128,11 @@ function buildSettingsPageHTML() {
 </html>`;
 }
 
-app.get('/publish-now', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingSectionHTML('publishBlock'));
-});
+app.get('/publish-now', (req, res) => sendPublicPage(res, 'index.html'));
 
-app.get('/auto-save', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingSectionHTML('autoSaveSection'));
-});
+app.get('/auto-save', (req, res) => sendPublicPage(res, 'index.html'));
 
-
-app.get('/pair', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingPageHTML());
-});
+app.get('/pair', (req, res) => sendPublicPage(res, 'index.html'));
 
 async function handlePairingCodeApiRequest(req, res) {
     try {
@@ -13236,20 +13145,18 @@ async function handlePairingCodeApiRequest(req, res) {
         if (sessionStartPromises.has(phone)) {
             return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
         }
-        if (hasPersistedSuccessfulSession(phone) || waClients.has(phone)) {
+        if (hasPersistedSuccessfulSession(phone)) {
             await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, { autoRequestPairingCode: false, bootRestore: true });
             return res.status(409).json({ success: false, error: 'هذا الرقم مرتبط بالفعل وتوجد له جلسة محفوظة، لذلك لن يتم إنشاء جلسة جديدة أو كود جديد' });
         }
         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
-        const code = await waitForPairingCode(phone);
-        if (!code) {
-            await purgeSessionData(phone, {
-                keepProfile: false,
-                ownerId: getPhoneOwner(phone) || ''
-            }).catch(() => {});
-            throw new Error('تعذر إنشاء كود الربط وتم حذف الجلسة غير المكتملة من الصفر');
+        if (waClients.has(phone)) {
+            return res.status(409).json({ success: false, error: 'يوجد تشغيل مؤقت لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
         }
+        await purgeSessionData(phone, { keepProfile: false, ownerId: getPhoneOwner(phone) || '' });
+        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true, bootRestore: false });
+        const code = await waitForPairingCode(phone);
+        if (!code) throw new Error('تعذر إنشاء كود الربط');
         return res.json({
             success: true,
             phone,
@@ -13592,7 +13499,7 @@ async function gracefulShutdown(signal) {
     }
 
     flushAnalyticsDB();
-    process.exit(Number.isInteger(shutdownExitCode) ? shutdownExitCode : 0);
+    process.exit(0);
 }
 
 process.once('SIGINT', () => {
