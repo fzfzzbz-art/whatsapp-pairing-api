@@ -12819,6 +12819,14 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 app.use(express.static(path.join(BASE_DIR, 'public')));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+app.get(['/', '/index', '/index.html', '/pair', '/pair/', '/pair.html'], (req, res) => {
+    return res.sendFile(path.join(BASE_DIR, 'public', 'index.html'));
+});
+
+app.get(['/settings', '/settings/', '/settings.html', '/settings-local'], (req, res) => {
+    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
+});
+
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -12874,14 +12882,6 @@ attachLinkingSiteRoutes(app, {
     routeBase: THIRD_LINKING_SITE_PATH,
     aliases: ['/linking-site', '/Freebot', THIRD_LINKING_SITE_PATH],
     adminPassword: SITE_PASSWORD
-});
-
-app.get('/settings-local', (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
-});
-
-app.get('/settings', (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
 });
 
 app.get('/contactsave', (req, res) => {
