@@ -3,376 +3,160 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GOLDEN QUEEN | CONTROL PANEL v2.0</title>
+  <title>لوحة إعدادات الرقم المربوط</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #020617; --panel: #0f172a; --accent: #22c55e; --gold: #d4a017;
-      --text: #f8fafc; --muted: #94a3b8; --border: #1e293b; --danger: #ef4444;
-      --info: #38bdf8; --warning: #f59e0b;
+      --bg:#071018; --panel:#0c1620; --panel-soft:#101c29; --border:rgba(255,255,255,.08); --text:#f4f7fb;
+      --muted:#93a4b8; --brand:#23c2ff; --brand-2:#2d66ff; --accent:#11d07a; --warning:#ffd166; --danger:#ff6b6b;
+      --shadow:0 24px 60px rgba(0,0,0,.35); --radius:24px;
     }
-    * { box-sizing: border-box; }
+    * { box-sizing:border-box; }
     body {
-      margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif;
-      background: var(--bg); color: var(--text); direction: rtl;
+      margin:0; font-family:'Tajawal',system-ui,sans-serif; color:var(--text);
+      background: radial-gradient(circle at top right, rgba(35,194,255,.16), transparent 24%), radial-gradient(circle at top left, rgba(17,208,122,.10), transparent 20%), linear-gradient(180deg, #071018 0%, #0a121b 100%);
+      min-height:100vh;
     }
-
-    #login-screen {
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
-      padding: 24px;
+    .container { width:min(1300px, calc(100% - 28px)); margin:0 auto; }
+    .card, .hero, .stat, .section-card, .login-box, .toast {
+      border:1px solid var(--border); background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+      box-shadow:var(--shadow); backdrop-filter:blur(10px);
     }
-    .login-box {
-      background: var(--panel); padding: 40px; border-radius: 24px;
-      border: 1px solid var(--border); width: 100%; max-width: 420px; text-align: center;
-      box-shadow: 0 0 30px rgba(212, 160, 23, 0.12);
-    }
-    .login-box h2 { color: var(--gold); margin-bottom: 12px; font-size: 28px; }
-    .login-box p { color: var(--muted); margin-bottom: 24px; }
-
-    #dashboard { display: none; padding: 20px; max-width: 1200px; margin: 0 auto; }
-
-    .header {
-      display: flex; justify-content: space-between; align-items: center; gap: 16px;
-      padding: 20px; background: var(--panel); border-radius: 15px; margin-bottom: 20px;
-      border: 1px solid var(--border); flex-wrap: wrap;
-    }
-
-    .grid-container {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;
-    }
-
-    .card {
-      background: var(--panel); padding: 25px; border-radius: 20px;
-      border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-    }
-
-    .card h3 { color: var(--gold); margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-    .helper-text { color: var(--muted); font-size: 13px; line-height: 1.7; }
-    .input-group { margin-bottom: 15px; }
-    label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 14px; }
-
-    input, select, textarea {
-      width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border);
-      background: #020617; color: white; box-sizing: border-box; outline: none;
-    }
-
-    textarea { min-height: 110px; resize: vertical; }
-    input:focus, select:focus, textarea:focus { border-color: var(--gold); }
-
+    .hero { margin:20px auto 18px; padding:24px; border-radius:30px; display:flex; justify-content:space-between; gap:18px; align-items:center; flex-wrap:wrap; }
+    .hero h1 { margin:0 0 8px; font-size:clamp(28px, 4vw, 42px); }
+    .hero p { margin:0; color:var(--muted); line-height:1.8; }
+    .hero .actions { display:flex; gap:10px; flex-wrap:wrap; }
     .btn {
-      padding: 12px 20px; border-radius: 10px; border: none; font-weight: bold;
-      cursor: pointer; transition: 0.25s; width: 100%; margin-top: 10px;
+      border:none; border-radius:16px; cursor:pointer; padding:13px 18px; font-size:14px; font-weight:800; transition:.2s ease;
     }
-    .btn:hover { transform: translateY(-2px); }
-    .btn-gold { background: linear-gradient(45deg, var(--gold), #f9d976); color: #000; }
-    .btn-success { background: linear-gradient(45deg, #16a34a, #4ade80); color: white; }
-    .btn-danger { background: linear-gradient(45deg, #b91c1c, #ef4444); color: white; }
-    .btn-muted { background: #1e293b; color: white; border: 1px solid var(--border); }
-
-    .status-badge {
-      padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold;
+    .btn:hover { transform:translateY(-1px); }
+    .btn-primary { background:linear-gradient(135deg, var(--brand), var(--brand-2)); color:white; }
+    .btn-secondary { background:rgba(255,255,255,.04); color:var(--text); border:1px solid var(--border); }
+    .btn-danger { background:linear-gradient(135deg, #ff6b6b, #d9465f); color:white; }
+    .btn-success { background:linear-gradient(135deg, var(--accent), #0ea96b); color:white; }
+    .login-wrap { min-height:100vh; display:grid; place-items:center; padding:28px; }
+    .login-box { width:min(520px, 100%); border-radius:28px; padding:28px; }
+    .login-box h2 { margin:0 0 10px; font-size:30px; }
+    .login-box p { margin:0 0 18px; color:var(--muted); line-height:1.8; }
+    .grid { display:grid; gap:16px; }
+    .field label { display:block; margin-bottom:8px; color:#dff7ff; font-size:13px; font-weight:700; }
+    .field input, .field select, .field textarea {
+      width:100%; border-radius:16px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.04); color:white;
+      padding:14px 16px; font-size:15px; outline:none;
     }
-    .online { background: rgba(34, 197, 94, 0.2); color: var(--accent); }
-    .offline { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
-
-    .command-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
-    .cmd-btn {
-      background: #1e293b; color: white; border: 1px solid var(--border);
-      padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 13px;
-      transition: .25s;
-    }
-    .cmd-btn:hover { background: var(--gold); color: black; }
-
-    .toast {
-      position: fixed; bottom: 20px; left: 20px; z-index: 9999;
-      min-width: 240px; max-width: 90vw; padding: 14px 16px; border-radius: 14px;
-      background: #0b1220; border: 1px solid var(--border); color: white;
-      box-shadow: 0 20px 45px rgba(0,0,0,.35); display: none;
-    }
-    .toast.success { border-color: rgba(34, 197, 94, .45); }
-    .toast.error { border-color: rgba(239, 68, 68, .45); }
-    .toast.info { border-color: rgba(56, 189, 248, .45); }
-
-    .mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .stat-row {
-      display: flex; justify-content: space-between; align-items: center; padding: 10px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
-    }
-    .stat-row:last-child { border-bottom: 0; }
-    .value { color: var(--gold); font-weight: 700; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-
-    @media (max-width: 720px) {
-      .login-box { padding: 28px 20px; }
-      #dashboard { padding: 14px; }
-      .card { padding: 18px; }
-      .mini-grid { grid-template-columns: 1fr; }
+    .field textarea { min-height:120px; resize:vertical; }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color:rgba(35,194,255,.45); box-shadow:0 0 0 4px rgba(35,194,255,.12); }
+    .status-line { min-height:22px; color:var(--muted); font-size:14px; }
+    #dashboard { display:none; padding: 0 0 28px; }
+    .top-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:14px; margin-bottom:18px; }
+    .stat { border-radius:22px; padding:20px; }
+    .stat strong { display:block; font-size:32px; margin-bottom:4px; }
+    .stat span { color:var(--muted); }
+    .meta { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:14px; margin-bottom:18px; }
+    .card { border-radius:24px; padding:20px; }
+    .card h3 { margin:0 0 8px; }
+    .card p { margin:0; color:var(--muted); line-height:1.8; }
+    .sections { display:grid; gap:18px; }
+    .section-card { border-radius:26px; padding:22px; }
+    .section-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:16px; }
+    .section-head h3 { margin:0; font-size:22px; }
+    .section-head small { color:var(--muted); }
+    .fields-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+    .field.full { grid-column:1 / -1; }
+    .toggle-wrap { display:flex; gap:10px; align-items:center; }
+    .toggle-badge { padding:7px 10px; border-radius:999px; font-size:12px; font-weight:800; }
+    .toggle-on { background:rgba(17,208,122,.12); color:#b6ffd7; border:1px solid rgba(17,208,122,.28); }
+    .toggle-off { background:rgba(255,107,107,.10); color:#ffd1d1; border:1px solid rgba(255,107,107,.24); }
+    .upload-box { display:grid; gap:10px; }
+    .img-preview { width:100%; aspect-ratio:16/9; border-radius:18px; object-fit:cover; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03); }
+    .toolbar { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:18px; flex-wrap:wrap; }
+    .toolbar .actions { display:flex; gap:10px; flex-wrap:wrap; }
+    .pill { display:inline-flex; align-items:center; gap:8px; border-radius:999px; padding:9px 12px; font-size:12px; font-weight:700; }
+    .pill.ok { background:rgba(17,208,122,.12); color:#b6ffd7; border:1px solid rgba(17,208,122,.25); }
+    .pill.warn { background:rgba(255,209,102,.12); color:#ffeab8; border:1px solid rgba(255,209,102,.25); }
+    .toast { position:fixed; left:16px; bottom:16px; min-width:220px; max-width:min(90vw, 420px); padding:14px 16px; border-radius:18px; display:none; z-index:9999; }
+    .toast.show { display:block; }
+    .toast.success { border-color:rgba(17,208,122,.25); }
+    .toast.error { border-color:rgba(255,107,107,.25); }
+    .toast.info { border-color:rgba(35,194,255,.25); }
+    @media (max-width: 960px) {
+      .top-grid, .meta, .fields-grid { grid-template-columns:1fr; }
+      .field.full { grid-column:auto; }
+      .hero { padding:20px; }
+      .login-box { padding:22px; }
     }
   </style>
 </head>
 <body>
-  <div id="login-screen">
+  <div id="loginScreen" class="login-wrap">
     <div class="login-box">
-      <h2>GOLDEN QUEEN</h2>
-      <p>سجل دخولك للتحكم بالرقم المربوط</p>
-      <div class="input-group" style="text-align:right;">
-        <label>رقم الواتساب</label>
-        <input type="text" id="login-phone" placeholder="9677xxxxxxxx" />
+      <h2>لوحة إعدادات الرقم المربوط</h2>
+      <p>سجل الدخول باستخدام الرقم الذي ربطته من موقع الربط، ثم عدّل جميع الإعدادات مباشرة من هذه الصفحة.</p>
+      <div class="grid">
+        <div class="field">
+          <label for="loginNumber">رقم واتساب</label>
+          <input id="loginNumber" type="text" placeholder="9677XXXXXXXX" />
+        </div>
+        <div class="field">
+          <label for="loginPassword">كلمة المرور / رمز الدخول</label>
+          <input id="loginPassword" type="password" placeholder="أدخل كلمة المرور" />
+        </div>
       </div>
-      <div class="input-group" style="text-align:right;">
-        <label>رمز التحقق / كلمة المرور</label>
-        <input type="password" id="admin-pass" placeholder="أدخل رمز التحقق" />
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
+        <button id="loginBtn" class="btn btn-primary">فتح الإعدادات</button>
+        <a class="btn btn-secondary" href="/pair" style="text-decoration:none; display:inline-flex; align-items:center;">العودة لموقع الربط</a>
       </div>
-      <button class="btn btn-gold" onclick="login()">دخول اللوحة</button>
+      <div id="loginStatus" class="status-line" style="margin-top:14px;">جاهز للتحقق من بيانات الدخول.</div>
     </div>
   </div>
 
-  <div id="dashboard">
-    <div class="header">
+  <div id="dashboard" class="container">
+    <div class="hero">
       <div>
-        <h1 style="margin:0; color: var(--gold);">الملكة الذهبية <span style="font-size: 14px; color: var(--muted);">V2.0</span></h1>
-        <div style="margin-top:5px;">الحالة: <span class="status-badge online" id="bot-status">تم تحميل الإعدادات</span></div>
-        <div style="margin-top:8px; color:var(--muted); font-size:13px;">الرقم الحالي: <span id="linked-number" class="mono">-</span></div>
+        <h1 id="dashTitle">إعدادات الرقم</h1>
+        <p id="dashSubtitle">كل الإعدادات تعمل من الموقع مباشرة بدون الاعتماد على أي بوت خارجي.</p>
       </div>
-      <button onclick="logout()" class="btn btn-danger" style="width:auto; min-width:140px; margin-top:0;">تسجيل خروج</button>
-    </div>
-
-    <div class="grid-container">
-      <div class="card">
-        <h3>⚙️ إعدادات الهوية</h3>
-        <div class="input-group">
-          <label>اسم البوت المربوط</label>
-          <input type="text" id="bot-name" placeholder="مثال: GOLDEN QUEEN BOT">
-        </div>
-        <div class="input-group">
-          <label>إيموجي التفاعل (Reaction)</label>
-          <input type="text" id="bot-emoji" placeholder="مثال: ✨">
-        </div>
-        <div class="input-group">
-          <label>البادئة (Prefix)</label>
-          <input type="text" id="bot-prefix" placeholder="مثال: . أو #">
-        </div>
-        <div class="input-group">
-          <label>الوضع</label>
-          <select id="bot-mode">
-            <option value="private">خاص</option>
-            <option value="public">عام</option>
-          </select>
-        </div>
-        <button class="btn btn-gold" onclick="updateSettings()">تحديث الإعدادات</button>
-      </div>
-
-      <div class="card">
-        <h3>🚀 أوامر سريعة</h3>
-        <p class="helper-text">الأوامر السريعة هنا مرتبطة بإعدادات الصفحة الحالية.</p>
-        <div class="command-list">
-          <button class="cmd-btn" onclick="applyQuickMode('public')">الوضع العام</button>
-          <button class="cmd-btn" onclick="applyQuickMode('private')">الوضع الخاص</button>
-          <button class="cmd-btn" onclick="loadSavedData()">تحديث البيانات</button>
-          <button class="cmd-btn" onclick="copySettingsLink()">نسخ رابط الإعدادات</button>
-          <button class="cmd-btn" onclick="reloadPanel()">إعادة تحميل اللوحة</button>
-        </div>
-        <hr style="border:0; border-top:1px solid var(--border); margin: 20px 0;">
-        <div class="input-group">
-          <label>رسالة الوصف / المعلومات التعريفية</label>
-          <textarea id="bot-description" placeholder="اكتب وصف الحساب أو رسالة التعريف..."></textarea>
-          <button class="btn btn-success" onclick="updateSettings()">حفظ الوصف الآن</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3>📊 الإحصائيات الحالية</h3>
-        <div class="stat-row"><span>الأرقام المربوطة:</span><span id="stat-linked" class="value">0</span></div>
-        <div class="stat-row"><span>المستخدمين:</span><span id="stat-users" class="value">0</span></div>
-        <div class="stat-row"><span>مرات إعادة الاتصال:</span><span id="stat-reconnects" class="value">0</span></div>
-        <div class="stat-row"><span>مرات تشغيل الجلسات:</span><span id="stat-starts" class="value">0</span></div>
-      </div>
-
-      <div class="card">
-        <h3>🧾 معلومات الجلسة</h3>
-        <div class="mini-grid">
-          <div>
-            <label>التطبيق النشط</label>
-            <input type="text" id="active-app" disabled>
-          </div>
-          <div>
-            <label>الرابط الحالي</label>
-            <input type="text" id="current-url" disabled>
-          </div>
-        </div>
-        <p class="helper-text" style="margin-top:14px;">تم ربط هذه اللوحة مباشرة مع واجهات التحميل والحفظ الموجودة داخل المشروع، مع الحفاظ على نفس شكل واجهة مجلد public.</p>
+      <div class="actions">
+        <a id="pairLinkBtn" class="btn btn-secondary" href="/pair" style="text-decoration:none; display:inline-flex; align-items:center;">موقع الربط</a>
+        <button id="refreshBtn" class="btn btn-secondary">تحديث</button>
+        <button id="resetBtn" class="btn btn-secondary">استرجاع آخر حفظ</button>
+        <button id="saveBtn" class="btn btn-success">حفظ جميع الإعدادات</button>
+        <button id="logoutBtn" class="btn btn-danger">تسجيل خروج</button>
       </div>
     </div>
+
+    <div class="toolbar">
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span id="dirtyPill" class="pill ok">جميع التغييرات محفوظة</span>
+        <span id="appPill" class="pill warn">APP: default</span>
+      </div>
+      <div class="actions">
+        <button id="copySettingsBtn" class="btn btn-secondary">نسخ رابط الإعدادات</button>
+        <button id="copyPairBtn" class="btn btn-secondary">نسخ رابط الربط</button>
+      </div>
+    </div>
+
+    <div class="top-grid">
+      <div class="stat"><strong id="statLinked">0</strong><span>الأرقام المربوطة</span></div>
+      <div class="stat"><strong id="statSessions">0</strong><span>الجلسات النشطة</span></div>
+      <div class="stat"><strong id="statUsers">0</strong><span>المستخدمون</span></div>
+      <div class="stat"><strong id="statPoints">0</strong><span>النقاط</span></div>
+    </div>
+
+    <div class="meta">
+      <div class="card"><h3>الرقم</h3><p id="dashNumber">-</p></div>
+      <div class="card"><h3>حالة الجلسة</h3><p id="dashSession">-</p></div>
+      <div class="card"><h3>الرابط المعتمد</h3><p id="dashBaseUrl">-</p></div>
+    </div>
+
+    <div id="sectionsContainer" class="sections"></div>
+    <div id="saveStatus" class="status-line" style="padding: 10px 4px 30px;"></div>
   </div>
 
   <div id="toast" class="toast"></div>
-
-  <script>
-    const API = {
-      login: '/api/login',
-      load: '/api/settings/load',
-      save: '/api/settings/save',
-      summary: '/api/linking-site/summary'
-    };
-
-    const state = {
-      phone: '',
-      app: 'default',
-      settings: null
-    };
-
-    function showToast(message, type = 'info') {
-      const toast = document.getElementById('toast');
-      toast.className = `toast ${type}`;
-      toast.textContent = message;
-      toast.style.display = 'block';
-      clearTimeout(showToast.timer);
-      showToast.timer = setTimeout(() => { toast.style.display = 'none'; }, 3200);
-    }
-
-    function normalizePhone(value) {
-      return String(value || '').replace(/\D/g, '');
-    }
-
-    function setStatus(text, online = true) {
-      const badge = document.getElementById('bot-status');
-      badge.textContent = text;
-      badge.className = `status-badge ${online ? 'online' : 'offline'}`;
-    }
-
-    async function login() {
-      const phone = normalizePhone(document.getElementById('login-phone').value);
-      const pass = document.getElementById('admin-pass').value.trim();
-      if (!phone) return showToast('أدخل رقم الواتساب أولاً', 'error');
-      if (!pass) return showToast('أدخل رمز التحقق أولاً', 'error');
-
-      try {
-        const res = await fetch(API.login, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ num: phone, pass })
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || data.message || 'فشل تسجيل الدخول');
-        }
-
-        state.phone = data.number || phone;
-        state.app = data.app || 'default';
-        document.getElementById('linked-number').textContent = state.phone;
-        document.getElementById('active-app').value = state.app;
-        document.getElementById('current-url').value = window.location.href;
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('dashboard').style.display = 'block';
-        setStatus('جاري تحميل الإعدادات...', true);
-        await Promise.all([loadSavedData(), loadStats()]);
-        showToast('تم تسجيل الدخول بنجاح ✨', 'success');
-      } catch (error) {
-        setStatus('فشل تسجيل الدخول', false);
-        showToast(error.message || 'تعذر تسجيل الدخول', 'error');
-      }
-    }
-
-    async function loadSavedData() {
-      if (!state.phone) return;
-      try {
-        const res = await fetch(`${API.load}?num=${encodeURIComponent(state.phone)}&app=${encodeURIComponent(state.app)}`, { cache: 'no-store' });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || 'تعذر جلب الإعدادات');
-        }
-
-        const settings = data.settings || {};
-        state.settings = settings;
-        document.getElementById('bot-name').value = settings.name || '';
-        document.getElementById('bot-emoji').value = settings.statusCustomReact || '';
-        document.getElementById('bot-prefix').value = settings.prefix || '.';
-        document.getElementById('bot-mode').value = settings.mode || 'private';
-        document.getElementById('bot-description').value = settings.description || '';
-        setStatus('تم تحميل الإعدادات بنجاح', true);
-      } catch (error) {
-        setStatus('تعذر تحميل الإعدادات', false);
-        showToast(error.message || 'تعذر تحميل الإعدادات', 'error');
-      }
-    }
-
-    async function updateSettings(extra = {}) {
-      if (!state.phone) return showToast('سجل الدخول أولاً', 'error');
-
-      const payload = {
-        num: state.phone,
-        app: state.app,
-        name: document.getElementById('bot-name').value.trim(),
-        statusCustomReact: document.getElementById('bot-emoji').value.trim(),
-        prefix: document.getElementById('bot-prefix').value.trim() || '.',
-        mode: document.getElementById('bot-mode').value,
-        description: document.getElementById('bot-description').value.trim(),
-        ...extra
-      };
-
-      try {
-        const res = await fetch(API.save, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || 'فشل حفظ الإعدادات');
-        }
-        state.settings = data.settings || payload;
-        await loadSavedData();
-        showToast('تم تحديث إعدادات الرقم المربوط بنجاح ✨', 'success');
-      } catch (error) {
-        showToast(error.message || 'تعذر حفظ الإعدادات', 'error');
-      }
-    }
-
-    async function applyQuickMode(mode) {
-      document.getElementById('bot-mode').value = mode;
-      await updateSettings({ mode });
-    }
-
-    async function loadStats() {
-      try {
-        const res = await fetch(API.summary, { cache: 'no-store' });
-        const data = await res.json();
-        document.getElementById('stat-linked').textContent = data.totalLinkedNumbers || data.activeBots || 0;
-        document.getElementById('stat-users').textContent = data.totalUsers || 0;
-        document.getElementById('stat-reconnects').textContent = data.totalReconnects || 0;
-        document.getElementById('stat-starts').textContent = data.totalSessionsStarted || 0;
-      } catch (_) {}
-    }
-
-    function copySettingsLink() {
-      navigator.clipboard.writeText(window.location.href)
-        .then(() => showToast('تم نسخ رابط الإعدادات', 'success'))
-        .catch(() => showToast('تعذر نسخ الرابط', 'error'));
-    }
-
-    function reloadPanel() {
-      Promise.all([loadSavedData(), loadStats()])
-        .then(() => showToast('تم تحديث البيانات', 'info'))
-        .catch(() => showToast('تعذر تحديث البيانات', 'error'));
-    }
-
-    function logout() {
-      state.phone = '';
-      state.app = 'default';
-      state.settings = null;
-      document.getElementById('dashboard').style.display = 'none';
-      document.getElementById('login-screen').style.display = 'flex';
-      document.getElementById('admin-pass').value = '';
-      setStatus('تم تسجيل الخروج', false);
-    }
-
-    document.getElementById('admin-pass').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') login();
-    });
-    document.getElementById('login-phone').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') login();
-    });
-  </script>
+  <script src="/settings.js"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79"}' crossorigin="anonymous"></script>
 </body>
 </html>
