@@ -1,7 +1,10 @@
 const PairingUI = (() => {
+  const CODE_EXPIRY_SECONDS = 90;
   const state = {
     code: '',
     qrLoaded: false,
+    countdownTimer: null,
+    countdownLeft: CODE_EXPIRY_SECONDS,
   };
 
   const els = {
@@ -58,6 +61,27 @@ const PairingUI = (() => {
     if (node) node.textContent = value;
   }
 
+  function clearCountdown() {
+    if (state.countdownTimer) {
+      clearInterval(state.countdownTimer);
+      state.countdownTimer = null;
+    }
+  }
+
+  function startCountdown() {
+    clearCountdown();
+    state.countdownLeft = CODE_EXPIRY_SECONDS;
+    setText('timer', String(state.countdownLeft));
+    state.countdownTimer = setInterval(() => {
+      state.countdownLeft -= 1;
+      setText('timer', String(Math.max(0, state.countdownLeft)));
+      if (state.countdownLeft > 0) return;
+      clearCountdown();
+      setStatus('Pair code expired. Generate a fresh code to continue.', true);
+      toast('Pair code expired. Generate a fresh code.', 'error');
+    }, 1000);
+  }
+
   async function generatePairCode() {
     const phone = normalizePhone(els.phone()?.value || '');
     if (!phone) {
@@ -89,7 +113,8 @@ const PairingUI = (() => {
       state.code = String(data.code || '').trim();
       els.pairCodeValue().textContent = state.code || '--------';
       els.pairCodeBox().classList.add('show');
-      setStatus(`Pair code ready for ${phone}. It stays valid for about 60 seconds.`);
+      startCountdown();
+      setStatus(`Pair code ready for ${phone}. It stays valid for about ${CODE_EXPIRY_SECONDS} seconds.`);
       toast('Pair code generated successfully.');
     } catch (error) {
       setStatus(error.message || 'Failed to generate pair code.', true);
@@ -143,6 +168,7 @@ const PairingUI = (() => {
     bind();
     loadSummary();
     setInterval(loadSummary, 20000);
+    setText('timer', String(CODE_EXPIRY_SECONDS));
   }
 
   return { init };
