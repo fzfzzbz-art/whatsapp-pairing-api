@@ -1023,7 +1023,7 @@ const CHANNEL_REACTION_MAX_DELAY_MS = 420;
 const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
-const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
+const PAIRING_TIMEOUT_MS = Math.max(120000, Number(process.env.PAIRING_TIMEOUT_MS || 180000));
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
@@ -8227,6 +8227,17 @@ function hasPersistedSuccessfulSession(phone) {
     return hasStoredSessionPayload(normalized);
 }
 
+function getPendingPairingState(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return null;
+    const pending = pairingRequests.get(normalized);
+    if (!pending) return null;
+    return {
+        ...pending,
+        active: pending.completed !== true && pending.timedOut !== true
+    };
+}
+
 function clearReconnectTimer(phone) {
     const normalized = normalizePhone(phone);
     const timer = reconnectTimers.get(normalized);
@@ -8316,8 +8327,9 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
+    const pendingPairing = getPendingPairingState(normalized);
     const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
-    if (!hasSuccessfulSession) {
+    if (!hasSuccessfulSession && !pendingPairing?.active) {
         console.warn(`Skipping reconnect for orphan/unregistered session ${normalized}; purging session immediately.`);
         clearReconnectTimer(normalized);
         resetReconnectAttempts(normalized);
@@ -8350,10 +8362,17 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
-            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, {
-                autoRequestPairingCode: false,
-                bootRestore: true
-            });
+            const latestPendingPairing = getPendingPairingState(normalized);
+            const reconnectOptions = latestPendingPairing?.active
+                ? {
+                    autoRequestPairingCode: !latestPendingPairing.code,
+                    bootRestore: false
+                }
+                : {
+                    autoRequestPairingCode: false,
+                    bootRestore: true
+                };
+            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, reconnectOptions);
         } catch (error) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
@@ -8396,9 +8415,10 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
             ownerId: telegramUserId || existing.telegramUserId || getPhoneOwner(normalized) || ''
         });
 
+        const pairingTimeoutSeconds = Math.floor(PAIRING_TIMEOUT_MS / 1000);
         await notifyTelegramUser(
             telegramUserId || existing.telegramUserId,
-            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
+            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد ${pairingTimeoutSeconds} ثانية.
 🧹 تم حذف الرقم وجلساته غير المكتملة نهائياً من الإحصائيات ويمكن طلب كود جديد من الصفر في أي وقت.`
         );
 
@@ -9502,9 +9522,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
 
         const sessionPath = getSessionPath(normalizedPhone);
+        ensureDir(sessionPath);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
         const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+        writeLocalSessionMeta(normalizedPhone, {
+            phone: normalizedPhone,
+            ownerId: String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || ''),
+            registered: state?.creds?.registered === true,
+            lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+        });
         const { version } = await getCachedBaileysVersion();
         const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
@@ -9527,6 +9554,18 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
 
+    if (!state.creds.registered) {
+        try {
+            await saveCreds({
+                ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
+                registered: false,
+                lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+            });
+        } catch (error) {
+            console.error(`Initial Session Persist Error (${normalizedPhone}):`, error?.message || error);
+        }
+    }
+
     if (!state.creds.registered && autoRequestPairingCode) {
         pairingRequests.set(normalizedPhone, {
             ...(pairingRequests.get(normalizedPhone) || {}),
@@ -9540,8 +9579,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         void (async () => {
             try {
-                const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
-                const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
+                const requestDelayMs = Math.max(1500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 3000));
+                const requestTimeoutMs = Math.max(15000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 30000));
                 await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
                 const code = await Promise.race([
                     sock.requestPairingCode(normalizedPhone),
@@ -9561,7 +9600,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 \`${code}\`
 
 🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.
-⏳ إذا لم يتم إكمال الربط خلال 60 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
+⏳ إذا لم يتم إكمال الربط خلال ${Math.floor(PAIRING_TIMEOUT_MS / 1000)} ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
 
                 if (telegramCtx) {
                     await safeReply(telegramCtx, pairingMessage, buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
@@ -9825,6 +9864,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 if (pendingPair && pendingPair.completed !== true) {
                     console.log(`Pairing session closed before completion: ${normalizedPhone}`);
                     clearReconnectTimer(normalizedPhone);
+                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone), 1500);
                     return;
                 }
 
@@ -12454,11 +12494,6 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
-app.use(express.static(path.join(__dirname, 'public')));
-
-function sendPublicPage(res, fileName) {
-    return res.sendFile(path.join(__dirname, 'public', fileName));
-}
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12517,15 +12552,24 @@ attachLinkingSiteRoutes(app, {
     adminPassword: SITE_PASSWORD
 });
 
-app.get('/settings-local', (req, res) => sendPublicPage(res, 'settings.html'));
+app.get('/settings-local', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildSettingsPageHTML());
+});
 
-app.get('/settings', (req, res) => sendPublicPage(res, 'settings.html'));
+app.get('/settings', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildSettingsPageHTML());
+});
 
 app.get('/contactsave', (req, res) => {
     return res.redirect(302, '/settings-local');
 });
 
-app.get('/minibot/setting', (req, res) => sendPublicPage(res, 'settings.html'));
+app.get('/minibot/setting', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildSettingsPageHTML());
+});
 
 app.post('/minibot/api/login', (req, res) => {
     try {
@@ -13128,11 +13172,21 @@ function buildSettingsPageHTML() {
 </html>`;
 }
 
-app.get('/publish-now', (req, res) => sendPublicPage(res, 'index.html'));
+app.get('/publish-now', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingSectionHTML('publishBlock'));
+});
 
-app.get('/auto-save', (req, res) => sendPublicPage(res, 'index.html'));
+app.get('/auto-save', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingSectionHTML('autoSaveSection'));
+});
 
-app.get('/pair', (req, res) => sendPublicPage(res, 'index.html'));
+
+app.get('/pair', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingPageHTML());
+});
 
 async function handlePairingCodeApiRequest(req, res) {
     try {
