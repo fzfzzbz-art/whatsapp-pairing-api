@@ -1023,7 +1023,7 @@ const CHANNEL_REACTION_MAX_DELAY_MS = 420;
 const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
-const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 90000);
+const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
@@ -1037,7 +1037,7 @@ const SERVER_KEEP_ALIVE_TIMEOUT_MS = Math.max(5000, Number(process.env.SERVER_KE
 const SERVER_HEADERS_TIMEOUT_MS = Math.max(SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000, Number(process.env.SERVER_HEADERS_TIMEOUT_MS || 66000));
 const SERVER_REQUEST_TIMEOUT_MS = Math.max(10000, Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 120000));
 const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(String(process.env.PRESERVE_PERSISTENT_RUNTIME_DATA || 'true').trim().toLowerCase());
-const PREFERRED_BROWSER_PROFILE = Object.freeze([]);
+const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
 const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 120)));
@@ -1053,24 +1053,6 @@ let sessionSupervisorStarted = false;
 let lastRuntimeCleanupAt = 0;
 const DATABASE_ENABLED = isMongoConfigured();
 
-const server = app.listen(APP_PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${APP_PORT}`);
-    const kickoff = () => {
-        bootstrapServiceInBackground().catch((error) => {
-            serviceBootstrapStarted = false;
-            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
-        });
-    };
-    const bootstrapTimer = setTimeout(kickoff, 10);
-    if (typeof bootstrapTimer.unref === 'function') {
-        bootstrapTimer.unref();
-    }
-});
-
-server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
-server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
-server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
-
 process.on('unhandledRejection', (reason) => {
     console.error('Unhandled Promise Rejection:', reason?.stack || reason?.message || reason);
 });
@@ -1080,32 +1062,9 @@ process.on('uncaughtException', (error) => {
 });
 
 
-function sanitizeBrowserProfile(profile, fallback = ['Ubuntu', 'Chrome', '22.04']) {
-    if (!Array.isArray(profile) || profile.length < 2) {
-        return Array.isArray(fallback) && fallback.length >= 2 ? [...fallback] : ['Ubuntu', 'Chrome', '22.04'];
-    }
-    const [platform, browserName, browserVersion] = profile;
-    const safePlatform = String(platform || '').trim() || String(fallback?.[0] || 'Ubuntu');
-    const safeBrowserName = String(browserName || '').trim() || String(fallback?.[1] || 'Chrome');
-    const safeBrowserVersion = String(browserVersion || '').trim() || String(fallback?.[2] || '22.04');
-    return [safePlatform, safeBrowserName, safeBrowserVersion];
-}
-
-function normalizeBaileysVersion(version, fallback = []) {
-    if (!Array.isArray(version) || version.length < 2) {
-        return Array.isArray(fallback) ? [...fallback] : [];
-    }
-    const normalized = version.slice(0, 3).map((value) => Number(value));
-    if (normalized.some((value) => !Number.isFinite(value) || value < 0)) {
-        return Array.isArray(fallback) ? [...fallback] : [];
-    }
-    while (normalized.length < 3) normalized.push(0);
-    return normalized;
-}
-
 function getPreferredBrowserProfile() {
     if (Array.isArray(PREFERRED_BROWSER_PROFILE) && PREFERRED_BROWSER_PROFILE.length) {
-        return sanitizeBrowserProfile(PREFERRED_BROWSER_PROFILE);
+        return [...PREFERRED_BROWSER_PROFILE];
     }
 
     const candidates = [
@@ -1119,7 +1078,7 @@ function getPreferredBrowserProfile() {
         try {
             const profile = typeof build === 'function' ? build() : null;
             if (Array.isArray(profile) && profile.length) {
-                return sanitizeBrowserProfile(profile);
+                return profile;
             }
         } catch (_) {}
     }
@@ -1487,76 +1446,6 @@ function writeLocalSessionMeta(phone = '', patch = {}) {
     };
     writeJsonFileToDisk(getLocalSessionMetaFile(sessionKey), next);
     return next;
-}
-
-function getSessionClientProfileFile(phone = '') {
-    return path.join(getSessionStorageDir(phone), 'client-profile.json');
-}
-
-function readSessionClientProfile(phone = '') {
-    const raw = readJsonFileFromDisk(getSessionClientProfileFile(phone), {});
-    const fallbackBrowser = getPreferredBrowserProfile();
-    return {
-        phone: normalizePhone(raw?.phone || phone) || String(raw?.phone || phone || '').trim(),
-        browser: sanitizeBrowserProfile(raw?.browser || raw?.browserProfile || fallbackBrowser, fallbackBrowser),
-        webVersion: normalizeBaileysVersion(raw?.webVersion || raw?.version || [], []),
-        appType: String(raw?.appType || '').trim(),
-        updatedAt: raw?.updatedAt || null,
-        lastSuccessfulAt: raw?.lastSuccessfulAt || null
-    };
-}
-
-function writeSessionClientProfile(phone = '', patch = {}) {
-    const sessionKey = String(phone || '').trim() || 'default';
-    const normalizedPhone = normalizePhone(sessionKey);
-    const sessionDir = getSessionStorageDir(sessionKey);
-    ensureDir(sessionDir);
-    const current = readSessionClientProfile(sessionKey);
-    const fallbackBrowser = current?.browser?.length ? current.browser : getPreferredBrowserProfile();
-    const nextBrowser = sanitizeBrowserProfile(patch?.browser || patch?.browserProfile || current?.browser || fallbackBrowser, fallbackBrowser);
-    const nextVersion = normalizeBaileysVersion(patch?.webVersion || patch?.version || current?.webVersion || [], current?.webVersion || []);
-    const next = {
-        ...current,
-        ...patch,
-        phone: normalizedPhone || String(patch?.phone || current?.phone || sessionKey).trim(),
-        browser: nextBrowser,
-        browserProfile: nextBrowser,
-        webVersion: nextVersion,
-        version: nextVersion,
-        appType: String(patch?.appType || current?.appType || '').trim(),
-        updatedAt: new Date().toISOString(),
-        lastSuccessfulAt: patch?.lastSuccessfulAt || current?.lastSuccessfulAt || null
-    };
-    writeJsonFileToDisk(getSessionClientProfileFile(sessionKey), next);
-    return next;
-}
-
-async function getSocketClientProfile(phone = '', options = {}) {
-    const normalizedPhone = normalizePhone(phone);
-    const stored = normalizedPhone ? readSessionClientProfile(normalizedPhone) : readSessionClientProfile(phone);
-    const latest = await getCachedBaileysVersion().catch(() => null);
-    const latestVersion = normalizeBaileysVersion(latest?.version || [], stored?.webVersion || []);
-    const selectedVersion = options.forceLatest === true
-        ? normalizeBaileysVersion(latestVersion, stored?.webVersion || [])
-        : normalizeBaileysVersion(stored?.webVersion?.length ? stored.webVersion : latestVersion, latestVersion);
-    const selectedBrowser = sanitizeBrowserProfile(stored?.browser || stored?.browserProfile || options.browser || getPreferredBrowserProfile(), getPreferredBrowserProfile());
-
-    if (normalizedPhone) {
-        writeSessionClientProfile(normalizedPhone, {
-            phone: normalizedPhone,
-            browser: selectedBrowser,
-            webVersion: selectedVersion,
-            appType: String(options.appType || stored?.appType || 'whatsapp-md').trim()
-        });
-    }
-
-    return {
-        version: selectedVersion,
-        browser: selectedBrowser,
-        latestVersion,
-        storedVersion: normalizeBaileysVersion(stored?.webVersion || [], []),
-        storedBrowser: sanitizeBrowserProfile(stored?.browser || stored?.browserProfile || selectedBrowser, selectedBrowser)
-    };
 }
 
 async function listLocalSessionEntries() {
@@ -8653,7 +8542,7 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
 
         await notifyTelegramUser(
             telegramUserId || existing.telegramUserId,
-            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 90 ثانية.
+            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
 🧹 تم حذف الرقم وجلساته غير المكتملة نهائياً من الإحصائيات ويمكن طلب كود جديد من الصفر في أي وقت.`
         );
 
@@ -9788,6 +9677,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
             try { existing.ws?.close?.(); } catch (_) {}
             try { existing.end?.(); } catch (_) {}
+            try { existing.logout?.(); } catch (_) {}
             waClients.delete(normalizedPhone);
             clearSessionPingTimer(normalizedPhone);
             clearPresenceTimer(normalizedPhone);
@@ -9807,19 +9697,14 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             registered: state?.creds?.registered === true,
             lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
         });
-        const clientProfile = await getSocketClientProfile(normalizedPhone, {
-            forceLatest: !bootRestore && state?.creds?.registered !== true,
-            appType: 'whatsapp-md'
-        });
-        const sessionVersion = clientProfile.version;
-        const sessionBrowser = clientProfile.browser;
+        const { version } = await getCachedBaileysVersion();
 
         const sock = makeWASocket({
-        version: sessionVersion,
+        version,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         auth: state,
-        browser: sessionBrowser,
+        browser: getPreferredBrowserProfile(),
         syncFullHistory: false,
         connectTimeoutMs: Math.max(10000, Number(process.env.WA_CONNECT_TIMEOUT_MS || 20000)),
         defaultQueryTimeoutMs: 0,
@@ -9879,7 +9764,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 \`${code}\`
 
 🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.
-⏳ إذا لم يتم إكمال الربط خلال 90 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
+⏳ إذا لم يتم إكمال الربط خلال 60 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
 
                 if (telegramCtx) {
                     await safeReply(telegramCtx, pairingMessage, buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
@@ -10052,13 +9937,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 };
 
                 await touchMongoSessionState(normalizedPhone, connectionMetadata);
-                writeSessionClientProfile(normalizedPhone, {
-                    phone: normalizedPhone,
-                    browser: sessionBrowser,
-                    webVersion: sessionVersion,
-                    appType: 'whatsapp-md',
-                    lastSuccessfulAt: connectionMetadata.lastConnectedAt
-                });
                 await flushSessionSnapshotSync(normalizedPhone, connectionMetadata);
 
                 try {
@@ -12816,16 +12694,7 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
     app.use(bot.webhookCallback(TELEGRAM_WEBHOOK_PATH));
 }
 
-app.use(express.static(path.join(BASE_DIR, 'public')));
 app.use('/uploads', express.static(UPLOADS_DIR));
-
-app.get(['/', '/index', '/index.html', '/pair', '/pair/', '/pair.html'], (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'pair.html'));
-});
-
-app.get(['/settings', '/settings/', '/settings.html', '/settings-local'], (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
-});
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12884,12 +12753,23 @@ attachLinkingSiteRoutes(app, {
     adminPassword: SITE_PASSWORD
 });
 
+app.get('/settings-local', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildSettingsPageHTML());
+});
+
+app.get('/settings', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildSettingsPageHTML());
+});
+
 app.get('/contactsave', (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
+    return res.redirect(302, '/settings-local');
 });
 
 app.get('/minibot/setting', (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildSettingsPageHTML());
 });
 
 app.post('/minibot/api/login', (req, res) => {
@@ -13505,7 +13385,8 @@ app.get('/auto-save', (req, res) => {
 
 
 app.get('/pair', (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'pair.html'));
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingPageHTML());
 });
 
 async function handlePairingCodeApiRequest(req, res) {
@@ -13618,13 +13499,13 @@ async function ensureWebQrSession(forceNew = false) {
     webQrSession.booting = new Promise(async (resolve) => {
         try {
             const { state, saveCreds } = await getMongoAuthState(WEB_QR_SESSION_PHONE);
-            const webQrClientProfile = await getSocketClientProfile(WEB_QR_SESSION_PHONE, { forceLatest: true, appType: 'whatsapp-web-qr' });
+            const { version } = await fetchLatestBaileysVersion();
             const sock = makeWASocket({
-                version: webQrClientProfile.version,
+                version,
                 logger: pino({ level: 'silent' }),
                 printQRInTerminal: false,
                 auth: state,
-                browser: webQrClientProfile.browser,
+                browser: getPreferredBrowserProfile(),
                 syncFullHistory: false,
                 connectTimeoutMs: 60000,
                 defaultQueryTimeoutMs: 0,
@@ -13689,7 +13570,8 @@ app.get('/api/qr', async (req, res) => {
 
 
 app.get('/', (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'index.html'));
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildLandingPageHTML());
 });
 
 app.get('/health', (req, res) => {
@@ -13754,7 +13636,7 @@ async function initTelegramTransport() {
     }
 }
 
-var serviceBootstrapStarted = false;
+let serviceBootstrapStarted = false;
 
 async function bootstrapServiceInBackground() {
     if (serviceBootstrapStarted) return;
@@ -13790,6 +13672,24 @@ async function bootstrapServiceInBackground() {
     console.log(`Storage root: ${STORAGE_ROOT}`);
     console.log(`Telegram transport mode: ${telegramStatus.mode}`);
 }
+
+const server = app.listen(APP_PORT, () => {
+    console.log(`Server running on port ${APP_PORT}`);
+    const kickoff = () => {
+        bootstrapServiceInBackground().catch((error) => {
+            serviceBootstrapStarted = false;
+            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
+        });
+    };
+    const bootstrapTimer = setTimeout(kickoff, 10);
+    if (typeof bootstrapTimer.unref === 'function') {
+        bootstrapTimer.unref();
+    }
+});
+
+server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
 
 let shuttingDown = false;
 
