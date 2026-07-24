@@ -223,7 +223,8 @@ const EMBEDDED_PAIR_CODE_BRIDGE = (() => {
             return "";
         }
 
-        const FALLBACK_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-1.onrender.com';
+        const PREFERRED_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-e9eh.onrender.com';
+const FALLBACK_PUBLIC_SITE_URL = PREFERRED_PUBLIC_SITE_URL;
         const DEFAULT_PUBLIC_WEB_BASE_URL = String(
             process.env.DEFAULT_PUBLIC_BASE_URL ||
             process.env.PUBLIC_BASE_URL ||
@@ -366,9 +367,12 @@ const DEFAULT_REACTION_EMOJI = '❤️';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'Golden Queen Bot';
 const BRAND_IMAGE_TEXT = 'Golden Queen Bot';
-const FALLBACK_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-1.onrender.com';
+const PREFERRED_PUBLIC_SITE_URL = 'https://whatsapp-pairing-api-e9eh.onrender.com';
+const FALLBACK_PUBLIC_SITE_URL = PREFERRED_PUBLIC_SITE_URL;
 const DEFAULT_BOT_LINK = String(
     process.env.DEFAULT_BOT_LINK ||
+    process.env.PREFERRED_PUBLIC_BASE_URL ||
+    PREFERRED_PUBLIC_SITE_URL ||
     process.env.PUBLIC_BASE_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     process.env.APP_URL ||
@@ -396,6 +400,8 @@ const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEPLOYMENT_BASE_URL = String(
     process.env.DEPLOYMENT_BASE_URL ||
+    process.env.PREFERRED_PUBLIC_BASE_URL ||
+    PREFERRED_PUBLIC_SITE_URL ||
     process.env.PUBLIC_BASE_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     process.env.APP_URL ||
@@ -948,7 +954,7 @@ const IS_RENDER_ENV = Boolean(
 const USE_TELEGRAM_WEBHOOK = ['1', 'true', 'yes', 'on'].includes(
     String(process.env.USE_TELEGRAM_WEBHOOK || (IS_RENDER_ENV ? 'true' : '')).toLowerCase()
 );
-const TELEGRAM_ENABLED = Boolean(String(BOT_TOKEN || '').trim());
+const TELEGRAM_ENABLED = false;
 const TELEGRAM_PLACEHOLDER_TOKEN = '0000000000:render-disabled-placeholder-token';
 
 const app = express();
@@ -1017,7 +1023,7 @@ const pendingContactSyncs = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
 const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
-const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 15000);
+const AUTO_REPLY_COOLDOWN_MS = Number(process.env.AUTO_REPLY_COOLDOWN_MS || 1500);
 const CHANNEL_LIKE_COMMAND = String(process.env.CHANNEL_LIKE_COMMAND || '.gq').trim() || '.gq';
 const CHANNEL_LIKE_EMOJIS = ['💤', '😄', '☺️', '😅', '💚', '🇾🇪', '😀', '😑', '🤫', '💭', '🫠', '🌦', '💥', '😪', '😂', '🤑', '🤪', '🤨', '🤐', '😔', '🫨', '🥳', '😟', '🥹', '😱', '😖', '🤡', '☠️', '💖', '😾', '😿', '❤️', '❤️‍🔥', '❣️', '💟', '💜', '💞', '🩷', '💦', '🫱', '🤏', '👈', '👉', '✌️', '🤌', '🤝', '🤲', '👐', '🦿', '🫀', '🧔‍♀️', '👩‍🦰', '🧑‍🦰', '🧔', '🙎', '🙎‍♂️', '🙇‍♂️', '🤷‍♂️', '🤦', '👨‍⚕️', '👨‍🏭', '🏊‍♀️', '🚣', '🕺', '🫂', '👥️', '👤', '🗣'];
 const CHANNEL_REACTION_MAX_COUNT = 5000;
@@ -1027,7 +1033,7 @@ const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
 const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
-const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
+const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 1500);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
 const JSON_MIRROR_COLLECTION = 'local_json_mirrors';
@@ -1043,12 +1049,12 @@ const PRESERVE_PERSISTENT_RUNTIME_DATA = ['1', 'true', 'yes', 'on'].includes(Str
 const PREFERRED_BROWSER_PROFILE = Object.freeze(['macOS', 'Safari', '17.4']);
 const HEALTH_CHECK_INTERVAL_MS = Math.max(5000, Number(process.env.HEALTH_CHECK_INTERVAL_MS || 15000));
 const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AFTER_MS || 180000));
-const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 120)));
-const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
+const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 35)));
+const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 10000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
-const SESSION_HEALTH_PROBE_INTERVAL_MS = Math.max(30000, Number(process.env.SESSION_HEALTH_PROBE_INTERVAL_MS || 90000));
-const SESSION_HEALTH_PROBE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_HEALTH_PROBE_TIMEOUT_MS || 15000));
-const SESSION_HEALTH_PROBE_MAX_FAILURES = Math.max(1, Number(process.env.SESSION_HEALTH_PROBE_MAX_FAILURES || 2));
+const SESSION_HEALTH_PROBE_INTERVAL_MS = Math.max(30000, Number(process.env.SESSION_HEALTH_PROBE_INTERVAL_MS || 45000));
+const SESSION_HEALTH_PROBE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_HEALTH_PROBE_TIMEOUT_MS || 10000));
+const SESSION_HEALTH_PROBE_MAX_FAILURES = Math.max(1, Number(process.env.SESSION_HEALTH_PROBE_MAX_FAILURES || 4));
 const BAILEYS_VERSION_CACHE_TTL_MS = Math.max(60000, Number(process.env.BAILEYS_VERSION_CACHE_TTL_MS || 21600000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
@@ -6011,18 +6017,25 @@ function enableAutoStatusDefaultsForLinkedPhone(phone) {
     if (settings.autoStatusRead !== 'on') patch.autoStatusRead = 'on';
     if (settings.autoStatusReact !== 'on') patch.autoStatusReact = 'on';
     if (settings.statusReactionNotice !== 'on') patch.statusReactionNotice = 'on';
+    if (settings.autoPrivateReact !== 'on') patch.autoPrivateReact = 'on';
+    if (settings.autoRead !== 'on') patch.autoRead = 'on';
+    if (settings.alwaysOnline !== 'on') patch.alwaysOnline = 'on';
+    if (settings.autoTyping !== 'on') patch.autoTyping = 'on';
+    if (settings.autoReactScope !== 'all') patch.autoReactScope = 'all';
+    if (settings.ghostMode !== 'off') patch.ghostMode = 'off';
 
     if (!Object.keys(patch).length) return false;
     updatePhoneSettings(normalized, patch);
     return true;
 }
 
+
 function addLinkedNumber(userId, phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
 
     const db = getUsersDB();
-    const key = String(userId);
+    const key = String(userId || `web:${normalized}`);
 
     if (!db.users[key]) {
         db.users[key] = {
@@ -8208,35 +8221,21 @@ function isEmojiInput(value) {
 }
 
 function buildTelegramCopyButton(text, label = 'نسخ النص 📋') {
-    return {
-        reply_markup: {
-            inline_keyboard: [[{ text: label, copy_text: { text: String(text || '') } }]]
-        }
-    };
+    return {};
 }
 
 async function safeReply(ctx, text, extra = {}) {
-    try {
-        return await ctx.reply(text, extra);
-    } catch (error) {
-        console.error('Telegram Reply Error:', error.message);
-    }
+    return null;
 }
 
 async function notifyTelegramUser(userId, text, extra = {}) {
-    if (!userId) return;
-    try {
-        await bot.telegram.sendMessage(String(userId), text, extra);
-    } catch (error) {
-        console.error(`Telegram Notify Error (${userId}):`, error.message);
-    }
+    return null;
 }
 
 async function notifyPhoneOwner(phone, text, extra = {}) {
-    const ownerId = getPhoneOwner(phone);
-    if (!ownerId) return;
-    await notifyTelegramUser(ownerId, text, extra);
+    return null;
 }
+
 
 function isTransientCryptoDisconnect(lastDisconnect = null) {
     const rawMessage = String(
@@ -10032,9 +10031,8 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 // }
 
                 const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
-                if (finalOwnerId) {
-                    addLinkedNumber(finalOwnerId, normalizedPhone);
-                }
+                const resolvedOwnerId = finalOwnerId || `web:${normalizedPhone}`;
+                addLinkedNumber(resolvedOwnerId, normalizedPhone);
 
                 if (pendingPair) {
                     pendingPair.completed = true;
@@ -13115,7 +13113,16 @@ app.get('/api/dashboard/load', (req, res) => {
             settings,
             stats,
             pairingApi: buildPairingApiDescriptor(phone),
-            analytics: getAnalyticsDB()
+            analytics: getAnalyticsDB(),
+            fieldLabels: SITE_SETTINGS_FIELD_LABELS,
+            sections: PHONE_SETTINGS_SECTIONS,
+            selectOptions: PHONE_SETTINGS_SELECT_OPTIONS,
+            toggleFields: Array.from(PHONE_SETTINGS_TOGGLE_FIELDS),
+            site: {
+                baseUrl: SITE_ENDPOINTS.target_site_base_url,
+                settingsPage: SITE_ENDPOINTS.target_settings_page_url,
+                pairingPage: `${DEPLOYMENT_BASE_URL}/pair`
+            }
         });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Dashboard load failed' });
@@ -13472,8 +13479,7 @@ app.get('/auto-save', (req, res) => {
 
 
 app.get('/pair', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'pair.html'));
 });
 
 async function handlePairingCodeApiRequest(req, res) {
@@ -13666,9 +13672,9 @@ app.get('/health', (req, res) => {
         sessions: getAllLinkedPhones().length,
         users: getAllUserIds().length,
         uptime: process.uptime(),
-        mode: !TELEGRAM_ENABLED ? 'disabled' : USE_TELEGRAM_WEBHOOK ? 'webhook' : 'polling',
+        mode: 'web-only',
         baseUrl: PUBLIC_BASE_URL,
-        webhookPath: TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK ? TELEGRAM_WEBHOOK_PATH : null
+        webhookPath: null
     });
 });
 
