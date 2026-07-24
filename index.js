@@ -1053,6 +1053,24 @@ let sessionSupervisorStarted = false;
 let lastRuntimeCleanupAt = 0;
 const DATABASE_ENABLED = isMongoConfigured();
 
+const server = app.listen(APP_PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${APP_PORT}`);
+    const kickoff = () => {
+        bootstrapServiceInBackground().catch((error) => {
+            serviceBootstrapStarted = false;
+            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
+        });
+    };
+    const bootstrapTimer = setTimeout(kickoff, 10);
+    if (typeof bootstrapTimer.unref === 'function') {
+        bootstrapTimer.unref();
+    }
+});
+
+server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
+
 process.on('unhandledRejection', (reason) => {
     console.error('Unhandled Promise Rejection:', reason?.stack || reason?.message || reason);
 });
@@ -13772,24 +13790,6 @@ async function bootstrapServiceInBackground() {
     console.log(`Storage root: ${STORAGE_ROOT}`);
     console.log(`Telegram transport mode: ${telegramStatus.mode}`);
 }
-
-const server = app.listen(APP_PORT, () => {
-    console.log(`Server running on port ${APP_PORT}`);
-    const kickoff = () => {
-        bootstrapServiceInBackground().catch((error) => {
-            serviceBootstrapStarted = false;
-            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
-        });
-    };
-    const bootstrapTimer = setTimeout(kickoff, 10);
-    if (typeof bootstrapTimer.unref === 'function') {
-        bootstrapTimer.unref();
-    }
-});
-
-server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
-server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
-server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
 
 let shuttingDown = false;
 
