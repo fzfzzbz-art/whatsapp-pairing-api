@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const PUBLIC_DIR = path.join(__dirname, 'public');
 const { EventEmitter } = require('events');
 const {
     dispatchLegacyMessage,
@@ -12494,6 +12495,7 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.static(PUBLIC_DIR));
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12553,13 +12555,11 @@ attachLinkingSiteRoutes(app, {
 });
 
 app.get('/settings-local', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.get('/settings', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.get('/contactsave', (req, res) => {
@@ -12567,8 +12567,7 @@ app.get('/contactsave', (req, res) => {
 });
 
 app.get('/minibot/setting', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.post('/minibot/api/login', (req, res) => {
