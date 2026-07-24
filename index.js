@@ -12820,7 +12820,7 @@ app.use(express.static(path.join(BASE_DIR, 'public')));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 app.get(['/', '/index', '/index.html', '/pair', '/pair/', '/pair.html'], (req, res) => {
-    return res.sendFile(path.join(BASE_DIR, 'public', 'index.html'));
+    return res.sendFile(path.join(BASE_DIR, 'public', 'pair.html'));
 });
 
 app.get(['/settings', '/settings/', '/settings.html', '/settings-local'], (req, res) => {
@@ -12885,7 +12885,7 @@ attachLinkingSiteRoutes(app, {
 });
 
 app.get('/contactsave', (req, res) => {
-    return res.redirect(302, '/settings-local');
+    return res.sendFile(path.join(BASE_DIR, 'public', 'settings.html'));
 });
 
 app.get('/minibot/setting', (req, res) => {
@@ -13754,7 +13754,7 @@ async function initTelegramTransport() {
     }
 }
 
-let serviceBootstrapStarted = false;
+var serviceBootstrapStarted = false;
 
 async function bootstrapServiceInBackground() {
     if (serviceBootstrapStarted) return;
