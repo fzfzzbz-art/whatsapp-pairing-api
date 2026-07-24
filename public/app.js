@@ -8,13 +8,13 @@ const PairingUI = (() => {
   };
 
   const els = {
-    phone: () => document.getElementById('phone'),
-    terms: () => document.getElementById('terms'),
-    pairBtn: () => document.getElementById('pairBtn'),
-    pairStatus: () => document.getElementById('pairStatus'),
-    pairCodeBox: () => document.getElementById('pairCodeBox'),
-    pairCodeValue: () => document.getElementById('pairCodeValue'),
-    copyCodeBtn: () => document.getElementById('copyCodeBtn'),
+    phone: () => document.getElementById('phone') || document.getElementById('phoneInput'),
+    terms: () => document.getElementById('terms') || document.getElementById('agree'),
+    pairBtn: () => document.getElementById('pairBtn') || document.getElementById('generateBtn'),
+    pairStatus: () => document.getElementById('pairStatus') || document.getElementById('errBox'),
+    pairCodeBox: () => document.getElementById('pairCodeBox') || document.getElementById('codeCard'),
+    pairCodeValue: () => document.getElementById('pairCodeValue') || document.getElementById('pairCode'),
+    copyCodeBtn: () => document.getElementById('copyCodeBtn') || document.getElementById('copyBtn'),
     loadQrBtn: () => document.getElementById('loadQrBtn'),
     qrImage: () => document.getElementById('qrImage'),
     qrBox: () => document.getElementById('qrBox'),
@@ -24,14 +24,34 @@ const PairingUI = (() => {
 
   function setStatus(text, isError = false) {
     const node = els.pairStatus();
-    if (!node) return;
-    node.textContent = text;
-    node.style.color = isError ? '#ff9c9c' : 'var(--muted)';
+    const errBox = document.getElementById('errBox');
+    const pendingBar = document.getElementById('pendingBar');
+
+    if (node) {
+      node.textContent = text;
+      node.style.color = isError ? '#ff9c9c' : 'var(--muted)';
+    }
+
+    if (errBox) {
+      errBox.textContent = text;
+      errBox.classList.toggle('visible', Boolean(isError && text));
+      errBox.style.display = isError && text ? 'block' : 'none';
+    }
+
+    if (pendingBar) {
+      pendingBar.style.display = !isError && text ? 'flex' : 'none';
+      const pendingTxt = pendingBar.querySelector('.txt');
+      if (pendingTxt && !isError && text) pendingTxt.textContent = text;
+    }
   }
 
   function toast(message, type = 'info') {
     const node = els.toast();
-    if (!node) return;
+    if (!node) {
+      if (type === 'error') console.error(message);
+      else console.log(message);
+      return;
+    }
     node.textContent = message;
     node.className = `toast show ${type === 'error' ? 'error' : ''}`.trim();
     clearTimeout(node._timer);
@@ -111,8 +131,13 @@ const PairingUI = (() => {
         throw new Error(data?.error || data?.message || 'Failed to generate pair code');
       }
       state.code = String(data.code || '').trim();
-      els.pairCodeValue().textContent = state.code || '--------';
-      els.pairCodeBox().classList.add('show');
+      const pairCodeValue = els.pairCodeValue();
+      const pairCodeBox = els.pairCodeBox();
+      if (pairCodeValue) pairCodeValue.textContent = state.code || '--------';
+      if (pairCodeBox) {
+        pairCodeBox.classList.add('show');
+        pairCodeBox.classList.add('visible');
+      }
       startCountdown();
       setStatus(`Pair code ready for ${phone}. It stays valid for about ${CODE_EXPIRY_SECONDS} seconds.`);
       toast('Pair code generated successfully.');
@@ -171,7 +196,11 @@ const PairingUI = (() => {
     setText('timer', String(CODE_EXPIRY_SECONDS));
   }
 
-  return { init };
+  return { init, generatePairCode, copyCode, loadQr };
 })();
+
+window.generatePairCode = () => PairingUI.generatePairCode?.() || undefined;
+window.copyCode = () => PairingUI.copyCode?.() || undefined;
+window.loadQr = () => PairingUI.loadQr?.() || undefined;
 
 document.addEventListener('DOMContentLoaded', PairingUI.init);
