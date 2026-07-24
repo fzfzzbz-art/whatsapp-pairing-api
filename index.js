@@ -16,6 +16,7 @@ const pino = require('pino');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const PUBLIC_DIR = path.join(__dirname, 'public');
 const os = require('os');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
@@ -1004,6 +1005,8 @@ const phoneSettingsAuthSessions = new Map();
 const channelPromotionTimers = new Map();
 const deletedMessageBackups = new Map();
 const sessionPingTimers = new Map();
+const sessionHealthProbeTimers = new Map();
+const sessionHealthProbeFailures = new Map();
 const sessionSnapshotSyncTimers = new Map();
 const sessionSnapshotSyncMetadata = new Map();
 const sessionSnapshotSyncPromises = new Map();
@@ -1043,6 +1046,10 @@ const CLIENT_STALE_AFTER_MS = Math.max(60000, Number(process.env.CLIENT_STALE_AF
 const STATUS_INTERACTION_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.STATUS_INTERACTION_DELAY_MS || 120)));
 const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_INTERVAL_MS || 15000));
 const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
+const SESSION_HEALTH_PROBE_INTERVAL_MS = Math.max(30000, Number(process.env.SESSION_HEALTH_PROBE_INTERVAL_MS || 90000));
+const SESSION_HEALTH_PROBE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_HEALTH_PROBE_TIMEOUT_MS || 15000));
+const SESSION_HEALTH_PROBE_MAX_FAILURES = Math.max(1, Number(process.env.SESSION_HEALTH_PROBE_MAX_FAILURES || 2));
+const BAILEYS_VERSION_CACHE_TTL_MS = Math.max(60000, Number(process.env.BAILEYS_VERSION_CACHE_TTL_MS || 21600000));
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
 const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
@@ -1087,12 +1094,29 @@ function getPreferredBrowserProfile() {
 }
 
 let cachedBaileysVersionPromise = null;
+let cachedBaileysVersionValue = null;
+let cachedBaileysVersionFetchedAt = 0;
 async function getCachedBaileysVersion() {
+    const now = Date.now();
+    if (cachedBaileysVersionValue && (now - cachedBaileysVersionFetchedAt) < BAILEYS_VERSION_CACHE_TTL_MS) {
+        return cachedBaileysVersionValue;
+    }
     if (!cachedBaileysVersionPromise) {
-        cachedBaileysVersionPromise = fetchLatestBaileysVersion().catch((error) => {
-            cachedBaileysVersionPromise = null;
-            throw error;
-        });
+        cachedBaileysVersionPromise = fetchLatestBaileysVersion()
+            .then((result) => {
+                cachedBaileysVersionValue = result;
+                cachedBaileysVersionFetchedAt = Date.now();
+                return result;
+            })
+            .catch((error) => {
+                if (cachedBaileysVersionValue) {
+                    return cachedBaileysVersionValue;
+                }
+                throw error;
+            })
+            .finally(() => {
+                cachedBaileysVersionPromise = null;
+            });
     }
     return cachedBaileysVersionPromise;
 }
@@ -4022,6 +4046,61 @@ function clearSessionPingTimer(phone) {
     }
 }
 
+function clearSessionHealthProbeTimer(phone) {
+    const normalized = normalizePhone(phone);
+    const timer = sessionHealthProbeTimers.get(normalized);
+    if (timer) {
+        clearInterval(timer);
+        sessionHealthProbeTimers.delete(normalized);
+    }
+    sessionHealthProbeFailures.delete(normalized);
+}
+
+function startSessionHealthProbe(sock, phone) {
+    if (!sock) return;
+    const normalized = normalizePhone(phone);
+    if (!normalized) return;
+    clearSessionHealthProbeTimer(normalized);
+
+    const timer = setInterval(async () => {
+        try {
+            if (waClients.get(normalized) !== sock) return;
+            if (Number(sock.ws?.readyState) !== 1) return;
+
+            const selfJid = `${normalized}@s.whatsapp.net`;
+            const probe = typeof sock.onWhatsApp === 'function'
+                ? sock.onWhatsApp(selfJid)
+                : Promise.resolve(true);
+
+            await Promise.race([
+                probe,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('health probe timeout')), SESSION_HEALTH_PROBE_TIMEOUT_MS))
+            ]);
+
+            sessionHealthProbeFailures.delete(normalized);
+        } catch (error) {
+            const failures = Number(sessionHealthProbeFailures.get(normalized) || 0) + 1;
+            sessionHealthProbeFailures.set(normalized, failures);
+            console.error(`Session Health Probe Error (${normalized}) [${failures}/${SESSION_HEALTH_PROBE_MAX_FAILURES}]:`, error?.message || error);
+
+            if (failures < SESSION_HEALTH_PROBE_MAX_FAILURES) return;
+            sessionHealthProbeFailures.delete(normalized);
+            clearSessionHealthProbeTimer(normalized);
+
+            if (waClients.get(normalized) !== sock) return;
+
+            try { sock.ws?.close?.(); } catch (_) {}
+            try { sock.end?.(); } catch (_) {}
+            waClients.delete(normalized);
+            clearReconnectTimer(normalized);
+            scheduleReconnect(normalized, getPhoneOwner(normalized), 1000);
+        }
+    }, SESSION_HEALTH_PROBE_INTERVAL_MS);
+
+    if (typeof timer.unref === 'function') timer.unref();
+    sessionHealthProbeTimers.set(normalized, timer);
+}
+
 function startSessionPing(sock, phone) {
     if (!sock) return;
     const normalized = normalizePhone(phone);
@@ -4031,7 +4110,6 @@ function startSessionPing(sock, phone) {
     const timer = setInterval(async () => {
         try {
             if (Number(sock.ws?.readyState) !== 1) return;
-            touchClient(normalized);
             if (typeof sock.sendPresenceUpdate === 'function' && getActivePhoneSettings(normalized).alwaysOnline === 'on' && getActivePhoneSettings(normalized).ghostMode !== 'on') {
                 await sock.sendPresenceUpdate('available');
             }
@@ -4074,6 +4152,7 @@ function clearPresenceTimer(phone) {
         presenceTimers.delete(normalized);
     }
     clearSessionPingTimer(normalized);
+    clearSessionHealthProbeTimer(normalized);
 }
 
 function startPresenceKeepAlive(sock, phone) {
@@ -9677,7 +9756,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
             try { existing.ws?.close?.(); } catch (_) {}
             try { existing.end?.(); } catch (_) {}
-            try { existing.logout?.(); } catch (_) {}
             waClients.delete(normalizedPhone);
             clearSessionPingTimer(normalizedPhone);
             clearPresenceTimer(normalizedPhone);
@@ -9930,6 +10008,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 resetReconnectAttempts(normalizedPhone);
                 startPresenceKeepAlive(sock, normalizedPhone);
                 startSessionPing(sock, normalizedPhone);
+                startSessionHealthProbe(sock, normalizedPhone);
                 const connectionMetadata = {
                     ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
                     registered: true,
@@ -10023,21 +10102,27 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
                 const shouldReconnect = !permanentDisconnect && !corruptedBootSession && !transientCryptoDisconnect;
 
-                if (corruptedBootSession || transientCryptoDisconnect) {
-                    console.log(`⚠️ تم اكتشاف جلسة تالفة/غير متزامنة للرقم ${normalizedPhone}، جاري تنظيف ملفات الجلسة وإعادة التشغيل...`);
+                if (corruptedBootSession) {
+                    console.log(`⚠️ تم اكتشاف جلسة تالفة أثناء الإقلاع للرقم ${normalizedPhone}، جاري تنظيف ملفات الجلسة وإعادة التشغيل...`);
                     const existingOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
                     await purgeSessionData(normalizedPhone, {
                         keepProfile: true,
                         ownerId: existingOwnerId || ''
                     });
                     try {
-                        await notifyTelegramUser(existingOwnerId, `⚠️ تم اكتشاف خلل تشفير أو Bad MAC للرقم ${normalizedPhone}.
+                        await notifyTelegramUser(existingOwnerId, `⚠️ تم اكتشاف خلل في ملفات جلسة الرقم ${normalizedPhone} أثناء الإقلاع.
 🧹 تم تنظيف ملفات الجلسة التالفة مع الاحتفاظ بإعدادات الرقم وملكيته.
-🔁 سيحاول البوت تشغيل الرقم من جديد وإصدار كود ربط جديد تلقائياً إذا لزم الأمر.`);
+🔁 سيحاول البوت تشغيل الرقم من جديد تلقائياً.`);
                     } catch (error) {
                         console.error(`notifyTelegramUser Corrupted Session Error (${normalizedPhone}):`, error.message || error);
                     }
                     scheduleReconnect(normalizedPhone, existingOwnerId || getPhoneOwner(normalizedPhone), 1500);
+                    return;
+                }
+
+                if (transientCryptoDisconnect) {
+                    console.log(`⚠️ تم رصد خطأ تشفير/Bad MAC مؤقت للرقم ${normalizedPhone}، سيتم إعادة الاتصال بدون حذف الجلسة.`);
+                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone), 1500);
                     return;
                 }
 
@@ -12695,6 +12780,7 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.static(PUBLIC_DIR, { index: false }));
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12753,23 +12839,24 @@ attachLinkingSiteRoutes(app, {
     adminPassword: SITE_PASSWORD
 });
 
+app.get('/pair', (req, res) => {
+    return res.sendFile(path.join(PUBLIC_DIR, 'pair.html'));
+});
+
 app.get('/settings-local', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.get('/settings', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.get('/contactsave', (req, res) => {
-    return res.redirect(302, '/settings-local');
+    return res.redirect(302, '/settings');
 });
 
 app.get('/minibot/setting', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.post('/minibot/api/login', (req, res) => {
@@ -13570,8 +13657,7 @@ app.get('/api/qr', async (req, res) => {
 
 
 app.get('/', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildLandingPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
 app.get('/health', (req, res) => {
