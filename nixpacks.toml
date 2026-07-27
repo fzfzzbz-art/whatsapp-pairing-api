@@ -1,2 +1,8 @@
 [phases.setup]
-nixPkgs = ["...", "libatomic"]
+nixPkgs = ["python311", "python311Packages.pip", "nodejs_20", "libatomic"]
+
+[phases.install]
+cmds = ["npm install --legacy-peer-deps", "python3 -m pip install --no-cache-dir -r requirements.txt"]
+
+[start]
+cmd = "bash start.sh"
