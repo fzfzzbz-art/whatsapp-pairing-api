@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Knight Bot — FAQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #071018;
+      --panel: #0c1620;
+      --panel-soft: #101c29;
+      --border: rgba(255,255,255,.08);
+      --text: #f4f7fb;
+      --muted: #93a4b8;
+      --brand: #23c2ff;
+      --brand-2: #2d66ff;
+      --accent: #11d07a;
+      --warning: #ffd166;
+      --danger: #ff6b6b;
+      --shadow: 0 24px 60px rgba(0,0,0,.35);
+      --radius: 24px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(35,194,255,.16), transparent 24%),
+        radial-gradient(circle at top right, rgba(17,208,122,.10), transparent 20%),
+        linear-gradient(180deg, #071018 0%, #0a121b 100%);
+      min-height: 100vh;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 0;
+    }
+    .topbar a.back {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-radius: 14px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 700; font-size: 14px;
+    }
+    .topbar a.back:hover { background: rgba(255,255,255,.08); }
+    .topbar .brand {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .topbar .brand .dot {
+      width: 12px; height: 12px; border-radius: 4px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 0 0 4px rgba(35,194,255,.15);
+    }
+
+    .container { width: min(980px, calc(100% - 32px)); margin: 0 auto; }
+
+    .hero-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .hero-tabs a {
+      display: grid; place-items: center; gap: 6px;
+      padding: 14px 12px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.035);
+      color: var(--text);
+      font-weight: 700;
+      font-size: 13px;
+      text-align: center;
+      transition: .2s ease;
+    }
+    .hero-tabs a:hover { background: rgba(255,255,255,.06); }
+    .hero-tabs a.active {
+      background: rgba(17,208,122,.08);
+      border-color: rgba(17,208,122,.35);
+      color: #d3ffe8;
+      box-shadow: inset 0 0 0 1px rgba(17,208,122,.18);
+    }
+    .hero-tabs a svg { display: block; opacity: .9; }
+
+    .faq-card {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+      box-shadow: var(--shadow);
+      border-radius: 28px;
+      padding: 24px;
+      margin-top: 24px;
+    }
+    .faq-head {
+      display: flex; align-items: center; gap: 14px;
+      padding-bottom: 18px;
+      border-bottom: 1px dashed rgba(255,255,255,.08);
+      margin-bottom: 18px;
+    }
+    .faq-head .leaf {
+      width: 46px; height: 46px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(17,208,122,.22), rgba(17,208,122,.06));
+      border: 1px solid rgba(17,208,122,.32);
+      color: #6df0b8;
+      display: grid; place-items: center;
+      font-size: 22px;
+    }
+    .faq-head h2 { margin: 0; font-size: 24px; line-height: 1.1; font-weight: 800; letter-spacing: -.02em; }
+    .faq-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .faq-intro {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+      margin-bottom: 16px;
+    }
+    .faq-intro a { color: var(--brand); text-decoration: underline; }
+
+    .faq-list { display: grid; gap: 10px; }
+    .faq-item {
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.025);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: .2s ease;
+    }
+    .faq-item.open {
+      border-color: rgba(35,194,255,.35);
+      box-shadow: 0 0 0 1px rgba(35,194,255,.08) inset;
+    }
+    .faq-item .q {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      cursor: pointer;
+      user-select: none;
+      background: none;
+      border: none;
+      color: var(--text);
+      width: 100%;
+      text-align: left;
+      font: inherit;
+      font-weight: 700;
+      font-size: 15px;
+    }
+    .faq-item .q:focus { outline: 2px solid rgba(35,194,255,.45); outline-offset: -2px; }
+    .faq-item .chev {
+      width: 18px; height: 18px;
+      color: var(--muted);
+      transition: transform .2s ease;
+      flex-shrink: 0;
+    }
+    .faq-item.open .chev { transform: rotate(180deg); color: var(--brand); }
+    .faq-item .a {
+      max-height: 0; overflow: hidden;
+      transition: max-height .35s ease;
+      padding: 0 18px;
+    }
+    .faq-item.open .a { max-height: 700px; }
+    .faq-item .a-inner {
+      border-top: 1px solid rgba(255,255,255,.06);
+      padding: 16px 0 20px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+    .faq-item .a-inner strong { color: var(--text); font-weight: 700; }
+    .faq-item .a-inner code {
+      background: rgba(35,194,255,.10);
+      border: 1px solid rgba(35,194,255,.22);
+      color: #b8ebff;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .faq-item .a-inner ul { padding-left: 22px; margin: 6px 0; }
+    .faq-item .a-inner li { margin-bottom: 4px; }
+
+    .support-card {
+      margin-top: 20px;
+      padding: 18px 20px;
+      border-radius: 18px;
+      border: 1px solid rgba(17,208,122,.22);
+      background: rgba(17,208,122,.06);
+      display: flex; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .support-card h4 { margin: 0 0 6px; font-size: 16px; color: #d3ffe8; }
+    .support-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .support-card .btn {
+      border: none; cursor: pointer;
+      padding: 12px 18px; border-radius: 14px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      color: white;
+      box-shadow: 0 16px 36px rgba(35,194,255,.22);
+      font-size: 14px;
+    }
+
+    .footer {
+      padding: 28px 0 36px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+      text-align: center;
+    }
+    .footer .owner {
+      color: var(--brand);
+      font-weight: 700;
+    }
+    .footer .penalty {
+      margin-top: 6px;
+      color: var(--muted);
+    }
+
+    .toast {
+      position: fixed; right: 18px; bottom: 18px; z-index: 90;
+      max-width: min(420px, calc(100% - 36px));
+      background: rgba(9,17,28,.95);
+      border: 1px solid rgba(255,255,255,.08);
+      border-left: 4px solid var(--brand);
+      color: var(--text); padding: 14px 16px; border-radius: 16px; box-shadow: var(--shadow);
+      display: none;
+    }
+    .toast.show { display: block; }
+
+    @media (max-width: 760px) {
+      .hero-tabs { grid-template-columns: 1fr 1fr; }
+      .container { width: calc(100% - 22px); }
+      .faq-card { padding: 18px; border-radius: 22px; }
+      .support-card { flex-direction: column; align-items: flex-start; }
+    }
+    @media (max-width: 460px) {
+      .hero-tabs { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="container" style="padding-top:18px">
+
+    <div class="topbar">
+      <a class="back" href="/" aria-label="Back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Back
+      </a>
+      <span class="brand"><span class="dot"></span> Knight Bot — Legal &amp; Help</span>
+    </div>
+
+    <nav class="hero-tabs" aria-label="Legal pages">
+      <a href="/legal/terms">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <div>Terms of Service</div>
+      </a>
+      <a href="/legal/privacy">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12z"/></svg>
+        <div>Privacy Policy</div>
+      </a>
+      <a href="/legal/cookies">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="9" cy="9" r="1"/><circle cx="14" cy="13" r="1"/><circle cx="8" cy="14" r="1"/></svg>
+        <div>Cookie Policy</div>
+      </a>
+      <a href="/faq" class="active" aria-current="page">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+        <div>FAQ</div>
+      </a>
+    </nav>
+
+    <section class="faq-card">
+      <div class="faq-head">
+        <div class="leaf" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+          <h2>FAQ</h2>
+          <p>Knight Bot · support@knight-bot</p>
+        </div>
+      </div>
+
+      <p class="faq-intro">
+        Find answers to the most common questions about <strong>Knight Bot</strong>. Can't find what you need?
+        <a href="#support">Contact us</a>.
+      </p>
+
+      <div class="faq-list" id="faqList">
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>How do I get started with Knight Bot?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            Open the <a href="/" style="color:var(--brand)">main pairing page</a>, enter your WhatsApp number with country code (no spaces), accept the usage terms, then click <strong>Generate pair code</strong>. Copy the 8-letter code, open WhatsApp → <strong>Linked Devices → Link a Device</strong> on Android or iPhone, and paste the code within the 60-second window. Your bot is active immediately — no signup needed.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>What features are included in Knight Bot?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            Knight Bot ships with <strong>127+ APIs</strong>: AI chat, image tools (alive / menu / owner), status auto-read &amp; react, status privacy reactions, anti-link, anti-bad word, anti-bot, anti-bug, live moderation, always-online reconnect, owner sync, external pair-code API, linked-number sync, and a live-settings panel. Everything is toggleable from the <a href="/settings" style="color:var(--brand)">settings</a> page.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>What is the pair code, and how long is it valid?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            The pair code is an <strong>8-letter code</strong> generated on demand by <code>POST /api/pairing</code> with your phone number. It is valid for about <strong>60 seconds</strong>. After expiry you can request a new one instantly. If you'd rather scan, use the <strong>QR bridge</strong> at <code>/api/qr</code> — it refreshes live each time the page loads.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>Is my WhatsApp account safe with the bot?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            Yes. Knight Bot uses the <strong>official WhatsApp Linked Devices API</strong> — the same protocol WhatsApp Web uses. However, using third-party bots technically violates WhatsApp's Terms of Service. We strongly recommend <strong>linking a secondary WhatsApp number only</strong>. Your session credentials are stored encrypted on disk and mirrored to MongoDB so the linked number stays connected across restarts.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>Do I need an account to use Knight Bot?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            No. Pairing is <strong>100% anonymous</strong> — no signup, no email, no payment, no API token. Open the site, enter your number, generate a code, paste it in WhatsApp. That's the entire flow.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>How do I customize Knight Bot's settings after pairing?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            After pairing, open the <a href="/settings" style="color:var(--brand)">/settings</a> panel. You can change:
+            <ul>
+              <li>Bot name and pack watermark</li>
+              <li>Auto-read status (on/off) and current status emoji</li>
+              <li>Status auto-react and private status reactions</li>
+              <li>Auto-reply toggle and reply template</li>
+              <li>Command mode: <code>public</code>, <code>private</code>, <code>inbox</code>, <code>group</code>, or <code>admin</code></li>
+              <li>External pair-code API endpoint + token</li>
+              <li>Linked-number sync webhook + token</li>
+            </ul>
+            Changes <strong>apply instantly</strong> to the linked number — no restart required.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>How do I keep Knight Bot always online?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            Knight Bot includes a <strong>reconnect monitor</strong> that keeps an already-linked number on the same session. On Render's free plan, instances spin down after inactivity and may take ~30–50 seconds to come back — the reconnect loop handles this automatically once you trigger a message or scan the QR again. For 24/7 uptime, upgrade the Render plan; pairing credentials are persisted to MongoDB so they survive spins.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>Can I delete my session and re-pair later?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            Yes. Click <strong>Reset session</strong> on the pairing page, or call <code>npm run reset-session</code> locally. Your credentials are wiped from disk <em>and</em> the matching MongoDB record. You can then re-pair the same number or switch to another number at any time. This is useful if a session becomes invalid or you want to change the linked WhatsApp.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>Does Knight Bot expose a pair-code API for my own apps?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a"><div class="a-inner">
+            Yes. The same endpoint powering this site is exposed at <code>POST /api/pairing</code> (body: <code>{ "phone": "E164Number" }</code>). You can also redirect Knight Bot to an external pair-code API from the Settings panel → Pair-code API — set the URL, method, token and phone-field name. Linked-number sync supports a similar <code>POST</code> webhook with custom token + emoji + auto-reply fields.
+          </div></div>
+        </article>
+
+        <article class="faq-item">
+          <button class="q" aria-expanded="false">
+            <span>How do I contact support?</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="a">
+            <div class="a-inner" id="support">
+              Use the support card below, or contact the owner via the channels listed in the in-bot settings panel:
+              <ul>
+                <li>Owner: <strong>فارس التميمي</strong> (Fares Al-Tamimi)</li>
+                <li>Channel link (Telegram / WhatsApp channel) — see <code>/settings</code></li>
+                <li>Repo: <code>https://github.com/fzfzzbz-art/whatsapp-pairing-api</code></li>
+                <li>Pairing portal: <code>https://whatsapp-pairing-api-e9eh.onrender.com/</code></li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+      </div>
+
+      <div class="support-card" id="support-card">
+        <div>
+          <h4>Still need help?</h4>
+          <p>If you can't find an answer above, send a message with your phone number and we'll reply with the right manual.</p>
+        </div>
+        <button class="btn" id="contactBtn">Contact support</button>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div>Pairing portal · <a href="/" style="color:var(--brand)">/</a> · Settings · <a href="/settings" style="color:var(--brand)">/settings</a> · Pairing API · <code>/api/pairing</code> · <a href="/faq" style="color:var(--brand)">FAQ</a></div>
+      <div class="owner">© Knight Bot — All rights reserved to <span>فارس التميمي</span></div>
+      <div class="penalty">All content on this FAQ page is the work of its owner. Reuse requires permission.</div>
+    </footer>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <script src="/faq.js"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79"}' crossorigin="anonymous"></script>
+</body>
+</html>
