@@ -106,8 +106,8 @@ function isPermanentDisconnect(lastDisconnect = null) {
     ''
   ).toLowerCase();
   if (statusCode === Number(DisconnectReason.loggedOut)) return true;
-  if ([401, 403, 405].includes(statusCode)) return true;
-  return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced)/i.test(rawMessage);
+  if ([401, 403, 405, 500].includes(statusCode)) return true;
+  return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|bad\s*session)/i.test(rawMessage);
 }
 
 function listSessionFiles(phone) {
@@ -355,6 +355,58 @@ function scheduleReconnect(phone) {
   reconnectTimers.set(normalized, timer);
 }
 
+function waitForPairingWindow(sock, phone, timeoutMs = 20000) {
+  const normalized = normalizePhone(phone);
+  if (!sock) return Promise.reject(new Error('Socket is required'));
+  if (sock?.authState?.creds?.registered === true || sock?.user) {
+    return Promise.resolve('registered');
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      try {
+        if (typeof sock.ev.off === 'function') sock.ev.off('connection.update', onUpdate);
+        else if (typeof sock.ev.removeListener === 'function') sock.ev.removeListener('connection.update', onUpdate);
+      } catch (_) {}
+    };
+    const finishResolve = (reason) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      updateSessionIndex(normalized, {
+        pendingPairing: true,
+        pairingWindowReadyAt: new Date().toISOString(),
+        pairingWindowReason: String(reason || 'unknown'),
+      }).catch(() => {});
+      resolve(String(reason || 'ready'));
+    };
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+    const onUpdate = (update = {}) => {
+      const connection = String(update.connection || '').trim();
+      if (connection === 'connecting' || connection === 'open' || update.qr) {
+        finishResolve(update.qr ? 'qr' : (connection || 'connecting'));
+        return;
+      }
+      if (connection === 'close' && isPermanentDisconnect(update.lastDisconnect)) {
+        finishReject(new Error(`Session closed before pairing (${getDisconnectStatusCode(update.lastDisconnect) || 'unknown'})`));
+      }
+    };
+    const timer = setTimeout(() => finishResolve('timeout'), timeoutMs);
+    try {
+      sock.ev.on('connection.update', onUpdate);
+    } catch (error) {
+      finishReject(error);
+    }
+  });
+}
+
 async function requestPairingCodeWithRetry(sock, phone) {
   const normalized = normalizePhone(phone);
   const cached = pairingRequests.get(normalized);
@@ -362,7 +414,12 @@ async function requestPairingCodeWithRetry(sock, phone) {
     return String(cached.code);
   }
 
-  const waits = [2500, 4500, 7000];
+  await waitForPairingWindow(sock, normalized);
+  if (sock?.authState?.creds?.registered === true || sock?.user) {
+    throw new Error('الرقم مربوط بالفعل والجلسة جاهزة.');
+  }
+
+  const waits = [1200, 2500, 4500, 7000];
   let lastError = new Error('Pairing code request failed');
   for (const waitMs of waits) {
     try {
@@ -445,8 +502,19 @@ async function createSocket(phone, options = {}) {
 
     sock.ev.on('connection.update', async (update = {}) => {
       const connection = update.connection || '';
+      if (connection === 'connecting' || update.qr) {
+        await updateSessionIndex(normalized, {
+          connected: false,
+          registered: state?.creds?.registered === true,
+          pendingPairing: state?.creds?.registered !== true,
+          lastPairingWindowAt: new Date().toISOString(),
+          lastError: '',
+        });
+      }
+
       if (connection === 'open') {
         pairingRequests.delete(normalized);
+        clearReconnect(normalized);
         await updateSessionIndex(normalized, {
           registered: true,
           connected: true,
@@ -461,16 +529,22 @@ async function createSocket(phone, options = {}) {
 
       if (connection === 'close') {
         sockets.delete(normalized);
+        const statusCode = getDisconnectStatusCode(update.lastDisconnect);
         const permanent = isPermanentDisconnect(update.lastDisconnect);
+        const restartRequired = statusCode === Number(DisconnectReason.restartRequired);
         await updateSessionIndex(normalized, {
           connected: false,
           registered: state?.creds?.registered === true,
+          pendingPairing: state?.creds?.registered !== true,
           lastDisconnectAt: new Date().toISOString(),
-          lastDisconnectReason: String(update.lastDisconnect?.error?.message || getDisconnectStatusCode(update.lastDisconnect) || ''),
+          lastDisconnectReason: String(update.lastDisconnect?.error?.message || statusCode || ''),
         });
         if (permanent) {
           await purgeSession(normalized, { removeRemote: true });
           return;
+        }
+        if (restartRequired) {
+          await destroySocket(normalized);
         }
         scheduleReconnect(normalized);
       }
@@ -560,6 +634,16 @@ app.all('/api/pairing', async (req, res) => {
 
     await purgeSession(phone, { removeRemote: true });
     const sock = await createSocket(phone, { bootRestore: false });
+    if (sock?.authState?.creds?.registered === true || sock?.user) {
+      await updateSessionIndex(phone, {
+        registered: true,
+        connected: true,
+        alreadyLinked: true,
+        pendingPairing: false,
+        lastPairingCheckAt: new Date().toISOString(),
+      });
+      return res.json({ success: true, linked: true, alreadyLinked: true, number: phone, message: 'الرقم مربوط بالفعل والجلسة محفوظة.' });
+    }
     const code = await requestPairingCodeWithRetry(sock, phone);
     await updateSessionIndex(phone, {
       registered: false,
