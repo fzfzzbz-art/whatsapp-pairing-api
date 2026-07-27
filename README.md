@@ -1,88 +1,38 @@
-# Telegram Bot — Fixed for Free Hosting
+# WhatsApp Pairing API — Fixed (no more crashes)
 
-## ✅ ما الذي تم إصلاحه
+## ⚠️ Important Technical Note
 
-المشكلة كانت: لما ترفع البوت على استضافة مجانية (Render / Railway / Koyeb / Hugging Face / إلخ)
-الاستضافة **تقتل الـ worker** خلال ثوانٍ لأن البوت ما يربط HTTP port، ولا لأن
- الكود كان يحاول يشغّل خادم Node.js (companion) ما يتوفر في استضافات Python.
+This project uses `@whiskeysockets/baileys` which is **a Node.js-only library** and has no Python equivalent. Rather than trying to rewrite Baileys in Python (impossible), this fix keeps Baileys in Node.js (`main.js`) but makes it **crash-proof**:
 
-### التعديلات اللي صارت في `main.py`:
+- `main.py` — Telegram bot + embedded HTTP server (`/api/pairing`, `/api/session`, `/api/linked-users`, `/api/emoji`, `/api/status-reaction`, status changes propagation). No more dependency on the external `bwt-lwts.onrender.com` site.
+- `main.js` — Small, hardened Baileys pair-server. Each linked number runs in isolation; one crash cannot take down other numbers.
 
-1. **سيرفر الصحة الآن يربط تلقائياً** على `8080` كـ fallback، يقرأ أكثر من متغير
-   (`PORT`, `HTTP_PORT`, `APP_PORT`, إلخ)، وما يرجع `None` إذا ما لقى قيمة.
-2. **خادم HTTP يدعم المسارات** اللي الاستضافات المجانية تستخدمها لفحص الصحة:
-   `/`, `/healthz`, `/health`, `/ping`, `/alive`, `/keepalive`
-3. **skip خادم Node.js المدمج** لما الاستضافة ما يكون عندها Node (أغلب الاستضافات
-    المجانية Python-only). يتحول تلقائياً للـ Public Pairing API.
-4. **بدون توقف عند فشل الـ companion** — لو ما اشتغل خادم Node.js يرجع للـ
-   External Pairing API بدل ما يسكّر البوت.
-5. **سوكت قابل لإعادة الاستخدام** (`allow_reuse_address = True`) عشان ما يعلق الـ
-   bind بعد restart.
-6. **fallback آمن على 8080** لو البورت الأصلي مشغول.
+## 🔍 Root cause of the crash on bwt-lwts.onrender.com
 
-## 🚀 النشر على Render (أسرع طريقة مجانية)
+When you linked a new number:
 
-### طريقة 1: بنقرة واحدة عبر render.yaml
+1. The `/api/pairing` endpoint called `sock.requestPairingCode()` **inside the same Express event loop**.
+2. That call blocks 1–8 seconds while waiting for WhatsApp's auth server.
+3. Render/Railway healthcheck times out → SIGKILL sent.
+4. All in-memory `sockets` Map vanished → every linked number went offline.
 
-1. ارفع كل محتويات هذا المجلد على GitHub repo جديد.
-2. في Render اختر **New → Blueprint**، اختر الـ repo.
-3. Render يقرأ `render.yaml` ويبني تلقائياً.
-4. ادخل متغيرات البيئة في Dashboard (أو عدّلها في `render.yaml`).
+## ✅ The fix
 
-### طريقة 2: يدوياً
+- Pairing runs in a worker thread (`worker_threads`) so the healthcheck always responds 200 OK.
+- Each linked number has its own `try/catch` boundary; a single bad session reconnect loop **cannot** kill the others.
+- Heartbeat thread keeps the host responsive even if Baileys is busy.
+- Session credentials persisted to MongoDB only — survives SIGKILL.
+- On boot: restore every linked number automatically.
+- Emoji changes inside the Telegram bot are pushed in real-time to every linked number (Python → Node control channel over HTTP `/api/emoji`).
+- Status-reaction emoji per linked user is respected; auto-react is performed with the user's current emoji.
 
-1. **New → Web Service** → اختر الـ repo.
-2. **Environment**: `Python`
-3. **Build Command**: `pip install -r requirements.txt`
-4. **Start Command**: `python main.py`
-5. **Instance Type**: `Free`
-6. اضف متغيرات البيئة من `.env.example`.
+## 🚀 Deploy to Render
 
-## 🚆 النشر على Railway
+`render.yaml` is updated to build both Python and Node, run `python main.py` as the web command. The Python service will spawn the Node companion only when needed.
 
-عنده `railway.json` جاهز. ارفع على GitHub ثم في Railway اختر
-**New Project → Deploy from GitHub**.
+If your host is Python-only (no Node), set:
 
-## 🔑 متغيرات البيئة المهمة
-
-| المتغير | الوصف | القيمة الموصى بها |
-|---|---|---|
-| `PORT` | البورت اللي الاستضافة تطلبه | `8080` |
-| `DISABLE_EMBEDDED_COMPANION` | تعطيل خادم Node.js المدمج | `true` |
-| `PYTHON_ONLY_HOSTING` | إشارة للاستضافة إنها Python فقط | `true` |
-| `PAIR_CODE_API_URL` | API الاقتران العام | `https://bwt-lwts.onrender.com/api/pairing` |
-| `BOT_TOKEN` | توكن بوت تليجرام | التوكن حقك |
-| `ADMIN_ID` | ايدي المشرف | ايديك |
-
-## 🛠️ التشغيل محلياً
-
-```bash
-pip install -r requirements.txt
-cp .env.example .env
-# عدّل القيم في .env
-python main.py
 ```
-
-## 💚 كيف تعرف البوت شغّال
-
-بعد ما تستضيف، افتح:
-`https://your-app.onrender.com/ping`
-
-لازم يرد:
-```json
-{"status":"ok","service":"telegram-bot","uptime_seconds":...}
+DISABLE_EMBEDDED_COMPANION=true
+USE_EXTERNAL_PAIRING_API=https://your-fallback-url/api/pairing
 ```
-
-إذا شفت الرد هذا يعني البوت ما راح ينطرد.
-بدل ما كان يرجع **404 Service Unavailable** ثم **SIGKILL**.
-
-## 🧩 الملفات الموجودة في الحزمة
-
-- `main.py` — البوت بعد التعديل (~ 6434 سطر)
-- `requirements.txt` — المكتبات المطلوبة
-- `render.yaml` — إعدادات Render
-- `railway.json` — إعدادات Railway
-- `Procfile` — لـ Heroku-like hosts
-- `runtime.txt` — نسخة Python
-- `.env.example` — مثال للمتغيرات
-- `.gitignore`

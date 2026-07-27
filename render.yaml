@@ -3,23 +3,23 @@ services:
     name: telegram-bot
     runtime: python
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt && npm install --omit=dev --legacy-peer-deps
     startCommand: python main.py
+    healthcheckPath: /healthz
     envVars:
       - key: PORT
         value: 8080
-      # Set DISABLE_EMBEDDED_COMPANION=true if your free host has no Node.js (most Python-only tiers)
       - key: DISABLE_EMBEDDED_COMPANION
-        value: "true"
+        value: "false"
       - key: PYTHON_ONLY_HOSTING
-        value: "true"
-      # Force the bot to use the public pairing API instead of the embedded Node companion
-      - key: PAIR_CODE_API_URL
-        value: https://bwt-lwts.onrender.com/api/pairing
-      # Optional: your real bot token (override DEFAULT_BOT_TOKEN)
-      # - key: BOT_TOKEN
-      #   value: 1234567890:AA...
-      # - key: ADMIN_ID
-      #   value: 7231690686
-      # - key: MONGODB_URI
-      #   value: mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&w=majority
+        value: "false"
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: AUTO_REPLY_CHANNEL_URL
+        value: https://bwt-lwts.onrender.com
+      - key: DEFAULT_CONTACT_NUMBER
+        value: "967773987296"
