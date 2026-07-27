@@ -12,5 +12,9 @@ services:
         value: "1024"
       - key: SESSION_BOOT_PARALLELISM
         value: "2"
+      - key: USE_TELEGRAM_WEBHOOK
+        value: "true"
+      - key: ENABLE_STATUS_ARCHIVE
+        value: "false"
       - key: BOT_TOKEN
         sync: false # سيطلب منك إدخاله يدوياً في الموقع لزيادة الأمان

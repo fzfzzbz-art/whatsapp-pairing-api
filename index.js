@@ -954,7 +954,7 @@ const IS_RENDER_ENV = Boolean(
 const USE_TELEGRAM_WEBHOOK = ['1', 'true', 'yes', 'on'].includes(
     String(process.env.USE_TELEGRAM_WEBHOOK || (IS_RENDER_ENV ? 'true' : '')).toLowerCase()
 );
-const TELEGRAM_ENABLED = false;
+const TELEGRAM_ENABLED = Boolean(String(BOT_TOKEN || '').trim());
 const TELEGRAM_PLACEHOLDER_TOKEN = '0000000000:render-disabled-placeholder-token';
 
 const app = express();
@@ -1039,6 +1039,7 @@ const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION
 const JSON_MIRROR_COLLECTION = 'local_json_mirrors';
 const STATUS_ARCHIVE_KEEP_PER_PHONE = Math.max(10, Number(process.env.STATUS_ARCHIVE_KEEP_PER_PHONE || 40));
 const STATUS_ARCHIVE_RETENTION_MS = Math.max(60 * 60 * 1000, Number(process.env.STATUS_ARCHIVE_RETENTION_MS || (12 * 60 * 60 * 1000)));
+const ENABLE_STATUS_ARCHIVE = ['1', 'true', 'yes', 'on'].includes(String(process.env.ENABLE_STATUS_ARCHIVE || 'false').trim().toLowerCase());
 const STATUS_MEDIA_COLLECTION = 'local_status_media_archive';
 const ALLOW_STATUS_MEDIA_FILE_FALLBACK = ['1', 'true', 'yes', 'on'].includes(String(process.env.ALLOW_STATUS_MEDIA_FILE_FALLBACK || 'false').trim().toLowerCase());
 const JSON_MIRROR_LOCAL_FALLBACK = ['1', 'true', 'yes', 'on'].includes(String(process.env.JSON_MIRROR_LOCAL_FALLBACK || 'false').trim().toLowerCase());
@@ -8221,19 +8222,34 @@ function isEmojiInput(value) {
 }
 
 function buildTelegramCopyButton(text, label = 'نسخ النص 📋') {
-    return {};
+    return {
+        reply_markup: {
+            inline_keyboard: [[{ text: label, copy_text: { text: String(text || '') } }]]
+        }
+    };
 }
 
 async function safeReply(ctx, text, extra = {}) {
-    return null;
+    try {
+        return await ctx.reply(text, extra);
+    } catch (error) {
+        console.error('Telegram Reply Error:', error.message);
+    }
 }
 
 async function notifyTelegramUser(userId, text, extra = {}) {
-    return null;
+    if (!userId || !TELEGRAM_ENABLED) return;
+    try {
+        await bot.telegram.sendMessage(String(userId), text, extra);
+    } catch (error) {
+        console.error(`Telegram Notify Error (${userId}):`, error.message);
+    }
 }
 
 async function notifyPhoneOwner(phone, text, extra = {}) {
-    return null;
+    const ownerId = getPhoneOwner(phone);
+    if (!ownerId) return;
+    await notifyTelegramUser(ownerId, text, extra);
 }
 
 
@@ -9496,10 +9512,12 @@ async function handleStatusReaction(sock, phoneNumber, msg) {
             return;
         }
 
-        try {
-            await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
-        } catch (archiveError) {
-            console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
+        if (ENABLE_STATUS_ARCHIVE) {
+            try {
+                await archiveIncomingStatusForTelegram(sock, phoneNumber, msg);
+            } catch (archiveError) {
+                console.error(`Status Archive Error (${phoneNumber}):`, archiveError.message);
+            }
         }
 
         try {
@@ -13672,9 +13690,10 @@ app.get('/health', (req, res) => {
         sessions: getAllLinkedPhones().length,
         users: getAllUserIds().length,
         uptime: process.uptime(),
-        mode: 'web-only',
+        mode: !TELEGRAM_ENABLED ? 'disabled' : USE_TELEGRAM_WEBHOOK ? 'webhook' : 'polling',
         baseUrl: PUBLIC_BASE_URL,
-        webhookPath: null
+        webhookPath: TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK ? TELEGRAM_WEBHOOK_PATH : null,
+        statusArchiveEnabled: ENABLE_STATUS_ARCHIVE
     });
 });
 
