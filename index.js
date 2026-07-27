@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const PUBLIC_DIR = path.join(__dirname, 'public');
 const { EventEmitter } = require('events');
 const {
     dispatchLegacyMessage,
@@ -1023,7 +1024,7 @@ const CHANNEL_REACTION_MAX_DELAY_MS = 420;
 const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
-const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
+const PAIRING_TIMEOUT_MS = Math.max(120000, Number(process.env.PAIRING_TIMEOUT_MS || 180000));
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
@@ -8227,23 +8228,15 @@ function hasPersistedSuccessfulSession(phone) {
     return hasStoredSessionPayload(normalized);
 }
 
-function hasLinkedOwnerForPhone(phone) {
+function getPendingPairingState(phone) {
     const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-    return Boolean(getPhoneOwner(normalized));
-}
-
-async function purgeStaleSessionIfUnlinked(phone) {
-    const normalized = normalizePhone(phone);
-    if (!normalized) return false;
-    if (!hasPersistedSuccessfulSession(normalized)) return false;
-    if (hasLinkedOwnerForPhone(normalized)) return false;
-    console.warn(`Purging stale saved session for unlinked phone ${normalized}.`);
-    await purgeSessionData(normalized, {
-        keepProfile: false,
-        ownerId: ''
-    });
-    return true;
+    if (!normalized) return null;
+    const pending = pairingRequests.get(normalized);
+    if (!pending) return null;
+    return {
+        ...pending,
+        active: pending.completed !== true && pending.timedOut !== true
+    };
 }
 
 function clearReconnectTimer(phone) {
@@ -8335,8 +8328,9 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const normalized = normalizePhone(phone);
     if (!normalized || reconnectTimers.has(normalized) || sessionStartPromises.has(normalized)) return;
 
+    const pendingPairing = getPendingPairingState(normalized);
     const hasSuccessfulSession = hasPersistedSuccessfulSession(normalized);
-    if (!hasSuccessfulSession) {
+    if (!hasSuccessfulSession && !pendingPairing?.active) {
         console.warn(`Skipping reconnect for orphan/unregistered session ${normalized}; purging session immediately.`);
         clearReconnectTimer(normalized);
         resetReconnectAttempts(normalized);
@@ -8369,10 +8363,17 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
     const timer = setTimeout(async () => {
         reconnectTimers.delete(normalized);
         try {
-            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, {
-                autoRequestPairingCode: false,
-                bootRestore: true
-            });
+            const latestPendingPairing = getPendingPairingState(normalized);
+            const reconnectOptions = latestPendingPairing?.active
+                ? {
+                    autoRequestPairingCode: !latestPendingPairing.code,
+                    bootRestore: false
+                }
+                : {
+                    autoRequestPairingCode: false,
+                    bootRestore: true
+                };
+            await startWhatsApp(normalized, null, ownerId || getPhoneOwner(normalized), null, reconnectOptions);
         } catch (error) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
@@ -8415,9 +8416,10 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
             ownerId: telegramUserId || existing.telegramUserId || getPhoneOwner(normalized) || ''
         });
 
+        const pairingTimeoutSeconds = Math.floor(PAIRING_TIMEOUT_MS / 1000);
         await notifyTelegramUser(
             telegramUserId || existing.telegramUserId,
-            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
+            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد ${pairingTimeoutSeconds} ثانية.
 🧹 تم حذف الرقم وجلساته غير المكتملة نهائياً من الإحصائيات ويمكن طلب كود جديد من الصفر في أي وقت.`
         );
 
@@ -8526,7 +8528,6 @@ function startSessionSupervisor() {
 async function cleanupSession(phone) {
     const normalized = normalizePhone(phone);
     const sock = waClients.get(normalized);
-    const ownerId = getPhoneOwner(normalized) || '';
 
     clearReconnectTimer(normalized);
     clearPairingRequest(normalized);
@@ -8547,8 +8548,8 @@ async function cleanupSession(phone) {
     }
 
     await purgeSessionData(normalized, {
-        keepProfile: false,
-        ownerId
+        keepProfile: true,
+        ownerId: getPhoneOwner(normalized) || ''
     });
 }
 
@@ -9522,9 +9523,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
 
         const sessionPath = getSessionPath(normalizedPhone);
+        ensureDir(sessionPath);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
         const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+        writeLocalSessionMeta(normalizedPhone, {
+            phone: normalizedPhone,
+            ownerId: String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || ''),
+            registered: state?.creds?.registered === true,
+            lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+        });
         const { version } = await getCachedBaileysVersion();
         const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
@@ -9533,12 +9541,25 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         auth: state,
-        browser: getPreferredBrowserProfile(),
+        // Use a stable, well-known Safari desktop fingerprint. Mixing random
+        // fingerprints (or rotating them per number) is the #1 reason Baileys
+        // returns `401`/`403` after the user pastes the pair code. Keeping the
+        // browser identity consistent makes WhatsApp accept the linked device
+        // immediately on the first try.
+        browser: ['Knight Bot', 'KnightBot', '1.0.0'],
         syncFullHistory: false,
-        connectTimeoutMs: Math.max(10000, Number(process.env.WA_CONNECT_TIMEOUT_MS || 20000)),
+        emitOwnEvents: true,
+        generateHighQualityLinkPreview: false,
+        connectTimeoutMs: Math.max(8000, Number(process.env.WA_CONNECT_TIMEOUT_MS || 12000)),
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
-        markOnlineOnConnect: false
+        keepAliveIntervalMs: 8000,
+        markOnlineOnConnect: false,
+        retryRequestDelayMs: 250,
+        maxMsgRetryCount: 2,
+        appStateMacVerification: {
+            enabled: true,
+            throwErrorOnMacFail: false
+        }
     });
 
     sock.ev.setMaxListeners?.(0);
@@ -9546,6 +9567,18 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     waClients.set(normalizedPhone, sock);
     touchClient(normalizedPhone);
+
+    if (!state.creds.registered) {
+        try {
+            await saveCreds({
+                ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
+                registered: false,
+                lastConnectedAt: readLocalSessionMeta(normalizedPhone)?.lastConnectedAt || null
+            });
+        } catch (error) {
+            console.error(`Initial Session Persist Error (${normalizedPhone}):`, error?.message || error);
+        }
+    }
 
     if (!state.creds.registered && autoRequestPairingCode) {
         pairingRequests.set(normalizedPhone, {
@@ -9560,8 +9593,10 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
         void (async () => {
             try {
-                const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
-                const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
+                // Reduced delay + aggressive timeout so the code lands on the
+                // user's screen well within the 60-second WhatsApp pairing window.
+                const requestDelayMs = Math.max(800, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
+                const requestTimeoutMs = Math.max(15000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 25000));
                 await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
                 const code = await Promise.race([
                     sock.requestPairingCode(normalizedPhone),
@@ -9581,7 +9616,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 \`${code}\`
 
 🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.
-⏳ إذا لم يتم إكمال الربط خلال 60 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
+⏳ إذا لم يتم إكمال الربط خلال ${Math.floor(PAIRING_TIMEOUT_MS / 1000)} ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
 
                 if (telegramCtx) {
                     await safeReply(telegramCtx, pairingMessage, buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
@@ -9845,6 +9880,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 if (pendingPair && pendingPair.completed !== true) {
                     console.log(`Pairing session closed before completion: ${normalizedPhone}`);
                     clearReconnectTimer(normalizedPhone);
+                    scheduleReconnect(normalizedPhone, requestedOwnerId || getPhoneOwner(normalizedPhone), 1500);
                     return;
                 }
 
@@ -12474,6 +12510,7 @@ if (TELEGRAM_ENABLED && USE_TELEGRAM_WEBHOOK) {
 }
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.static(PUBLIC_DIR));
 
 function buildUnifiedSettingsHubHTML() {
     return `<!DOCTYPE html>
@@ -12533,13 +12570,15 @@ attachLinkingSiteRoutes(app, {
 });
 
 app.get('/settings-local', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.get('/settings', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
+});
+
+app.get('/faq', (req, res) => {
+    return res.sendFile(path.join(PUBLIC_DIR, 'faq.html'));
 });
 
 app.get('/contactsave', (req, res) => {
@@ -12547,8 +12586,7 @@ app.get('/contactsave', (req, res) => {
 });
 
 app.get('/minibot/setting', (req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(buildSettingsPageHTML());
+    return res.sendFile(path.join(PUBLIC_DIR, 'settings.html'));
 });
 
 app.post('/minibot/api/login', (req, res) => {
@@ -12717,9 +12755,8 @@ app.delete('/api/session-store/:phone', async (req, res) => {
         if (!requireSessionStoreApiAuth(req, res)) return;
         const phone = normalizePhone(req.params?.phone || '');
         if (!phone) return res.status(400).json({ success: false, error: 'Invalid phone number' });
-        const ownerId = getPhoneOwner(phone) || '';
-        await purgeSessionData(phone, { keepProfile: false, ownerId });
-        return res.json({ success: true, deleted: true, phone });
+        const deleted = deleteSessionStoreRecordLocal(phone);
+        return res.json({ success: true, deleted, phone });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message || 'Failed to delete session' });
     }
@@ -13180,7 +13217,6 @@ async function handlePairingCodeApiRequest(req, res) {
         if (sessionStartPromises.has(phone)) {
             return res.status(409).json({ success: false, error: 'يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة' });
         }
-        await purgeStaleSessionIfUnlinked(phone);
         if (hasPersistedSuccessfulSession(phone)) {
             await startWhatsApp(phone, null, getPhoneOwner(phone) || null, null, { autoRequestPairingCode: false, bootRestore: true });
             return res.status(409).json({ success: false, error: 'هذا الرقم مرتبط بالفعل وتوجد له جلسة محفوظة، لذلك لن يتم إنشاء جلسة جديدة أو كود جديد' });
