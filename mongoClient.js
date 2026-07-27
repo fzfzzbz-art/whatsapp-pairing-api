@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const { MongoClient } = require('mongodb');
 
-const DEFAULT_MONGODB_URI = 'mongodb+srv://faresomar79:faresaltmimi99@cluster0.lbe3uof.mongodb.net/?retryWrites=true&w=majority';
+const DEFAULT_MONGODB_URI = '';
 const MONGODB_URI = String(process.env.MONGODB_URI || process.env.MONGO_URL || DEFAULT_MONGODB_URI).trim();
 const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'whatsapp_pairing_api').trim() || 'whatsapp_pairing_api';
 const MONGODB_TIMEOUT_MS = Math.max(5000, Number(process.env.MONGODB_TIMEOUT_MS || process.env.SESSION_STORAGE_TIMEOUT_MS || 20000));

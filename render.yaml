@@ -3,7 +3,7 @@ services:
     name: whatsapp-pairing-bot
     env: node
     plan: free
-    buildCommand: npm install --legacy-peer-deps && python3 -m pip install --no-cache-dir -r requirements.txt
+    buildCommand: npm install --legacy-peer-deps
     startCommand: bash start.sh
     envVars:
       - key: NODE_VERSION

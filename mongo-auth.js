@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { MongoClient } = require('mongodb');
 const { initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 
@@ -8,7 +10,7 @@ const { initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 const MONGODB_URI = String(
     process.env.MONGODB_URI ||
     process.env.MONGO_URL ||
-    'mongodb+srv://faresomarr:faresaltmimi95@cluster.mongodb.net/?retryWrites=true&w=majority'
+    ''
 ).trim();
 
 const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'faresbot').trim() || 'faresbot';
@@ -49,6 +51,64 @@ function getCollection() {
 }
 
 function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
+
+
+const SESSION_ROOT = path.join(process.cwd(), 'sessions');
+
+function getSessionDir(phone = '') {
+  const normalized = normalizePhone(phone);
+  return path.join(SESSION_ROOT, normalized);
+}
+
+function listMongoSessionJsonFiles(phone = '') {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return [];
+  const sessionDir = getSessionDir(normalized);
+  if (!fs.existsSync(sessionDir)) return [];
+  try {
+    return fs.readdirSync(sessionDir)
+      .filter((name) => name && name.endsWith('.json'))
+      .sort();
+  } catch (_) {
+    return [];
+  }
+}
+
+function clearMongoSessionAuthFiles(phone = '', options = {}) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return 0;
+  const preserveSessionMeta = options.preserveSessionMeta === true;
+  const preservePhoneSettings = options.preservePhoneSettings === true;
+  let removed = 0;
+  for (const fileName of listMongoSessionJsonFiles(normalized)) {
+    const preserve =
+      (preserveSessionMeta && fileName === 'session-meta.json') ||
+      (preservePhoneSettings && (fileName === 'phone-settings-profile.json' || fileName === 'phone-settings-credentials.json' || fileName === 'phone-settings-meta.json'));
+    if (preserve) continue;
+    try {
+      fs.rmSync(path.join(getSessionDir(normalized), fileName), { force: true });
+      removed += 1;
+    } catch (_) {}
+  }
+  return removed;
+}
+
+async function deleteMongoSessionSnapshot(phone = '') {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return false;
+  let deleted = false;
+  try {
+    deleted = await deleteStoredAuth(normalized);
+  } catch (_) {}
+  try {
+    const remoteStore = require('./remoteSessionStore');
+    if (remoteStore && typeof remoteStore.deleteRemoteSession === 'function') {
+      deleted = (await remoteStore.deleteRemoteSession(normalized)) || deleted;
+    }
+  } catch (_) {}
+  return deleted;
+}
+
 
 async function useMongoAuthState(phone) {
   const id = String(phone || '').trim();
@@ -174,4 +234,7 @@ module.exports = {
   useMongoAuthState,
   listStoredAuthPhones,
   deleteStoredAuth,
+  listMongoSessionJsonFiles,
+  clearMongoSessionAuthFiles,
+  deleteMongoSessionSnapshot,
 };

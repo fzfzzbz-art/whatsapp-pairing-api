@@ -24,12 +24,14 @@ const {
     dispatchLegacyGroupParticipantsUpdate,
     preloadLegacyProjectModules
 } = require('./lib/legacyCommandBridge');
-const isRemoteSessionStoreEnabled = () => false;
-const listRemoteSessions = async () => [];
-const fetchRemoteSession = async () => null;
-const upsertRemoteSession = async () => false;
-const deleteRemoteSession = async () => false;
-const touchRemoteSession = async () => false;
+const {
+    isRemoteSessionStoreEnabled,
+    listRemoteSessions,
+    fetchRemoteSession,
+    upsertRemoteSession,
+    deleteRemoteSession,
+    touchRemoteSession
+} = require('./remoteSessionStore');
 
 EventEmitter.defaultMaxListeners = 0;
 
@@ -936,6 +938,7 @@ const reconnectAttempts = new Map();
 const presenceTimers = new Map();
 const clientActivity = new Map();
 const stoppedPairings = new Set();
+const sessionStartPromises = new Map();
 const ownerReactionFlows = new Map();
 const directContactMessageSessions = new Map();
 const statusReactionNoticeCache = new Map();
@@ -964,7 +967,8 @@ const CHANNEL_REACTION_MAX_DELAY_MS = 420;
 const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
-const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
+const PAIRING_TIMEOUT_MS = Math.max(15000, Number(process.env.PAIRING_TIMEOUT_MS || 90000));
+const PAIRING_TIMEOUT_SECONDS = Math.max(15, Math.round(PAIRING_TIMEOUT_MS / 1000));
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
@@ -7943,6 +7947,35 @@ function bumpReconnectAttempts(phone) {
     return next;
 }
 
+async function prepareFreshSessionReplacement(phone, ownerId = '', reason = 'fresh_session') {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const existingSock = waClients.get(normalized);
+
+    clearReconnectTimer(normalized);
+    clearSessionSnapshotSyncState(normalized);
+    clearPairingRequest(normalized);
+    clearPresenceTimer(normalized);
+    clearGhostPendingMessagesForPhone(normalized);
+    stoppedPairings.delete(normalized);
+    clientActivity.delete(normalized);
+
+    if (existingSock) {
+        try { await existingSock.logout?.(); } catch (_) {}
+        try { existingSock.ws?.close?.(); } catch (_) {}
+        try { existingSock.end?.(); } catch (_) {}
+        waClients.delete(normalized);
+    }
+
+    await deleteMongoSessionState(normalized);
+
+    if (ownerId) {
+        addLinkedNumber(ownerId, normalized);
+    }
+
+    return true;
+}
+
 async function cleanupSessionAfterReconnectFailure(phone, ownerId = null, reason = '') {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
@@ -8042,7 +8075,7 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
 
         await notifyTelegramUser(
             telegramUserId || existing.telegramUserId,
-            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
+            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد ${PAIRING_TIMEOUT_SECONDS} ثانية.
 الرجاء إرسال رقمك من جديد للحصول على كود جديد.`
         );
 
@@ -8063,7 +8096,7 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
     });
 }
 
-async function waitForPairingCode(phone, timeoutMs = 20000) {
+async function waitForPairingCode(phone, timeoutMs = Math.max(30000, PAIRING_TIMEOUT_MS)) {
     const normalized = normalizePhone(phone);
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
@@ -9124,23 +9157,37 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
 async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null, options = {}) {
     const normalizedPhone = normalizePhone(phoneNumber);
     const bootRestore = options?.bootRestore === true;
+    const forceFreshSession = options?.forceFreshSession === true;
     if (!normalizedPhone) return null;
 
-    clearReconnectTimer(normalizedPhone);
-    stoppedPairings.delete(normalizedPhone);
-
-    const existing = waClients.get(normalizedPhone);
-    if (existing) {
-        touchClient(normalizedPhone);
-        return existing;
+    const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+    const inflightStart = sessionStartPromises.get(normalizedPhone);
+    if (inflightStart) {
+        if (!forceFreshSession) {
+            return inflightStart;
+        }
+        throw new Error('يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة');
     }
 
-    const sessionPath = getSessionPath(normalizedPhone);
-    const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
+    const startPromise = (async () => {
+        clearReconnectTimer(normalizedPhone);
+        stoppedPairings.delete(normalizedPhone);
 
-    const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
-    const { version } = await getCachedBaileysVersion();
-    const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+        if (forceFreshSession) {
+            await prepareFreshSessionReplacement(normalizedPhone, requestedOwnerId, String(options?.replaceReason || 'fresh_session'));
+        }
+
+        const existing = waClients.get(normalizedPhone);
+        if (existing) {
+            touchClient(normalizedPhone);
+            return existing;
+        }
+
+        const sessionPath = getSessionPath(normalizedPhone);
+        const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
+
+        const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+        const { version } = await getCachedBaileysVersion();
 
     const sock = makeWASocket({
         version,
@@ -9165,12 +9212,28 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         void (async () => {
             try {
                 const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
-                const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
+                const requestTimeoutMs = Math.max(12000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 30000));
+                const requestAttempts = Math.max(1, Number(process.env.PAIRING_CODE_REQUEST_ATTEMPTS || 2));
                 await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
-                const code = await Promise.race([
-                    sock.requestPairingCode(normalizedPhone),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
-                ]);
+                let code = '';
+                let lastPairingError = null;
+                for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
+                    try {
+                        code = await Promise.race([
+                            sock.requestPairingCode(normalizedPhone),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
+                        ]);
+                        if (code) break;
+                    } catch (error) {
+                        lastPairingError = error;
+                        if (attempt < requestAttempts) {
+                            await new Promise((resolve) => setTimeout(resolve, Math.min(2500, requestDelayMs * attempt)));
+                        }
+                    }
+                }
+                if (!code) {
+                    throw (lastPairingError || new Error('Pairing code request timed out'));
+                }
                 schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
                 pairingRequests.set(normalizedPhone, {
                     ...(pairingRequests.get(normalizedPhone) || {}),
@@ -9184,7 +9247,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 \`${code}\`
 
 🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.
-⏳ إذا لم يتم إكمال الربط خلال 60 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
+⏳ إذا لم يتم إكمال الربط خلال ${PAIRING_TIMEOUT_SECONDS} ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
 
                 if (telegramCtx) {
                     await safeReply(telegramCtx, pairingMessage, buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
@@ -9444,7 +9507,17 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
-    return sock;
+        return sock;
+    })();
+
+    sessionStartPromises.set(normalizedPhone, startPromise);
+    try {
+        return await startPromise;
+    } finally {
+        if (sessionStartPromises.get(normalizedPhone) === startPromise) {
+            sessionStartPromises.delete(normalizedPhone);
+        }
+    }
 }
 
 async function createBotInstance(sessionId, ownerId = '') {
@@ -12431,7 +12504,7 @@ bot.command('paircode', async (ctx) => {
     }
     await safeReply(ctx, `⏳ جارٍ إنشاء كود الاقتران للرقم ${phone} عبر ${SITE_ENDPOINTS.target_site_base_url}`);
     try {
-        await startWhatsApp(phone, null, ctx.from.id, null, { autoRequestPairingCode: true });
+        await startWhatsApp(phone, null, ctx.from.id, null, { autoRequestPairingCode: true, forceFreshSession: true, replaceReason: 'telegram_paircode' });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الاقتران');
         return safeReply(ctx, [
@@ -12723,11 +12796,24 @@ async function handlePairingCodeApiRequest(req, res) {
         if (!isPairingApiAuthorized(req)) {
             return res.status(401).json({ success: false, error: 'Unauthorized pairing API request' });
         }
-        const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(req.body || {}));
+        const sourcePayload = req.method === 'GET' ? (req.query || {}) : ({ ...(req.query || {}), ...(req.body || {}) });
+        const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(sourcePayload));
         if (!phoneValidation.ok) return res.status(400).json({ success: false, error: phoneValidation.error });
         const phone = phoneValidation.phone;
-        if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
+        const existingPairing = pairingRequests.get(phone);
+        if (existingPairing?.code) {
+            return res.json({
+                success: true,
+                phone,
+                num: phone,
+                phoneNumber: phone,
+                code: existingPairing.code,
+                website: SITE_ENDPOINTS.target_site_base_url,
+                settingsPage: SITE_ENDPOINTS.target_settings_page_url
+            });
+        }
+        if (existingPairing) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
+        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true, forceFreshSession: true, replaceReason: 'pairing_api_request' });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الربط');
         return res.json({
@@ -12745,10 +12831,14 @@ async function handlePairingCodeApiRequest(req, res) {
 }
 
 app.post('/api/pair', async (req, res) => handlePairingCodeApiRequest(req, res));
+app.get('/api/pair', async (req, res) => handlePairingCodeApiRequest(req, res));
 
-app.get('/api/pairing', (req, res) => {
+app.get('/api/pairing', async (req, res) => {
     try {
         const phone = normalizePhone(extractPairingPhoneCandidate(req.query || {}));
+        if (phone) {
+            return handlePairingCodeApiRequest(req, res);
+        }
         return res.json({
             success: true,
             ...buildPairingApiDescriptor(phone)
@@ -13015,7 +13105,7 @@ async function gracefulShutdown(signal) {
     pairingRequests.clear();
 
     try {
-        await flushAllSessionSnapshotSync();
+        await flushAllSessionSnapshotSyncs();
     } catch (error) {
         console.error('Session Flush Warning:', error.message || error);
     }
