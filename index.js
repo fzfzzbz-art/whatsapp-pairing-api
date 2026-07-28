@@ -386,11 +386,9 @@ const THIRD_LINKING_SITE_URL = `${DEPLOYMENT_BASE_URL}${THIRD_LINKING_SITE_PATH}
 const LINKING_SITE_URL = `${DEPLOYMENT_BASE_URL}/linking-site`;
 const FREEBOT_SITE_URL = `${DEPLOYMENT_BASE_URL}/Freebot`;
 const DEFAULT_SITE_INFO_TEXT = [
-    `🌐 الموقع الرسمي: ${DEPLOYMENT_BASE_URL}`,
-    `⚙️ صفحة الإعدادات: ${DEPLOYMENT_BASE_URL}/settings`,
-    `🆕 واجهة Freebot الجديدة: ${THIRD_LINKING_SITE_URL}`,
-    `🧩 رابط Freebot المباشر: ${FREEBOT_SITE_URL}`,
-    `🔗 API كود الاقتران: ${DEPLOYMENT_BASE_URL}/api/pairing`
+    '✅ هذا الرقم مربوط بنجاح.',
+    '⚙️ جميع الإعدادات والتعديلات تتم من داخل البوت فقط.',
+    '🔐 كلمة السر الخاصة بهذا الرقم تُرسل تلقائياً بعد الربط.'
 ].join('\n');
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
@@ -869,28 +867,13 @@ const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
     '.set customMsg نص الرسالة — تعيين رسالة الحالة المخصصة',
     '.set statusCustomReact 😍 ❤️ 🔥 — تعيين إيموجيات التفاعل',
     '',
-    '📢 قناة واتساب الرسمية:',
-    WHATSAPP_CHANNEL_LINK,
-    '⚙️ رابط الإعدادات:',
-    `${DEPLOYMENT_BASE_URL}/settings`,
-    '🆕 واجهة Freebot الجديدة:',
-    '{thirdSite}',
-    '🧩 رابط Freebot المباشر:',
-    '{freebotSite}',
-    '',
-    '🔗 رابط المشروع:',
-    'https://t.me/Faresw_bot'
+    '⚙️ جميع إعدادات الرقم تتم من داخل البوت فقط.',
+    '🔐 لإظهار بيانات الدخول الحالية استخدم أمر .settings أو افتح إعدادات الرقم من بوت تيليجرام.'
 ].join('\n');
 const DEFAULT_LINKED_WELCOME_MESSAGE = [
     '✅ تم تسجيل رقمك بنجاح.',
-    '📢 اشترك في قناة واتساب الرسمية:',
-    WHATSAPP_CHANNEL_LINK,
-    '⚙️ رابط الإعدادات:',
-    `${DEPLOYMENT_BASE_URL}/settings`,
-    '🆕 واجهة Freebot الجديدة:',
-    '{thirdSite}',
-    '🧩 رابط Freebot المباشر:',
-    '{freebotSite}'
+    '📱 ستصلك الآن بيانات الرقم وكلمة السر الخاصة به.',
+    '⚙️ جميع الإعدادات تتم من داخل البوت فقط.'
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
 const CHANNEL_PROMOTION_INTERVAL_MS = 5 * 60 * 1000; // كل 5 دقائق
@@ -2974,15 +2957,13 @@ function buildPhoneSettingsAccessMessage(phone, appId = null) {
     const credential = getPhoneSettingsCredential(phone, appId);
     if (!credential) return '';
     return [
-        `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
+        `🔐 بيانات دخول إعدادات الرقم ${credential.phone}`,
         '',
-        `🌐 رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
-        `🆕 واجهة Freebot الجديدة: ${THIRD_LINKING_SITE_URL}`,
-        `🧩 رابط Freebot المباشر: ${FREEBOT_SITE_URL}`,
         `📱 الرقم: ${credential.phone}`,
         `🗝️ كلمة السر: ${credential.password}`,
         '',
-        'هذه الكلمة خاصة بهذا الرقم فقط.'
+        'هذه الكلمة خاصة بهذا الرقم فقط.',
+        '⚙️ تعديل الإعدادات يتم من داخل البوت فقط.'
     ].join('\n');
 }
 
@@ -4316,8 +4297,7 @@ function getPhoneSettingsKeyboard(phone) {
                     Markup.button.callback('إظهار كلمة السر 🔑', `settings_revealpass_${cleanPhone}`),
                     Markup.button.callback('تحديث العرض 🔄', `settings_dashboard_${cleanPhone}`)
                 ],
-                [Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)],
-                [Markup.button.url('واجهة الويب 🌐', `${SITE_ENDPOINTS.target_site_base_url}`)]
+                [Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)]
             ]
         }
     };
@@ -6401,11 +6381,7 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '.bot / .help / الاوامر — عرض جميع أوامر الرقم المربوط بالعربي',
         '.settings / الإعدادات — عرض إعدادات الرقم الحالية',
         ...buildLinkedOwnerQuickCommands(phone),
-        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
-        `🌐 رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
-        `🆕 واجهة Freebot الجديدة: ${THIRD_LINKING_SITE_URL}`,
-        `🧩 رابط Freebot المباشر: ${FREEBOT_SITE_URL}`,
-        `📢 قناة واتساب الرسمية: ${WHATSAPP_CHANNEL_LINK}`,
+        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت فقط.',
         '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت ولكل رقم إعداداته المستقلة.',
         '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
     ].join('\n');
@@ -12549,8 +12525,7 @@ bot.command('paircode', async (ctx) => {
             '',
             `\`${code}\``,
             '',
-            `🌐 الموقع: ${SITE_ENDPOINTS.target_site_base_url}`,
-            `⚙️ الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`
+            '⚙️ بعد الربط ستصل بيانات الرقم وكلمة السر تلقائياً.'
         ].join('\n'), buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
     } catch (error) {
         return safeReply(ctx, `❌ فشل إنشاء كود الاقتران: ${error.message || 'خطأ غير متوقع.'}`);
