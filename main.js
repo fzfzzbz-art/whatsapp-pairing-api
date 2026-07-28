@@ -368,7 +368,7 @@ async function connectNumber(phone) {
         await restoreSessionFilesFromMongo(normalized);
     }
 
-    const state = await useMultiFileAuthState(sessionDir);
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
     const { version } = await fetchLatestBaileysVersion();
     const sock = makeWASocket({
@@ -398,7 +398,7 @@ async function connectNumber(phone) {
     let credsPersistTimer = null;
     sock.ev.on('creds.update', async () => {
         try {
-            await state.saveCreds();
+            await saveCreds();
         } catch (err) {
             console.error('saveCreds error for', normalized, err.message);
         }
@@ -501,7 +501,7 @@ async function runPairingTask(workerData) {
 
     const sessionDir = getSessionDir(target);
     await fs.ensureDir(sessionDir);
-    const state = await useMultiFileAuthState(sessionDir);
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -515,6 +515,8 @@ async function runPairingTask(workerData) {
         browser: getBrowserProfile(),
         markOnlineOnConnect: true,
     });
+
+    sock.ev.on('creds.update', saveCreds);
 
     // wait for open
     await new Promise((resolve, reject) => {

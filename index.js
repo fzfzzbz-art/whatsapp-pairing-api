@@ -355,7 +355,42 @@ const DEFAULT_REACTION_EMOJI = '❤️';
 let reactionEmoji = DEFAULT_REACTION_EMOJI;
 const BRAND_NAME = 'Golden Queen Bot';
 const BRAND_IMAGE_TEXT = 'Golden Queen Bot';
-const DEFAULT_BOT_LINK = String(process.env.DEFAULT_BOT_LINK || process.env.PUBLIC_BASE_URL || process.env.APP_URL || '').trim().replace(/\/+$/, '') || `http://127.0.0.1:${process.env.PORT || 8080}`;
+function normalizeBaseUrl(value = '') {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function buildPlatformBaseUrl() {
+    const directCandidates = [
+        process.env.DEPLOYMENT_BASE_URL,
+        process.env.PUBLIC_BASE_URL,
+        process.env.RENDER_EXTERNAL_URL,
+        process.env.APP_URL,
+        process.env.RAILWAY_STATIC_URL,
+        process.env.URL,
+        process.env.CYCLIC_APP_URL
+    ];
+    for (const candidate of directCandidates) {
+        const normalized = normalizeBaseUrl(candidate);
+        if (normalized) return normalized;
+    }
+
+    const hostCandidates = [
+        process.env.RENDER_EXTERNAL_HOSTNAME,
+        process.env.RAILWAY_PUBLIC_DOMAIN,
+        process.env.KOYEB_PUBLIC_DOMAIN,
+        process.env.VERCEL_URL,
+        process.env.FLY_APP_NAME ? `${process.env.FLY_APP_NAME}.fly.dev` : ''
+    ];
+    for (const candidate of hostCandidates) {
+        const host = String(candidate || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+        if (host) return `https://${host}`;
+    }
+
+    return '';
+}
+
+const PLATFORM_BASE_URL = buildPlatformBaseUrl();
+const DEFAULT_BOT_LINK = normalizeBaseUrl(process.env.DEFAULT_BOT_LINK || PLATFORM_BASE_URL) || `http://127.0.0.1:${process.env.PORT || 8080}`;
 const DEVELOPER_DISPLAY_NAME = '◥ ツفارس ツ ◤ ⁪⁬⁮⁮⁮ ⁪⁬⁮⁮⁮';
 const DEVELOPER_USERNAME = 'P_n_ij';
 const DEVELOPER_PROFILE_LINK = 'https://t.me/P_n_ij';
@@ -375,20 +410,69 @@ const MAX_WA_ABOUT_LENGTH = 139;
 const PROFILE_CUSTOM_MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS || 15 * 60 * 1000);
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEPLOYMENT_BASE_URL = String(process.env.DEPLOYMENT_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.APP_URL || DEFAULT_BOT_LINK).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
-const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL || DEFAULT_BOT_LINK).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
+const DEPLOYMENT_BASE_URL = normalizeBaseUrl(process.env.DEPLOYMENT_BASE_URL || PLATFORM_BASE_URL || DEFAULT_BOT_LINK) || DEFAULT_BOT_LINK;
+const DEFAULT_PUBLIC_BASE_URL = normalizeBaseUrl(process.env.DEFAULT_PUBLIC_BASE_URL || PLATFORM_BASE_URL || DEPLOYMENT_BASE_URL || DEFAULT_BOT_LINK) || DEFAULT_BOT_LINK;
+
+function inferRequestBaseUrl(req = null) {
+    if (!req) return '';
+    const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim();
+    const forwardedHost = String(req.headers?.['x-forwarded-host'] || '').split(',')[0].trim();
+    const host = forwardedHost || String(req.headers?.host || '').trim();
+    if (!host) return '';
+    const sanitizedHost = host.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (!sanitizedHost || /^(?:127\.0\.0\.1|0\.0\.0\.0|localhost)(?::\d+)?$/i.test(sanitizedHost)) {
+        return '';
+    }
+    const proto = forwardedProto || (req.secure ? 'https' : 'http');
+    return normalizeBaseUrl(`${proto}://${sanitizedHost}`);
+}
+
+function getResolvedPublicBaseUrl(req = null) {
+    return (
+        inferRequestBaseUrl(req) ||
+        normalizeBaseUrl(process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || process.env.APP_URL || process.env.RAILWAY_STATIC_URL || PLATFORM_BASE_URL) ||
+        DEFAULT_PUBLIC_BASE_URL ||
+        DEFAULT_BOT_LINK
+    );
+}
+
+function buildSiteEndpoints(req = null) {
+    const baseUrl = getResolvedPublicBaseUrl(req);
+    return {
+        target_site_base_url: baseUrl,
+        target_settings_page_url: `${baseUrl}/settings`,
+        target_site_login_api_url: `${baseUrl}/api/login`,
+        target_site_settings_load_api_url: `${baseUrl}/api/settings/load`,
+        target_site_settings_save_api_url: `${baseUrl}/api/settings/save`,
+        green_api_base_url: 'https://api.green-api.com',
+        target_pairing_api_url: `${baseUrl}/api/pairing`
+    };
+}
+
 const DEFAULT_SITE_INFO_TEXT = `🌐 الموقع الرسمي: ${DEPLOYMENT_BASE_URL}
 ⚙️ صفحة الإعدادات: ${DEPLOYMENT_BASE_URL}/settings
 🔗 API كود الاقتران: ${DEPLOYMENT_BASE_URL}/api/pairing`;
-const SITE_ENDPOINTS = {
-    target_site_base_url: DEPLOYMENT_BASE_URL,
-    target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
-    target_site_login_api_url: `${DEPLOYMENT_BASE_URL}/api/login`,
-    target_site_settings_load_api_url: `${DEPLOYMENT_BASE_URL}/api/settings/load`,
-    target_site_settings_save_api_url: `${DEPLOYMENT_BASE_URL}/api/settings/save`,
+const SITE_ENDPOINTS = Object.freeze({
+    get target_site_base_url() {
+        return buildSiteEndpoints().target_site_base_url;
+    },
+    get target_settings_page_url() {
+        return buildSiteEndpoints().target_settings_page_url;
+    },
+    get target_site_login_api_url() {
+        return buildSiteEndpoints().target_site_login_api_url;
+    },
+    get target_site_settings_load_api_url() {
+        return buildSiteEndpoints().target_site_settings_load_api_url;
+    },
+    get target_site_settings_save_api_url() {
+        return buildSiteEndpoints().target_site_settings_save_api_url;
+    },
     green_api_base_url: 'https://api.green-api.com',
-    target_pairing_api_url: `${DEPLOYMENT_BASE_URL}/api/pairing`
-};
+    get target_pairing_api_url() {
+        return buildSiteEndpoints().target_pairing_api_url;
+    }
+});
 const DEFAULT_PAIRING_API_URL = `${DEPLOYMENT_BASE_URL}/api/pairing`;
 const DEFAULT_PAIRING_API_METHOD = ['GET', 'POST'].includes(String(process.env.PAIRING_API_METHOD || 'POST').trim().toUpperCase())
     ? String(process.env.PAIRING_API_METHOD || 'POST').trim().toUpperCase()
@@ -805,13 +889,7 @@ const DEFAULT_ADMINS = Array.from(
             .filter(Boolean)
     )
 );
-const PUBLIC_BASE_URL = String(
-    process.env.PUBLIC_BASE_URL ||
-        process.env.RENDER_EXTERNAL_URL ||
-        process.env.APP_URL ||
-        (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '') ||
-        DEFAULT_PUBLIC_BASE_URL
-).replace(/\/+$/, '');
+const PUBLIC_BASE_URL = getResolvedPublicBaseUrl();
 function buildBrandPlaceholderImage(text = BRAND_IMAGE_TEXT) {
     const safeText = String(text || BRAND_IMAGE_TEXT)
         .replace(/&/g, '&amp;')
@@ -939,6 +1017,7 @@ const presenceTimers = new Map();
 const clientActivity = new Map();
 const stoppedPairings = new Set();
 const sessionStartPromises = new Map();
+const sessionDeletionLocks = new Map();
 const ownerReactionFlows = new Map();
 const directContactMessageSessions = new Map();
 const statusReactionNoticeCache = new Map();
@@ -1003,6 +1082,13 @@ process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error?.stack || error?.message || error);
 });
 
+function runDetachedTask(label, taskFactory) {
+    Promise.resolve()
+        .then(() => taskFactory())
+        .catch((error) => {
+            console.error(`${label}:`, error?.stack || error?.message || error);
+        });
+}
 
 function getPreferredBrowserProfile() {
     return Array.isArray(PREFERRED_BROWSER_PROFILE) ? [...PREFERRED_BROWSER_PROFILE] : Browsers.macOS('Safari');
@@ -5755,9 +5841,49 @@ function userOwnsPhone(userId, phone) {
     return db.phoneOwners[normalized] === String(userId);
 }
 
-function getUserPhones(userId) {
-    const user = getUserRecord(userId);
+function pruneOrphanLinkedNumbers(userId) {
+    const db = getUsersDB();
+    const key = String(userId);
+    const user = db.users[key];
+    if (!user) return [];
+
+    const linkedNumbers = Array.isArray(user.linkedNumbers)
+        ? user.linkedNumbers.map((phone) => normalizePhone(phone)).filter(Boolean)
+        : [];
+    const nextLinkedNumbers = [];
+    let changed = false;
+
+    for (const phone of linkedNumbers) {
+        const ownedByUser = db.phoneOwners[phone] === key;
+        const hasRuntimeState = waClients.has(phone) || hasActivePendingPairing(phone) || sessionStartPromises.has(phone);
+        const hasStoredState = hasPersistedSuccessfulSession(phone);
+
+        if (ownedByUser && (hasRuntimeState || hasStoredState)) {
+            nextLinkedNumbers.push(phone);
+            continue;
+        }
+
+        changed = true;
+        if (ownedByUser) {
+            delete db.phoneOwners[phone];
+        }
+        if (user.emojis && Object.prototype.hasOwnProperty.call(user.emojis, phone)) {
+            delete user.emojis[phone];
+        }
+    }
+
+    const deduped = Array.from(new Set(nextLinkedNumbers));
+    if (changed || deduped.length !== linkedNumbers.length) {
+        user.linkedNumbers = deduped;
+        user.updatedAt = new Date().toISOString();
+        saveUsersDB(db);
+    }
+
     return Array.isArray(user.linkedNumbers) ? user.linkedNumbers : [];
+}
+
+function getUserPhones(userId) {
+    return pruneOrphanLinkedNumbers(userId);
 }
 
 function getPhoneOwner(phone) {
@@ -7931,6 +8057,31 @@ function clearPairingRequest(phone) {
     pairingRequests.delete(normalized);
 }
 
+function markSessionDeletionInProgress(phone, ttlMs = 30000) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    sessionDeletionLocks.set(normalized, Date.now() + Math.max(5000, Number(ttlMs) || 30000));
+    return true;
+}
+
+function isSessionDeletionInProgress(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const expiresAt = Number(sessionDeletionLocks.get(normalized) || 0);
+    if (!expiresAt) return false;
+    if (Date.now() > expiresAt) {
+        sessionDeletionLocks.delete(normalized);
+        return false;
+    }
+    return true;
+}
+
+function clearSessionDeletionInProgress(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    return sessionDeletionLocks.delete(normalized);
+}
+
 function resetReconnectAttempts(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return 0;
@@ -8188,17 +8339,22 @@ async function cleanupSession(phone) {
     const normalized = normalizePhone(phone);
     const sock = waClients.get(normalized);
 
+    markSessionDeletionInProgress(normalized, 30000);
     clearReconnectTimer(normalized);
     clearPairingRequest(normalized);
     clientActivity.delete(normalized);
     clearPresenceTimer(normalized);
+    clearSessionPingTimer(normalized);
     clearGhostPendingMessagesForPhone(normalized);
-    stoppedPairings.delete(normalized);
+    stoppedPairings.add(normalized);
     resetReconnectAttempts(normalized);
 
     if (sock) {
         try {
             await sock.logout();
+        } catch (_) {}
+        try {
+            sock.ws?.close?.();
         } catch (_) {}
         try {
             sock.end?.();
@@ -9176,6 +9332,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     const startPromise = (async () => {
         clearReconnectTimer(normalizedPhone);
+        clearSessionDeletionInProgress(normalizedPhone);
         stoppedPairings.delete(normalizedPhone);
 
         if (forceFreshSession) {
@@ -9281,9 +9438,11 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 
     sock.ev.on('creds.update', async () => {
         touchClient(normalizedPhone);
-        await saveCreds({
-            ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
-            registered: state?.creds?.registered === true
+        runDetachedTask(`creds.update save (${normalizedPhone})`, async () => {
+            await saveCreds({
+                ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
+                registered: state?.creds?.registered === true
+            });
         });
     });
 
@@ -9389,39 +9548,33 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     lastConnectedAt: new Date().toISOString()
                 };
 
-                await touchMongoSessionState(normalizedPhone, connectionMetadata);
-                Promise.resolve(scheduleSessionSnapshotSync(normalizedPhone, connectionMetadata)).catch((error) => {
-                    console.error(`Deferred Open Session Sync Error (${normalizedPhone}):`, error?.message || error);
-                });
-
-                try {
-                    await applyLivePhoneSettingsSideEffects(normalizedPhone);
-                } catch (error) {
-                    console.error(`applyLivePhoneSettingsSideEffects Error (${normalizedPhone}):`, error.message || error);
-                }
-
-                // [DISABLED] Auto channel promotion scheduler disabled by owner
-                // try {
-                //     startChannelPromotionScheduler(sock, normalizedPhone);
-                // } catch (error) {
-                //     console.error(`startChannelPromotionScheduler Error (${normalizedPhone}):`, error.message || error);
-                // }
-
                 const finalOwnerId = requestedOwnerId || getPhoneOwner(normalizedPhone);
                 if (finalOwnerId) {
                     addLinkedNumber(finalOwnerId, normalizedPhone);
                 }
 
-                if (pendingPair) {
-                    pendingPair.completed = true;
-                    pairingRequests.set(normalizedPhone, pendingPair);
-                    stoppedPairings.delete(normalizedPhone);
+                runDetachedTask(`post-open tasks (${normalizedPhone})`, async () => {
+                    await touchMongoSessionState(normalizedPhone, connectionMetadata);
+                    await scheduleSessionSnapshotSync(
+                        normalizedPhone,
+                        connectionMetadata,
+                        Math.max(2500, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS_AFTER_OPEN || 4000))
+                    );
 
-                    const settingsCredential = getPhoneSettingsCredential(normalizedPhone);
-                    const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
+                    try {
+                        await applyLivePhoneSettingsSideEffects(normalizedPhone);
+                    } catch (error) {
+                        console.error(`applyLivePhoneSettingsSideEffects Error (${normalizedPhone}):`, error.message || error);
+                    }
 
-                    // [STABILITY] Run post-link notifications/tasks in background so successful pairing never stalls the bot.
-                    Promise.resolve().then(async () => {
+                    if (pendingPair) {
+                        pendingPair.completed = true;
+                        pairingRequests.set(normalizedPhone, pendingPair);
+                        stoppedPairings.delete(normalizedPhone);
+
+                        const settingsCredential = getPhoneSettingsCredential(normalizedPhone);
+                        const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
+
                         try {
                             await autoJoinWhatsAppChannel(sock, normalizedPhone);
                         } catch (error) {
@@ -9463,18 +9616,22 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                                 console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
                             }
                         }
-                    }).catch((error) => {
-                        console.error(`Post Link Tasks Error (${normalizedPhone}):`, error?.message || error);
-                    });
 
-                    clearPairingRequest(normalizedPhone);
-                }
+                        clearPairingRequest(normalizedPhone);
+                    }
+                });
             }
 
             if (connection === 'close') {
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
                 clearPresenceTimer(normalizedPhone);
+                clearSessionPingTimer(normalizedPhone);
+
+                if (isSessionDeletionInProgress(normalizedPhone)) {
+                    console.log(`Manual session deletion in progress: ${normalizedPhone}`);
+                    return;
+                }
 
                 const corruptedBootSession = bootRestore && shouldDiscardCorruptedBootSession(lastDisconnect);
                 const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
