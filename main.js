@@ -142,26 +142,453 @@ const { anticallCommand, readState: readAnticallState } = require('./commands/an
 const { pmblockerCommand, readState: readPmBlockerState } = require('./commands/pmblocker');
 const settingsCommand = require('./commands/settings');
 const soraCommand = require('./commands/sora');
+const translateGoogle = (() => {
+    try {
+        return require('translate-google-api');
+    } catch (_) {
+        return null;
+    }
+})();
 
 // Global settings
 global.packname = settings.packname;
 global.author = settings.author;
 global.channelLink = settings.channelLink || "https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v";
-global.repoUrl = settings.repoUrl || "https://github.com/faresjahsh/Knightbot-MD";
+global.repoUrl = settings.repoUrl || "https://t.me/Faresw_bot";
 global.ytch = settings.botOwner || "Knight Bot";
 
-// Add this near the top of main.js with other global configurations
-const channelInfo = {
-    contextInfo: {
-        forwardingScore: 1,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-            newsletterJid: '120363161513685998@newsletter',
-            newsletterName: 'KnightBot MD',
-            serverMessageId: -1
-        }
-    }
+const channelInfo = {};
+
+const COMMAND_ALIASES = {
+    help: ['الاوامر', 'الأوامر', 'اوامر', 'مساعدة', 'قائمة', 'منيو'],
+    menu: ['المنيو'],
+    alive: ['حي', 'شغال', 'فحص'],
+    ping: ['بنج', 'سرعة'],
+    owner: ['المالك', 'مطور', 'المطور'],
+    tts: ['تكلم', 'صوت'],
+    ban: ['حظر'],
+    unban: ['فكالحظر', 'فك_الحظر', 'الغاءالحظر', 'إلغاءالحظر'],
+    promote: ['ترقية'],
+    demote: ['تنزيل'],
+    mute: ['كتم'],
+    unmute: ['فكالكتم', 'فك_الكتم'],
+    delete: ['حذف'],
+    del: ['مسح'],
+    sticker: ['ستيكر', 'ملصق'],
+    simage: ['صورةالملصق', 'صورة_الملصق'],
+    attp: ['ملصقنص', 'ملصق_نص'],
+    settings: ['الاعدادات', 'الإعدادات'],
+    mode: ['الوضع'],
+    anticall: ['منعالاتصال', 'منع_الاتصال'],
+    pmblocker: ['منعالخاص', 'منع_الخاص'],
+    tagall: ['منشنالكل', 'منشن_الكل'],
+    tagnotadmin: ['منشنالاعضاء', 'منشن_الاعضاء'],
+    hidetag: ['منشنمخفي', 'منشن_مخفي'],
+    tag: ['منشن', 'تاق'],
+    antilink: ['منعالروابط', 'منع_الروابط'],
+    antitag: ['منعالمنشن', 'منع_المنشن'],
+    antibadword: ['منعالسب', 'منع_السب'],
+    weather: ['طقس'],
+    news: ['اخبار', 'أخبار'],
+    tictactoe: ['اكساو', 'اكس_او', 'xo'],
+    guess: ['خمن'],
+    trivia: ['سؤال'],
+    answer: ['اجابة', 'إجابة'],
+    warnings: ['تحذيرات'],
+    warn: ['تحذير'],
+    lyrics: ['كلمات'],
+    joke: ['نكتة'],
+    quote: ['اقتباس'],
+    fact: ['معلومة'],
+    kick: ['طرد'],
+    groupinfo: ['معلوماتالقروب', 'معلومات_القروب'],
+    staff: ['المشرفين', 'الادمنية', 'الأدمنية'],
+    chatbot: ['شاتبوت', 'دردشة'],
+    resetlink: ['اعادةالرابط', 'إعادةالرابط', 'اعادة_الرابط', 'إعادة_الرابط'],
+    welcome: ['ترحيب'],
+    goodbye: ['وداع'],
+    clear: ['تنظيف'],
+    github: ['السورس'],
+    git: ['كود'],
+    repo: ['المستودع'],
+    sc: ['شفرة'],
+    take: ['اخذ', 'أخذ'],
+    flirt: ['مغازلة'],
+    character: ['شخصية'],
+    wasted: ['هلاك'],
+    ship: ['شيب'],
+    url: ['رابط'],
+    emojimix: ['دمجايموجي', 'دمج_ايموجي'],
+    tgsticker: ['ملصقاتتيليجرام', 'ملصقات_تيليجرام'],
+    vv: ['فتح'],
+    clearsession: ['تنظيفالجلسات', 'تنظيف_الجلسات'],
+    autostatus: ['حالةتلقائية', 'حالة_تلقائية'],
+    simp: ['سمب'],
+    truth: ['صراحة'],
+    dare: ['تحدي'],
+    setpp: ['صورةالبوت', 'صورة_البوت'],
+    setgdesc: ['وصفالقروب', 'وصف_القروب'],
+    setgname: ['اسمالقروب', 'اسم_القروب'],
+    setgpp: ['صورةالقروب', 'صورة_القروب'],
+    instagram: ['انستا', 'إنستا'],
+    igs: ['ستوري'],
+    igsc: ['انستاميديا', 'إنستاميديا'],
+    facebook: ['فيسبوك'],
+    spotify: ['سبوتيفاي'],
+    play: ['شغل'],
+    song: ['اغنية', 'أغنية'],
+    video: ['فيديو'],
+    tiktok: ['تيك', 'تيكتوك', 'تيك_توك'],
+    ai: ['ذكاء'],
+    gpt: ['جيبيتي', 'جي_بي_تي'],
+    gemini: ['جيميني'],
+    translate: ['ترجمة'],
+    trt: ['ترجم'],
+    ss: ['صورةموقع', 'صورة_موقع'],
+    autoreact: ['تفاعلتلقائي', 'تفاعل_تلقائي'],
+    areact: ['تفاعل'],
+    sudo: ['سودو'],
+    goodnight: ['تصبحتعلىخير', 'تصبح_على_خير'],
+    shayari: ['شعر'],
+    roseday: ['ورد'],
+    imagine: ['تخيل'],
+    flux: ['فلوكس'],
+    jid: ['معرف'],
+    autotyping: ['كتابةتلقائية', 'كتابة_تلقائية'],
+    autoread: ['قراءةتلقائية', 'قراءة_تلقائية'],
+    update: ['تحديث'],
+    removebg: ['شفاف'],
+    remini: ['تحسين'],
+    sora: ['سورا']
 };
+
+const DISPLAY_COMMAND_ALIASES = {
+    help: 'الأوامر',
+    menu: 'الأوامر',
+    bot: 'الأوامر',
+    list: 'الأوامر',
+    alive: 'حي',
+    ping: 'بنج',
+    owner: 'المالك',
+    tts: 'تكلم',
+    ban: 'حظر',
+    unban: 'فك_الحظر',
+    promote: 'ترقية',
+    demote: 'تنزيل',
+    mute: 'كتم',
+    unmute: 'فك_الكتم',
+    delete: 'حذف',
+    del: 'حذف',
+    sticker: 'ملصق',
+    simage: 'صورة_الملصق',
+    attp: 'ملصق_نص',
+    settings: 'الإعدادات',
+    mode: 'الوضع',
+    anticall: 'منع_الاتصال',
+    pmblocker: 'منع_الخاص',
+    tagall: 'منشن_الكل',
+    tagnotadmin: 'منشن_الأعضاء',
+    hidetag: 'منشن_مخفي',
+    tag: 'منشن',
+    antilink: 'منع_الروابط',
+    antitag: 'منع_المنشن',
+    antibadword: 'منع_السب',
+    weather: 'طقس',
+    news: 'أخبار',
+    tictactoe: 'اكس_او',
+    ttt: 'اكس_او',
+    guess: 'خمن',
+    trivia: 'سؤال',
+    answer: 'إجابة',
+    warnings: 'تحذيرات',
+    warn: 'تحذير',
+    lyrics: 'كلمات',
+    joke: 'نكتة',
+    quote: 'اقتباس',
+    fact: 'معلومة',
+    kick: 'طرد',
+    groupinfo: 'معلومات_القروب',
+    staff: 'المشرفين',
+    admins: 'المشرفين',
+    chatbot: 'شاتبوت',
+    resetlink: 'إعادة_الرابط',
+    welcome: 'ترحيب',
+    goodbye: 'وداع',
+    clear: 'تنظيف',
+    github: 'السورس',
+    git: 'السورس',
+    repo: 'السورس',
+    sc: 'السورس',
+    script: 'السورس',
+    take: 'أخذ',
+    flirt: 'مغازلة',
+    character: 'شخصية',
+    wasted: 'هلاك',
+    waste: 'هلاك',
+    ship: 'شيب',
+    url: 'رابط',
+    tourl: 'رابط',
+    emojimix: 'دمج_إيموجي',
+    tgsticker: 'ملصقات_تيليجرام',
+    vv: 'فتح',
+    clearsession: 'تنظيف_الجلسات',
+    autostatus: 'حالة_تلقائية',
+    truth: 'صراحة',
+    dare: 'تحدي',
+    setpp: 'صورة_البوت',
+    setgdesc: 'وصف_القروب',
+    setgname: 'اسم_القروب',
+    setgpp: 'صورة_القروب',
+    instagram: 'إنستا',
+    igs: 'ستوري',
+    igsc: 'إنستا_ميديا',
+    facebook: 'فيسبوك',
+    spotify: 'سبوتيفاي',
+    play: 'شغل',
+    song: 'أغنية',
+    ytmp3: 'أغنية',
+    mp3: 'أغنية',
+    video: 'فيديو',
+    ytmp4: 'يوتيوب_فيديو',
+    tiktok: 'تيك_توك',
+    tt: 'تيك_توك',
+    ai: 'ذكاء',
+    gpt: 'ذكاء',
+    gemini: 'جيميني',
+    translate: 'ترجمة',
+    trt: 'ترجمة',
+    ss: 'صورة_موقع',
+    screenshot: 'صورة_موقع',
+    autoreact: 'تفاعل_تلقائي',
+    areact: 'تفاعل_تلقائي',
+    sudo: 'سودو',
+    goodnight: 'تصبح_على_خير',
+    shayari: 'شعر',
+    roseday: 'ورد',
+    imagine: 'تخيل',
+    flux: 'فلوكس',
+    jid: 'معرف',
+    autotyping: 'كتابة_تلقائية',
+    autoread: 'قراءة_تلقائية',
+    update: 'تحديث',
+    removebg: 'شفاف',
+    remini: 'تحسين',
+    sora: 'سورا'
+};
+
+const INCOMING_COMMAND_ALIAS_TO_CANONICAL = Object.create(null);
+for (const [canonical, aliases] of Object.entries(COMMAND_ALIASES)) {
+    INCOMING_COMMAND_ALIAS_TO_CANONICAL[canonical] = canonical;
+    for (const alias of aliases) {
+        INCOMING_COMMAND_ALIAS_TO_CANONICAL[normalizeCommandToken(alias)] = canonical;
+    }
+}
+
+const TEXTLIKE_KEYS = new Set([
+    'text', 'caption', 'footer', 'title', 'description', 'displayText',
+    'contentText', 'hydratedContentText', 'hydratedFooterText', 'buttonText'
+]);
+const translationCache = new Map();
+
+function normalizeCommandToken(token = '') {
+    return String(token || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ى/g, 'ي')
+        .replace(/ؤ/g, 'و')
+        .replace(/ئ/g, 'ي')
+        .replace(/[ً-ٰٟ]/g, '')
+        .replace(/ـ/g, '');
+}
+
+function normalizeIncomingCommand(text = '') {
+    const trimmed = String(text || '').replace(/\.\s+/g, '.').trim();
+    if (!trimmed.startsWith('.')) return trimmed;
+    const parts = trimmed.split(/\s+/);
+    const rawCommand = String(parts.shift() || '').slice(1);
+    const normalizedCommand = normalizeCommandToken(rawCommand);
+    const canonical = INCOMING_COMMAND_ALIAS_TO_CANONICAL[normalizedCommand] || rawCommand.toLowerCase();
+    return `.${canonical}${parts.length ? ` ${parts.join(' ')}` : ''}`.trim();
+}
+
+function localizeCommandMentions(text = '') {
+    return String(text || '').replace(/(^|[\s(])\.([a-z0-9_-]+)/gi, (match, prefix, command) => {
+        const replacement = DISPLAY_COMMAND_ALIASES[String(command || '').toLowerCase()];
+        return `${prefix}.${replacement || command}`;
+    });
+}
+
+function isChannelArtifact(text = '') {
+    return /whatsapp\.com\/channel\//i.test(String(text || '')) || /عرض\s*القناة/i.test(String(text || ''));
+}
+
+function stripChannelPromotionsFromText(text = '') {
+    const cleanedLines = String(text || '')
+        .split('\n')
+        .filter((line) => {
+            const sample = String(line || '').trim();
+            if (!sample) return true;
+            if (/whatsapp\.com\/channel\//i.test(sample)) return false;
+            if (/قناة واتساب الرسمية/i.test(sample)) return false;
+            if (/عرض\s*القناة/i.test(sample)) return false;
+            if (/اضغط.*القناة/i.test(sample)) return false;
+            if (/فتح القناة/i.test(sample)) return false;
+            return true;
+        });
+    return cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function applyFallbackArabicReplacements(text = '') {
+    let output = String(text || '');
+    const replacements = [
+        [/This command can only be used in groups!?/gi, 'هذا الأمر يعمل داخل المجموعات فقط.'],
+        [/Please make the bot an admin to use admin commands\.?/gi, 'اجعل البوت مشرفاً لاستخدام أوامر الإدارة.'],
+        [/Please make the bot an admin first\.?/gi, 'اجعل البوت مشرفاً أولاً.'],
+        [/Sorry, only group admins can use this command\.?/gi, 'هذا الأمر للمشرفين فقط.'],
+        [/Only admins or bot owner can use this command/gi, 'هذا الأمر للمشرفين أو مالك البوت فقط.'],
+        [/Only bot owner can use this command!?/gi, 'هذا الأمر لمالك البوت فقط.'],
+        [/Only owner\/sudo can use .*? in private chat\.?/gi, 'هذا الأمر متاح للمالك أو السودو فقط في الخاص.'],
+        [/Only owner\/sudo can use anticall\.?/gi, 'هذا الأمر متاح للمالك أو السودو فقط.'],
+        [/Private messages are blocked\. Please contact the owner in groups only\.?/gi, 'الرسائل الخاصة متوقفة. تواصل مع المالك من داخل المجموعات فقط.'],
+        [/Please reply to a sticker with the \.simage command to convert it\./gi, 'قم بالرد على ملصق واستخدم أمر .صورة_الملصق لتحويله إلى صورة.'],
+        [/Please provide a valid number of minutes or use \.mute with no number to mute immediately\./gi, 'اكتب عدد دقائق صحيح أو استخدم أمر .كتم بدون رقم للكتم مباشرة.'],
+        [/Please specify a city, e\.g\.,/gi, 'اكتب اسم المدينة مثل'],
+        [/Please provide a valid position number for Tic-Tac-Toe move\./gi, 'اكتب رقم خانة صحيح للعب اكس او.'],
+        [/Please guess a letter using \.guess <letter>/gi, 'اكتب حرفاً باستخدام الأمر .خمن <حرف>'],
+        [/Please provide an answer using \.answer <answer>/gi, 'اكتب الإجابة باستخدام الأمر .إجابة <نص>'],
+        [/Bot must be admin to use this feature/gi, 'يجب أن يكون البوت مشرفاً لاستخدام هذه الميزة.'],
+        [/Failed to read bot mode status/gi, 'تعذر قراءة حالة وضع البوت.'],
+        [/Failed to update bot access mode/gi, 'تعذر تحديث وضع البوت.'],
+        [/Failed to process command!?/gi, 'تعذر تنفيذ الأمر.'],
+        [/Current bot mode:\s*\*(public|private)\*/gi, (_, mode) => `وضع البوت الحالي: *${String(mode).toLowerCase() === 'public' ? 'عام' : 'خاص'}*`],
+        [/Usage:/gi, 'الاستخدام:'],
+        [/Example:/gi, 'مثال:'],
+        [/Allow everyone to use bot/gi, 'السماح للجميع باستخدام البوت'],
+        [/Restrict to owner only/gi, 'قصر الاستخدام على المالك فقط'],
+        [/Bot is now in \*(public|private)\* mode/gi, (_, mode) => `تم تغيير وضع البوت إلى *${String(mode).toLowerCase() === 'public' ? 'عام' : 'خاص'}*`],
+        [/Online/gi, 'متصل'],
+        [/Public/gi, 'عام'],
+        [/Private/gi, 'خاص']
+    ];
+    for (const [pattern, replacement] of replacements) {
+        output = output.replace(pattern, replacement);
+    }
+    return output;
+}
+
+function looksArabicEnough(text = '') {
+    const sample = String(text || '');
+    const arabicCount = (sample.match(/[؀-ۿ]/g) || []).length;
+    const latinCount = (sample.match(/[A-Za-z]/g) || []).length;
+    return arabicCount > 0 && latinCount < Math.max(12, arabicCount * 0.4);
+}
+
+async function translateOutgoingText(text = '') {
+    const original = String(text || '');
+    if (!original.trim()) return original;
+
+    let prepared = stripChannelPromotionsFromText(localizeCommandMentions(original));
+    prepared = applyFallbackArabicReplacements(prepared);
+    if (!prepared.trim()) return '';
+    if (looksArabicEnough(prepared) || !/[A-Za-z]{3,}/.test(prepared) || !translateGoogle) {
+        return prepared;
+    }
+
+    if (translationCache.has(prepared)) {
+        return translationCache.get(prepared);
+    }
+
+    try {
+        const translated = await translateGoogle(prepared, { to: 'ar' });
+        const resolved = Array.isArray(translated)
+            ? translated.join(' ')
+            : (translated?.text || translated?.translation || translated?.translatedText || translated);
+        const finalText = String(resolved || prepared).trim() || prepared;
+        translationCache.set(prepared, finalText);
+        return finalText;
+    } catch (_) {
+        return prepared;
+    }
+}
+
+async function sanitizeOutgoingNode(value, parentKey = '') {
+    if (value == null) return value;
+    if (Buffer.isBuffer(value) || value instanceof Uint8Array) return value;
+
+    if (Array.isArray(value)) {
+        const output = [];
+        for (const item of value) {
+            const sanitized = await sanitizeOutgoingNode(item, parentKey);
+            if (sanitized !== null && sanitized !== undefined) {
+                output.push(sanitized);
+            }
+        }
+        return output;
+    }
+
+    if (typeof value === 'object') {
+        if (value.urlButton) {
+            const url = String(value.urlButton.url || '');
+            const label = String(value.urlButton.displayText || '');
+            if (isChannelArtifact(url) || /عرض\s*القناة/i.test(label)) {
+                return null;
+            }
+            return {
+                ...value,
+                urlButton: {
+                    ...value.urlButton,
+                    displayText: await translateOutgoingText(label)
+                }
+            };
+        }
+
+        if (value.quickReplyButton) {
+            return {
+                ...value,
+                quickReplyButton: {
+                    ...value.quickReplyButton,
+                    displayText: await translateOutgoingText(value.quickReplyButton.displayText || '')
+                }
+            };
+        }
+
+        const clone = {};
+        for (const [key, entry] of Object.entries(value)) {
+            if (key === 'contextInfo') continue;
+            if ((key === 'url' || key === 'sourceUrl') && isChannelArtifact(entry)) continue;
+
+            if (TEXTLIKE_KEYS.has(key) && typeof entry === 'string') {
+                const localized = await translateOutgoingText(entry);
+                if (localized) clone[key] = localized;
+                continue;
+            }
+
+            const sanitized = await sanitizeOutgoingNode(entry, key);
+            if (sanitized === null || sanitized === undefined) continue;
+            if (Array.isArray(sanitized) && sanitized.length === 0 && ['templateButtons', 'buttons', 'sections'].includes(key)) continue;
+            if (typeof sanitized === 'string' && !sanitized.trim() && ['text', 'caption', 'footer'].includes(key)) continue;
+            clone[key] = sanitized;
+        }
+        return clone;
+    }
+
+    if (typeof value === 'string' && TEXTLIKE_KEYS.has(parentKey)) {
+        return await translateOutgoingText(value);
+    }
+
+    return value;
+}
+
+function patchArabicOutgoingSock(sock) {
+    if (!sock || sock.__arabicOutgoingPatched) return;
+    const originalSendMessage = sock.sendMessage.bind(sock);
+    sock.sendMessage = async (jid, content = {}, options = {}) => {
+        const sanitizedContent = await sanitizeOutgoingNode(content);
+        return originalSendMessage(jid, sanitizedContent, options);
+    };
+    sock.__arabicOutgoingPatched = true;
+}
 
 async function handleMessages(sock, messageUpdate, printLog) {
     try {
@@ -170,9 +597,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
 
         const message = messages[0];
         if (!message?.message) return;
-
-        // Handle autoread functionality
-        await handleAutoread(sock, message);
 
         // Store message for antidelete feature
         if (message.message) {
@@ -191,15 +615,29 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const senderIsSudo = await isSudo(senderId);
         const senderIsOwnerOrSudo = await isOwnerOrSudo(senderId, sock, chatId);
 
+        // Early PM blocker check: skip autoread for blocked PMs so single tick stays
+        let skipAutoRead = false;
+        if (!isGroup && !message.key.fromMe && !senderIsSudo) {
+            try {
+                const pmStateEarly = readPmBlockerState();
+                if (pmStateEarly.enabled) {
+                    skipAutoRead = true;
+                }
+            } catch (e) { }
+        }
+
+        // Handle autoread functionality (skip if PM blocker is active)
+        if (!skipAutoRead) {
+            await handleAutoread(sock, message);
+        }
+        patchArabicOutgoingSock(sock);
+
         // Handle button responses
         if (message.message?.buttonsResponseMessage) {
             const buttonId = message.message.buttonsResponseMessage.selectedButtonId;
             const chatId = message.key.remoteJid;
 
             if (buttonId === 'channel') {
-                await sock.sendMessage(chatId, {
-                    text: '📢 *قناة واتساب الرسمية:*\nhttps://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v'
-                }, { quoted: message });
                 return;
             } else if (buttonId === 'owner') {
                 const ownerCommand = require('./commands/owner');
@@ -213,21 +651,16 @@ async function handleMessages(sock, messageUpdate, printLog) {
             }
         }
 
-        const userMessage = (
-            message.message?.conversation?.trim() ||
+        const rawIncomingText = message.message?.conversation?.trim() ||
             message.message?.extendedTextMessage?.text?.trim() ||
             message.message?.imageMessage?.caption?.trim() ||
             message.message?.videoMessage?.caption?.trim() ||
             message.message?.buttonsResponseMessage?.selectedButtonId?.trim() ||
-            ''
-        ).toLowerCase().replace(/\.\s+/g, '.').trim();
-
-        // Preserve raw message for commands like .tag that need original casing
-        const rawText = message.message?.conversation?.trim() ||
-            message.message?.extendedTextMessage?.text?.trim() ||
-            message.message?.imageMessage?.caption?.trim() ||
-            message.message?.videoMessage?.caption?.trim() ||
             '';
+
+        // Normalize Arabic commands to internal command names while preserving arguments
+        const rawText = normalizeIncomingCommand(rawIncomingText);
+        const userMessage = rawText.toLowerCase().replace(/\.\s+/g, '.').trim();
 
         // Only log command usage
         if (userMessage.startsWith('.')) {
@@ -256,8 +689,8 @@ async function handleMessages(sock, messageUpdate, printLog) {
         }
 
         // First check if it's a game move
-        if (/^[1-9]$/.test(userMessage) || userMessage.toLowerCase() === 'surrender') {
-            await handleTicTacToeMove(sock, chatId, senderId, userMessage);
+        if (/^[1-9]$/.test(userMessage) || userMessage.toLowerCase() === 'surrender' || userMessage === 'استسلام' || userMessage === 'انسحب') {
+            await handleTicTacToeMove(sock, chatId, senderId, ['استسلام', 'انسحب'].includes(userMessage) ? 'surrender' : userMessage);
             return;
         }
 
@@ -282,15 +715,36 @@ async function handleMessages(sock, messageUpdate, printLog) {
             await Antilink(message, sock);
         }
 
-        // PM blocker: block non-owner DMs when enabled (do not ban)
+        // PM blocker: forward DMs to owner instead of blocking (no ban, single tick stays)
         if (!isGroup && !message.key.fromMe && !senderIsSudo) {
             try {
                 const pmState = readPmBlockerState();
                 if (pmState.enabled) {
-                    // Inform user, delay, then block without banning globally
+                    // DO NOT read the message — leave a single tick (✓) at sender
+                    // DO NOT block the number — sender can still see the conversation
+                    // Forward the message content to the owner (linked number)
+                    const ownerJid = settings.ownerNumber + '@s.whatsapp.net';
+                    const senderPhone = chatId.split('@')[0];
+                    const senderName = message?.pushName || senderPhone;
+
+                    // Build forwarded text with sender info
+                    let forwardText = `📨 *رسالة خاصة جديدة*
+
+`; 
+                    forwardText += `👤 المرسل: ${senderName}\n`;
+                    forwardText += `📱 الرقم: ${senderPhone}\n`;
+                    forwardText += `💬 الرسالة: ${rawIncomingText || '(رسالة غير نصية)'}\n`;
+                    forwardText += `⏰ الوقت: ${new Date().toLocaleString('ar')}\n`;
+                    forwardText += `\n_للرد على المرسل استخدم الأمر: .رد ${senderPhone} <رسالتك>_`;
+
+                    try {
+                        await sock.sendMessage(ownerJid, { text: forwardText });
+                    } catch (fwdErr) {
+                        console.error('PM Blocker forward error:', fwdErr.message);
+                    }
+
+                    // Send the warning message to sender (single tick stays, no block)
                     await sock.sendMessage(chatId, { text: pmState.message || 'Private messages are blocked. Please contact the owner in groups only.' });
-                    await new Promise(r => setTimeout(r, 1500));
-                    try { await sock.updateBlockStatus(chatId, 'block'); } catch (e) { }
                     return;
                 }
             } catch (e) { }
@@ -385,6 +839,30 @@ async function handleMessages(sock, messageUpdate, printLog) {
         // Command handlers - Execute commands immediately without waiting for typing indicator
         // We'll show typing indicator after command execution if needed
         let commandExecuted = false;
+
+        // ─── PM Blocker reply command: .رد <number> <message> ───
+        if (userMessage.startsWith('.رد ')) {
+            if (!message.key.fromMe && !senderIsOwnerOrSudo) {
+                await sock.sendMessage(chatId, { text: '❌ هذا الأمر للمالك فقط!' }, { quoted: message });
+                return;
+            }
+            const replyParts = rawText.split(' '); // use rawText to preserve Arabic
+            // .رد <number> <message...>
+            const targetNumber = replyParts[1];
+            const replyMsg = replyParts.slice(2).join(' ').trim();
+            if (!targetNumber || !replyMsg) {
+                await sock.sendMessage(chatId, { text: 'الاستخدام: .رد <الرقم> <رسالتك>\nمثال: .رد 919876543210 مرحبا' }, { quoted: message });
+                return;
+            }
+            const targetJid = targetNumber.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            try {
+                await sock.sendMessage(targetJid, { text: replyMsg });
+                await sock.sendMessage(chatId, { text: `✅ تم إرسال ردك إلى ${targetNumber}` }, { quoted: message });
+            } catch (replyErr) {
+                await sock.sendMessage(chatId, { text: `❌ فشل إرسال الرد: ${replyErr.message}` }, { quoted: message });
+            }
+            return;
+        }
 
         switch (true) {
             case userMessage === '.simage': {
@@ -909,7 +1387,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 const antideleteMatch = userMessage.slice(11).trim();
                 await handleAntideleteCommand(sock, chatId, message, antideleteMatch);
                 break;
-            case userMessage === '.surrender':
+            case userMessage === '.surrender' || userMessage === 'استسلام' || userMessage === 'انسحب':
                 // Handle surrender command for tictactoe game
                 await handleTicTacToeMove(sock, chatId, senderId, 'surrender');
                 break;

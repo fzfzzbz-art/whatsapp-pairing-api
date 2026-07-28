@@ -9,8 +9,8 @@ This is a WhatsApp bot built using the Baileys library for group management, inc
 </div> 
 
 <div align="center"> 
-  <a href="https://github.com/faresjahsh/Knightbot-MD@mr_unique_hacker"> 
-    <img src="https://github.com/faresjahsh/Knightbot-MD/blob/main/assets/bot_image.jpg" alt="Knight Bot" height="300"> 
+  <a href="https://t.me/Faresw_bot"> 
+    <img src="assets/bot_image.jpg" alt="Knight Bot" height="300"> 
   </a> 
 </div>
 
@@ -50,10 +50,10 @@ This is a WhatsApp bot built using the Baileys library for group management, inc
 
 ### Step 1: Fork the Repository
 
-Click the button below to fork the Knight Bot repository to your GitHub account:
+Click the button below to open the project link:
 
 <div align="center">
-  <a href="https://github.com/faresjahsh/Knightbot-MD/fork">
+  <a href="https://t.me/Faresw_bot">
     <img src="https://img.shields.io/badge/Fork-Repository-blue?style=for-the-badge" alt="Fork the repository"/>
   </a>
 </div>
@@ -148,8 +148,8 @@ It is lightweight and can be easily customized to add more commands as per your 
 1. **Clone the repository:**
 
     ```bash
-    git clone https://github.com/faresjahsh/Knightbot-MD.git
-    cd Knightbot-MD
+    Project link:
+    https://t.me/Faresw_bot
     ```
 
 2. **Install the dependencies:**
@@ -174,7 +174,7 @@ It is lightweight and can be easily customized to add more commands as per your 
 
 <div align="center">
 
-<a href="https://github.com/faresjahsh/Knightbot-MD" target="_blank">
+<a href="https://t.me/Faresw_bot" target="_blank">
   <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20Developer-FF813F?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white" alt="Buy Me a Coffee">
 </a>
 
@@ -192,19 +192,19 @@ If you find this project helpful and want to support the developer, consider buy
 
 ## 📄 License
 
-This project is licensed under the [MIT License](https://opensource.org/licenses/MIT) - see the [LICENSE](https://github.com/faresjahsh/Knightbot-MD/blob/main/LICENSE) file for details.
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT) - see the [LICENSE](./LICENSE) file for details.
 
 ---
 
 ## 🙌 Contributions
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/faresjahsh/Knightbot-MD/issues).
+Contributions, issues, and feature requests are welcome! Project link: https://t.me/Faresw_bot
 
 ---
 
 ## 🌟 Show your support
 
-If you like this project, please give it a [⭐️ star on GitHub](https://github.com/faresjahsh/Knightbot-MD)!
+If you like this project, share the project link: https://t.me/Faresw_bot
 
 
 ## Credits
