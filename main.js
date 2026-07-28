@@ -258,6 +258,95 @@ async function destroySocket(phone) {
     sockets.delete(phone);
 }
 
+async function collectSessionFilesFromDisk(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return {};
+    const dir = getSessionDir(normalized);
+    if (!fs.existsSync(dir)) return {};
+    const out = {};
+    for (const name of fs.readdirSync(dir)) {
+        if (!name || !name.endsWith('.json') || name === 'index.json') continue;
+        try {
+            const fullPath = path.join(dir, name);
+            const stat = await fs.stat(fullPath);
+            if (!stat.isFile()) continue;
+            out[name] = await fs.readFile(fullPath, 'utf8');
+        } catch (err) {
+            console.error('collectSessionFiles failed for', normalized, name, err.message);
+        }
+    }
+    return out;
+}
+
+// [FIX] Push the freshly-written Baileys creds/signal files to MongoDB so a
+// SIGKILL on Render never loses a linked number. main.js previously only
+// updated the local index.json — that is why paired numbers vanished on every
+// cold restart.
+async function persistSessionToMongo(phone, { connected = false } = {}) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const col = await getMongoCollection();
+    if (!col) return false;
+    try {
+        const files = await collectSessionFilesFromDisk(normalized);
+        await col.updateOne(
+            { _id: normalized },
+            {
+                $set: {
+                    _id: normalized,
+                    phone: normalized,
+                    sessionId: normalized,
+                    files,
+                    fileCount: Object.keys(files).length,
+                    connected: connected === true,
+                    lastPersistedAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                },
+            },
+            { upsert: true }
+        );
+        return true;
+    } catch (err) {
+        console.error('persistSessionToMongo failed for', normalized, err.message);
+        return false;
+    }
+}
+
+// [FIX] Inverse of persistSessionToMongo — called on boot before
+// connectNumber() so cold-starts with empty sessions/ dirs still reconnect.
+async function restoreSessionFilesFromMongo(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const col = await getMongoCollection();
+    if (!col) return false;
+    let doc = null;
+    try {
+        doc = await col.findOne({ _id: normalized });
+    } catch (err) {
+        console.error('restoreSessionFilesFromMongo findOne failed for', normalized, err.message);
+        return false;
+    }
+    if (!doc || !doc.files || typeof doc.files !== 'object') return false;
+
+    const dir = getSessionDir(normalized);
+    await fs.ensureDir(dir);
+    let wrote = 0;
+    for (const [name, content] of Object.entries(doc.files)) {
+        if (!name || !name.endsWith('.json')) continue;
+        if (typeof content !== 'string' || !content.length) continue;
+        try {
+            await fs.writeFile(path.join(dir, name), content, 'utf8');
+            wrote++;
+        } catch (err) {
+            console.error('restoreSessionFilesFromMongo write failed for', normalized, name, err.message);
+        }
+    }
+    if (wrote > 0) {
+        console.log(`[${normalized}] restored ${wrote} session file(s) from MongoDB`);
+    }
+    return wrote > 0;
+}
+
 async function connectNumber(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) throw new Error('phone is required');
@@ -270,6 +359,14 @@ async function connectNumber(phone) {
 
     const sessionDir = getSessionDir(normalized);
     await fs.ensureDir(sessionDir);
+
+    // [FIX] If the local creds are missing (cold start, fresh deploy, disk
+    // wiped), pull them back from MongoDB before Baileys even tries to load
+    // them. Without this step every restart broke every linked number.
+    const hasCredsLocal = fs.existsSync(path.join(sessionDir, 'creds.json'));
+    if (!hasCredsLocal) {
+        await restoreSessionFilesFromMongo(normalized);
+    }
 
     const state = await useMultiFileAuthState(sessionDir);
 
@@ -295,13 +392,24 @@ async function connectNumber(phone) {
     };
     sockets.set(normalized, entry);
 
-    // Persist credentials atomically on every update — survives SIGKILL
+    // Persist credentials atomically on every update — survives SIGKILL on
+    // the Render free tier and is mirrored to MongoDB for cross-restart
+    // recovery.
+    let credsPersistTimer = null;
     sock.ev.on('creds.update', async () => {
         try {
             await state.saveCreds();
         } catch (err) {
             console.error('saveCreds error for', normalized, err.message);
         }
+        // [FIX] Debounced MongoDB mirror — the original main.js persisted
+        // creds locally but never to the remote store, which is exactly why
+        // re-pairs were required after every Render restart.
+        if (credsPersistTimer) clearTimeout(credsPersistTimer);
+        credsPersistTimer = setTimeout(() => {
+            persistSessionToMongo(normalized, { connected: entry.state === 'open' }).catch(() => {});
+        }, 400);
+        if (typeof credsPersistTimer.unref === 'function') credsPersistTimer.unref();
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -312,8 +420,13 @@ async function connectNumber(phone) {
                 entry.lastError = null;
                 await updateSessionIndex(normalized, {
                     state: 'open',
+                    connected: true,
                     connectedAt: new Date().toISOString(),
                 });
+                // [FIX] Force-flush the latest creds + signal files into
+                // MongoDB the moment the socket opens — the most reliable
+                // moment to checkpoint for the next cold start.
+                persistSessionToMongo(normalized, { connected: true }).catch(() => {});
                 console.log(`[${normalized}] connected`);
             } else if (connection === 'close') {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -517,12 +630,36 @@ app.delete('/api/session/:phone', async (req, res) => {
 /*  Boot                                                             */
 /* ------------------------------------------------------------------ */
 
+async function listRemoteSessionPhones() {
+    const col = await getMongoCollection();
+    if (!col) return [];
+    try {
+        const docs = await col.find({}, { projection: { _id: 1, phone: 1, sessionId: 1 } }).toArray();
+        return docs
+            .map((d) => normalizePhone(d.phone || d.sessionId || d._id || ''))
+            .filter(Boolean);
+    } catch (err) {
+        console.error('listRemoteSessionPhones failed:', err.message);
+        return [];
+    }
+}
+
 async function restoreAllSessionsOnBoot() {
+    // [FIX] Old version only read sessions/index.json, which is empty on every
+    // cold start. Now we merge local + MongoDB and reconnect every previously
+    // linked number automatically so the bot comes back online by itself.
     try {
         const index = await readSessionIndex();
-        for (const [, entry] of Object.entries(index.sessions || {})) {
-            const phone = entry.phone || entry.sessionId;
-            if (!phone) continue;
+        const localPhones = Object.entries(index.sessions || {})
+            .map(([, entry]) => normalizePhone(entry.phone || entry.sessionId || ''))
+            .filter(Boolean);
+
+        const remotePhones = await listRemoteSessionPhones();
+
+        const allPhones = Array.from(new Set([...localPhones, ...remotePhones]));
+        console.log(`[boot-restore] found ${allPhones.length} session(s) to reconnect (local=${localPhones.length}, remote=${remotePhones.length})`);
+
+        for (const phone of allPhones) {
             try {
                 // background, don't block the boot
                 connectNumber(phone).catch((err) => console.error('restore failed for', phone, err.message));
