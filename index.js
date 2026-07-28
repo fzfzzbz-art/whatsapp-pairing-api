@@ -1490,7 +1490,10 @@ async function getMongoAuthState(phone) {
             lastConnectedAt: payload.lastConnectedAt
         });
 
-        await flushSessionSnapshotSync(normalizedPhone || sessionKey, payload);
+        // [STABILITY] Never block Baileys creds updates on a full session snapshot sync.
+        Promise.resolve(scheduleSessionSnapshotSync(normalizedPhone || sessionKey, payload)).catch((error) => {
+            console.error(`Deferred Session Sync Error (${normalizedPhone || sessionKey}):`, error?.message || error);
+        });
     };
 
     return { state, saveCreds };
@@ -1615,11 +1618,12 @@ function sessionHasLocalAuthFiles(phone = '') {
     return listLocalSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
 }
 
-const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
+// [STABILITY] Enable local pruning by default so large freshly-linked sessions do not block the bot.
+const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'true').trim().toLowerCase());
 const LOCAL_SESSION_FILE_LIMITS = Object.freeze({
-    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 10000)),
-    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 10000)),
-    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 10000))
+    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 200)),
+    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 200)),
+    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 200))
 });
 
 function classifySessionJsonFile(fileName = '') {
@@ -3825,6 +3829,7 @@ function startPresenceKeepAlive(sock, phone) {
             await sock.sendPresenceUpdate('available');
         } catch (_) {}
     }, 45000);
+    if (typeof timer.unref === 'function') timer.unref();
     presenceTimers.set(normalized, timer);
 }
 
@@ -9385,7 +9390,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 };
 
                 await touchMongoSessionState(normalizedPhone, connectionMetadata);
-                await flushSessionSnapshotSync(normalizedPhone, connectionMetadata);
+                Promise.resolve(scheduleSessionSnapshotSync(normalizedPhone, connectionMetadata)).catch((error) => {
+                    console.error(`Deferred Open Session Sync Error (${normalizedPhone}):`, error?.message || error);
+                });
 
                 try {
                     await applyLivePhoneSettingsSideEffects(normalizedPhone);
@@ -9410,50 +9417,55 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     pairingRequests.set(normalizedPhone, pendingPair);
                     stoppedPairings.delete(normalizedPhone);
 
-                    try {
-                        await autoJoinWhatsAppChannel(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    try {
-                        await sendLinkedNumberWelcome(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    try {
-                        await sendPhoneSettingsAccessToLinkedNumber(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`sendPhoneSettingsAccessToLinkedNumber Error (${normalizedPhone}):`, error.message || error);
-                    }
-
                     const settingsCredential = getPhoneSettingsCredential(normalizedPhone);
                     const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
 
-                    try {
-                        await notifyTelegramUser(
-                            finalOwnerId,
-                            `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
-✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
-إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
-🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
-                        );
-                    } catch (error) {
-                        console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
-                    }
+                    // [STABILITY] Run post-link notifications/tasks in background so successful pairing never stalls the bot.
+                    Promise.resolve().then(async () => {
+                        try {
+                            await autoJoinWhatsAppChannel(sock, normalizedPhone);
+                        } catch (error) {
+                            console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
+                        }
 
-                    if (settingsAccessMessage) {
+                        try {
+                            await sendLinkedNumberWelcome(sock, normalizedPhone);
+                        } catch (error) {
+                            console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
+                        }
+
+                        try {
+                            await sendPhoneSettingsAccessToLinkedNumber(sock, normalizedPhone);
+                        } catch (error) {
+                            console.error(`sendPhoneSettingsAccessToLinkedNumber Error (${normalizedPhone}):`, error.message || error);
+                        }
+
                         try {
                             await notifyTelegramUser(
                                 finalOwnerId,
-                                settingsAccessMessage,
-                                buildTelegramCopyButton(settingsCredential?.password || '', 'نسخ كلمة السر 📋')
+                                `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
+✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
+إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
+🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
                             );
                         } catch (error) {
-                            console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
+                            console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
                         }
-                    }
+
+                        if (settingsAccessMessage) {
+                            try {
+                                await notifyTelegramUser(
+                                    finalOwnerId,
+                                    settingsAccessMessage,
+                                    buildTelegramCopyButton(settingsCredential?.password || '', 'نسخ كلمة السر 📋')
+                                );
+                            } catch (error) {
+                                console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
+                            }
+                        }
+                    }).catch((error) => {
+                        console.error(`Post Link Tasks Error (${normalizedPhone}):`, error?.message || error);
+                    });
 
                     clearPairingRequest(normalizedPhone);
                 }
@@ -9462,7 +9474,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             if (connection === 'close') {
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
-                clearSessionPingTimer(normalizedPhone);
+                clearPresenceTimer(normalizedPhone);
 
                 const corruptedBootSession = bootRestore && shouldDiscardCorruptedBootSession(lastDisconnect);
                 const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
