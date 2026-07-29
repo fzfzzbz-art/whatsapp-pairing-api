@@ -432,29 +432,18 @@ INTERNAL_PAIRING_BASE_URL = (
     os.getenv("INTERNAL_PAIRING_BASE_URL")
     or f"http://127.0.0.1:{COMPANION_PORT}"
 ).strip().rstrip("/")
-REMOTE_PAIRING_BASE_URL = (
-    os.getenv("REMOTE_PAIRING_BASE_URL")
-    or os.getenv("FALLBACK_PAIRING_BASE_URL")
-    or DEFAULT_REMOTE_PAIRING_BASE_URL
-).strip().rstrip("/") or DEFAULT_REMOTE_PAIRING_BASE_URL.rstrip("/")
-PREFER_LOCAL_PAIRING_RUNTIME = str(
-    os.getenv("PREFER_LOCAL_PAIRING_RUNTIME")
-    or os.getenv("USE_LOCAL_PAIRING_RUNTIME")
-    or os.getenv("FORCE_LOCAL_PAIRING_RUNTIME")
-    or "false"
-).strip().lower() in {"1", "true", "yes", "on"}
 DEFAULT_LOCAL_SETTINGS_BASE_URL = (
     PUBLIC_BASE_URL
     or INTERNAL_PAIRING_BASE_URL
-    or REMOTE_PAIRING_BASE_URL
-).strip().rstrip("/") or REMOTE_PAIRING_BASE_URL
+    or DEFAULT_REMOTE_PAIRING_BASE_URL
+).strip().rstrip("/") or DEFAULT_REMOTE_PAIRING_BASE_URL
 TARGET_SITE_BASE_URL = (
     os.getenv("TARGET_SITE_BASE_URL")
     or DEFAULT_LOCAL_SETTINGS_BASE_URL
 ).strip().rstrip("/") or DEFAULT_LOCAL_SETTINGS_BASE_URL
 TARGET_PAIRING_API_BASE_URL = (
     os.getenv("TARGET_PAIRING_API_BASE_URL")
-    or (INTERNAL_PAIRING_BASE_URL if PREFER_LOCAL_PAIRING_RUNTIME else REMOTE_PAIRING_BASE_URL)
+    or INTERNAL_PAIRING_BASE_URL
     or TARGET_SITE_BASE_URL
 ).strip().rstrip("/") or TARGET_SITE_BASE_URL
 TARGET_PAIRING_API_URL = (os.getenv("TARGET_PAIRING_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
@@ -462,64 +451,6 @@ TARGET_SETTINGS_PAGE_URL = (os.getenv("TARGET_SETTINGS_PAGE_URL") or f"{TARGET_S
 TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/login").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/login"
 TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load"
 TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save"
-
-
-
-def configure_pairing_runtime_targets(use_local_runtime: bool) -> str:
-    global TARGET_SITE_BASE_URL, TARGET_PAIRING_API_BASE_URL, TARGET_PAIRING_API_URL
-    global TARGET_SETTINGS_PAGE_URL, TARGET_SITE_LOGIN_API_URL
-    global TARGET_SITE_SETTINGS_LOAD_API_URL, TARGET_SITE_SETTINGS_SAVE_API_URL
-
-    if use_local_runtime:
-        target_site_base_url = (
-            os.getenv("TARGET_SITE_BASE_URL")
-            or PUBLIC_BASE_URL
-            or INTERNAL_PAIRING_BASE_URL
-            or REMOTE_PAIRING_BASE_URL
-        ).strip().rstrip("/") or REMOTE_PAIRING_BASE_URL
-        target_pairing_api_base_url = (
-            os.getenv("TARGET_PAIRING_API_BASE_URL")
-            or INTERNAL_PAIRING_BASE_URL
-            or target_site_base_url
-        ).strip().rstrip("/") or target_site_base_url
-    else:
-        target_site_base_url = (
-            os.getenv("TARGET_SITE_BASE_URL")
-            or REMOTE_PAIRING_BASE_URL
-        ).strip().rstrip("/") or REMOTE_PAIRING_BASE_URL
-        target_pairing_api_base_url = (
-            os.getenv("TARGET_PAIRING_API_BASE_URL")
-            or REMOTE_PAIRING_BASE_URL
-            or target_site_base_url
-        ).strip().rstrip("/") or target_site_base_url
-
-    TARGET_SITE_BASE_URL = target_site_base_url
-    TARGET_PAIRING_API_BASE_URL = target_pairing_api_base_url
-    TARGET_PAIRING_API_URL = (
-        os.getenv("TARGET_PAIRING_API_URL")
-        or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
-    ).strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
-    TARGET_SETTINGS_PAGE_URL = (
-        os.getenv("TARGET_SETTINGS_PAGE_URL")
-        or f"{TARGET_SITE_BASE_URL}/settings"
-    ).strip() or f"{TARGET_SITE_BASE_URL}/settings"
-    TARGET_SITE_LOGIN_API_URL = (
-        os.getenv("TARGET_SITE_LOGIN_API_URL")
-        or f"{TARGET_PAIRING_API_BASE_URL}/api/login"
-    ).strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/login"
-    TARGET_SITE_SETTINGS_LOAD_API_URL = (
-        os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL")
-        or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load"
-    ).strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load"
-    TARGET_SITE_SETTINGS_SAVE_API_URL = (
-        os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL")
-        or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save"
-    ).strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save"
-    return TARGET_PAIRING_API_URL
-
-
-configure_pairing_runtime_targets(PREFER_LOCAL_PAIRING_RUNTIME)
-
 LEGACY_PAIR_API_URLS = {
     "https://whatsapp-pairing-api-e9eh.onrender.com/api/pairing",
     "https://bot.goldenqueen.store/api/pairing",
@@ -1663,7 +1594,7 @@ def register_pending_pairing(user, number: str, code: str = "", site_metadata: O
     save_pending_pairings()
 
 
-def store_manual_site_login(user, number: str, password: str, settings_url: Optional[str] = None) -> dict[str, Any]:
+def store_manual_site_login(user, number: str, password: str, settings_url: str = TARGET_SETTINGS_PAGE_URL) -> dict[str, Any]:
     if not user:
         return {}
     normalized_number = normalize_phone_number(number)
@@ -1685,7 +1616,7 @@ def store_manual_site_login(user, number: str, password: str, settings_url: Opti
     apply_site_metadata(record, {
         "site_password": site_password,
         "site_app_id": derive_site_app_id_from_password(site_password),
-        "settings_url": normalize_settings_url(settings_url or TARGET_SETTINGS_PAGE_URL),
+        "settings_url": normalize_settings_url(settings_url),
     })
     LINKED_WHATSAPP_USERS[normalized_number] = record
     save_linked_whatsapp_users()
@@ -2284,7 +2215,7 @@ def apply_auth_config(headers: dict[str, str], session: Optional[requests.Sessio
     return config
 
 
-def build_sync_headers(referer_url: Optional[str] = None) -> dict[str, str]:
+def build_sync_headers(referer_url: str = TARGET_SITE_BASE_URL) -> dict[str, str]:
     headers = {
         "Accept": "application/json, text/plain, */*",
         "User-Agent": (
@@ -2471,10 +2402,9 @@ def load_site_settings_from_session(
     return build_default_site_settings_payload(), fallback_app_id
 
 
-def login_to_settings_site(session: requests.Session, number: str, password: str, settings_url: Optional[str] = None) -> None:
+def login_to_settings_site(session: requests.Session, number: str, password: str, settings_url: str = TARGET_SETTINGS_PAGE_URL) -> None:
     if not number or not password:
         return
-    settings_url = normalize_settings_url(settings_url or TARGET_SETTINGS_PAGE_URL)
     login_url, _, _ = build_site_settings_urls(settings_url)
     headers = build_sync_headers(settings_url)
     headers["Content-Type"] = "application/json"
@@ -4314,21 +4244,10 @@ def resolve_pair_code_api_url() -> str:
         f"{INTERNAL_PAIRING_BASE_URL}/api/pairing",
         fallback=f"{INTERNAL_PAIRING_BASE_URL}/api/pairing",
     )
-    remote_url = normalize_pairing_api_url(
-        os.getenv("TARGET_PAIRING_API_URL") or f"{REMOTE_PAIRING_BASE_URL}/api/pairing",
-        fallback=f"{REMOTE_PAIRING_BASE_URL}/api/pairing",
-    )
-    configured_url = str(SETTINGS.get("pair_code_api_url") or "").strip()
-    if configured_url:
-        resolved_url = normalize_pairing_api_url(configured_url, fallback=remote_url)
-        if (PAIRING_RUNTIME_DISABLED_REASON or not PREFER_LOCAL_PAIRING_RUNTIME) and resolved_url.rstrip("/") == internal_url.rstrip("/"):
-            resolved_url = remote_url
-    else:
-        resolved_url = internal_url if (PREFER_LOCAL_PAIRING_RUNTIME and not PAIRING_RUNTIME_DISABLED_REASON) else remote_url
-    if SETTINGS.get("pair_code_api_url") != resolved_url:
-        SETTINGS["pair_code_api_url"] = resolved_url
+    if SETTINGS.get("pair_code_api_url") != internal_url:
+        SETTINGS["pair_code_api_url"] = internal_url
         save_settings()
-    return resolved_url
+    return internal_url
 
 
 def start_healthcheck_server() -> Optional[ThreadingHTTPServer]:
@@ -4654,10 +4573,7 @@ def request_pair_code_sync(number: str) -> dict[str, str]:
             "خدمة الربط غير مكتملة الإعداد. تأكد من رابط API وطريقة الإرسال واسم الحقل المطلوب."
         )
 
-    normalized_internal_url = normalize_pairing_api_url(
-        f"{INTERNAL_PAIRING_BASE_URL}/api/pairing",
-        fallback=f"{INTERNAL_PAIRING_BASE_URL}/api/pairing",
-    ).rstrip("/")
+    normalized_internal_url = TARGET_PAIRING_API_URL.rstrip("/")
     if PAIRING_RUNTIME_DISABLED_REASON and api_url.rstrip("/") == normalized_internal_url:
         raise RuntimeError(
             f"خادم الاقتران الداخلي غير متاح حالياً على الاستضافة: {PAIRING_RUNTIME_DISABLED_REASON}"
@@ -7794,27 +7710,18 @@ def main():
     if not re.fullmatch(r"\d{6,}:[A-Za-z0-9_-]{20,}", BOT_TOKEN):
         raise RuntimeError("BOT_TOKEN format looks invalid. Please verify the token value.")
 
-    health_server = start_healthcheck_server()
-
-    embedded_companion_started = False
-    if PREFER_LOCAL_PAIRING_RUNTIME:
-        ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
-        embedded_companion_started = start_embedded_companion_process()
-        if embedded_companion_started:
-            PAIRING_RUNTIME_DISABLED_REASON = ""
-            configure_pairing_runtime_targets(True)
-        else:
-            logger.warning(
-                "Local WhatsApp runtime is unavailable on this hosting; falling back to remote pairing service. Reason: %s",
-                PAIRING_RUNTIME_DISABLED_REASON or "unknown error",
-            )
-            configure_pairing_runtime_targets(False)
-    else:
-        PAIRING_RUNTIME_DISABLED_REASON = ""
-        configure_pairing_runtime_targets(False)
-
     SETTINGS["pair_code_api_url"] = resolve_pair_code_api_url().rstrip("/")
     save_settings()
+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
+    embedded_companion_started = start_embedded_companion_process()
+    if not embedded_companion_started:
+        raise RuntimeError(
+            "تعذر تشغيل محرك واتساب المحلي داخل نفس المشروع. تأكد أن الاستضافة تدعم Node.js و npm مع Python وأن npm install تم بنجاح أثناء البناء.\n"
+            f"سبب الخطأ: {PAIRING_RUNTIME_DISABLED_REASON or 'unknown error'}"
+        )
+
+    PAIRING_RUNTIME_DISABLED_REASON = ""
+    health_server = start_healthcheck_server()
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
