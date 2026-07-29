@@ -106,9 +106,6 @@ PASSWORD_DISCOVERY_ATTEMPT_DELAYS = (15, 45, 60)
 PASSWORD_DISCOVERY_RESPONSE_WAIT_SECONDS = 12
 START_MANUAL_LOGIN_HINT = ""
 BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
-SESSION_RECONCILE_INTERVAL_SECONDS = max(20, int((os.getenv("SESSION_RECONCILE_INTERVAL_SECONDS") or "60").strip() or "60"))
-SESSION_MISSING_GRACE_CHECKS = max(1, int((os.getenv("SESSION_MISSING_GRACE_CHECKS") or "2").strip() or "2"))
-SESSION_RECONCILE_MISS_COUNTS: dict[str, int] = {}
 ARABIC_DIGIT_TRANSLATION = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 TELEGRAM_APP = None
 TELEGRAM_LOOP = None
@@ -3231,19 +3228,17 @@ async def send_whatsapp_image_by_url(chat_id: str, file_url: str, caption: str =
 
 def build_linked_number_private_message(number: str = "", site_password: str = "", bot_link: str = "") -> str:
     normalized_number = normalize_phone_number(number)
-    lines = ["✅ تم ربط الرقم بنجاح من داخل البوت بدون أي موقع خارجي أو صفحة ربط."]
+    lines = ["✅ تم ربط الرقم بنجاح وتم التعرف عليه داخل البوت بشكل صحيح."]
     if normalized_number:
         lines.append(f"📞 الرقم المربوط: {normalized_number}")
-    lines.append("💾 جلسة هذا الرقم محفوظة داخل البوت نفسه وقاعدة البيانات.")
-    lines.append("♻️ سيبقى الرقم شغالاً مادام بوت الربط شغال.")
-    lines.append("🗑️ إذا حذفت الجلسة من البوت سيتم تسجيل خروجها من واتساب وحذفها من قاعدة البيانات تلقائياً.")
-    lines.append("🔄 وإذا خرجت الجلسة من واتساب فسيتم حذفها من البوت وقاعدة البيانات تلقائياً.")
     if site_password:
-        lines.append(f"🔐 كلمة سر إعدادات الرقم: {site_password}")
+        lines.append(f"🔐 كلمة سر إعدادات الموقع: {site_password}")
+        lines.append(f"⚙️ صفحة الإعدادات: {TARGET_SETTINGS_PAGE_URL}")
+        lines.append("😀 يمكنك الآن فتح إعدادات الرقم من خاص البوت أو تغيير إيموجي الحالة مباشرة.")
     else:
-        lines.append("⏳ جارِ تجهيز كلمة سر إعدادات الرقم، وستصلك تلقائيًا عند توفرها.")
+        lines.append("⏳ جارِ تجهيز كلمة سر إعدادات الموقع، وستصلك تلقائيًا عند توفرها.")
     if bot_link:
-        lines.append(f"🤖 إدارة الرقم من داخل البوت: {bot_link}")
+        lines.append(f"🤖 رابط البوت الخاص بك: {bot_link}")
     lines.append("😀 هذه الرسالة خاصة بهذا الرقم فقط.")
     return "\n".join(lines)
 
@@ -3343,61 +3338,6 @@ def delete_pairing_session_sync(number: str) -> dict[str, Any]:
 
 async def delete_pairing_session(number: str) -> dict[str, Any]:
     return await asyncio.to_thread(delete_pairing_session_sync, number)
-
-
-def remove_local_number_records(number: str) -> bool:
-    normalized_number = normalize_phone_number(number)
-    if not normalized_number:
-        return False
-
-    removed = False
-    if normalized_number in LINKED_WHATSAPP_USERS:
-        LINKED_WHATSAPP_USERS.pop(normalized_number, None)
-        save_linked_whatsapp_users()
-        removed = True
-    if normalized_number in PENDING_PAIRINGS:
-        PENDING_PAIRINGS.pop(normalized_number, None)
-        save_pending_pairings()
-        removed = True
-    SESSION_RECONCILE_MISS_COUNTS.pop(normalized_number, None)
-    return removed
-
-
-def is_delete_pairing_result_successful(result: Any) -> bool:
-    if not isinstance(result, dict):
-        return False
-    if result.get("success") is True or result.get("deleted") is True:
-        return True
-    status_code_raw = str(result.get("status_code") or "").strip()
-    status_code = int(status_code_raw) if status_code_raw.isdigit() else 0
-    if status_code in {200, 202, 204, 404}:
-        return True
-    error_text = str(result.get("error") or result.get("message") or "").strip().lower()
-    return error_text in {"not found", "session not found", "already missing"}
-
-
-async def unlink_number_everywhere(user_id: int, number: str) -> tuple[bool, str]:
-    normalized_number = normalize_phone_number(number)
-    if not normalized_number:
-        return False, "❌ تعذر تحديد الرقم المطلوب."
-
-    record = find_user_record_for_number(user_id, normalized_number)
-    if not record_belongs_to_user(record, user_id):
-        record = get_record_for_number(normalized_number)
-    if not record_belongs_to_user(record, user_id):
-        return False, "❌ هذا الرقم غير مربوط من حسابك داخل البوت."
-
-    try:
-        delete_result = await delete_pairing_session(normalized_number)
-    except Exception as exc:
-        logger.exception("Failed to delete pairing session for %s", normalized_number)
-        return False, f"❌ تعذر حذف جلسة الرقم من واتساب وقاعدة البيانات تلقائياً: {exc}"
-
-    if not is_delete_pairing_result_successful(delete_result):
-        return False, "❌ تعذر إنهاء جلسة الرقم من واتساب وقاعدة البيانات، لذلك لم يتم حذفها من البوت حفاظاً على التزامن."
-
-    remove_local_number_records(normalized_number)
-    return True, f"✅ تم إلغاء ربط الرقم {normalized_number} وحذف جلسته من واتساب والبوت وقاعدة البيانات تلقائياً."
 
 
 def track_background_task(task: asyncio.Task[Any]) -> None:
@@ -4107,15 +4047,10 @@ async def notify_successful_pairing(number: str, explicit_user_id: Optional[int]
         return True
 
     message_lines = [
-        f"✅ تم ربط الرقم {normalized_number} بنجاح من داخل البوت.",
-        "🤖 لا تحتاج أي موقع خارجي أو صفحة ربط لإدارة الرقم.",
-        "💾 الجلسة محفوظة داخل البوت نفسه وقاعدة البيانات.",
-        "♻️ سيبقى الرقم شغالاً مادام بوت الربط شغال.",
-        "🗑️ إذا حذفت الجلسة من البوت فسيتم تسجيل خروجها من واتساب وحذفها من قاعدة البيانات تلقائياً.",
-        "🔄 وإذا خرجت الجلسة من واتساب فسيتم حذفها من البوت وقاعدة البيانات تلقائياً.",
+        build_pairing_success_instruction_message(normalized_number),
     ]
     if site_password:
-        message_lines.extend(["", f"🔐 كلمة سر الإعدادات: {site_password}", "😀 يمكنك الآن فتح إعدادات الرقم من داخل البوت أو تغيير إيموجي الحالة."])
+        message_lines.extend(["", f"🔐 كلمة سر الإعدادات: {site_password}", f"⚙️ صفحة الإعدادات: {TARGET_SETTINGS_PAGE_URL}", "😀 يمكنك الآن فتح إعدادات الرقم من داخل البوت أو تغيير إيموجي الحالة."])
     else:
         message_lines.extend(["", build_password_wait_message(normalized_number)])
 
@@ -4790,73 +4725,6 @@ async def poll_pairing_status(number: str, explicit_user_id: Optional[int] = Non
             return
 
 
-def is_session_missing_payload(payload: Any) -> bool:
-    if not isinstance(payload, dict) or not payload:
-        return False
-
-    session_payload = payload.get("session") if isinstance(payload.get("session"), dict) else {}
-    is_active = any(flag is True for flag in (
-        payload.get("active"),
-        payload.get("bridgeSocket"),
-        payload.get("connected"),
-        session_payload.get("connected"),
-    ))
-    is_registered = any(flag is True for flag in (
-        payload.get("registered"),
-        session_payload.get("registered"),
-    )) or is_pairing_status_linked(payload)
-    is_pending = any(flag is True for flag in (
-        payload.get("pendingPairing"),
-        session_payload.get("pendingPairing"),
-    ))
-    return not is_active and not is_registered and not is_pending
-
-
-async def reconcile_whatsapp_sessions_loop() -> None:
-    while True:
-        await asyncio.sleep(SESSION_RECONCILE_INTERVAL_SECONDS)
-        try:
-            tracked_numbers = sorted({normalize_phone_number(number) for number in [*LINKED_WHATSAPP_USERS.keys(), *PENDING_PAIRINGS.keys()] if normalize_phone_number(number)})
-            for normalized_number in tracked_numbers:
-                try:
-                    payload = await asyncio.to_thread(fetch_pairing_status_sync, normalized_number)
-                except Exception:
-                    continue
-
-                if not is_session_missing_payload(payload):
-                    SESSION_RECONCILE_MISS_COUNTS.pop(normalized_number, None)
-                    continue
-
-                miss_count = SESSION_RECONCILE_MISS_COUNTS.get(normalized_number, 0) + 1
-                SESSION_RECONCILE_MISS_COUNTS[normalized_number] = miss_count
-                if miss_count < SESSION_MISSING_GRACE_CHECKS:
-                    continue
-
-                SESSION_RECONCILE_MISS_COUNTS.pop(normalized_number, None)
-                record = get_record_for_number(normalized_number)
-                if not record:
-                    continue
-
-                remove_local_number_records(normalized_number)
-                user_id = int(record.get("telegram_user_id") or 0) or None
-                if user_id and TELEGRAM_APP is not None:
-                    try:
-                        await TELEGRAM_APP.bot.send_message(
-                            chat_id=user_id,
-                            text=(
-                                f"⚠️ خرجت جلسة الرقم {normalized_number} من واتساب، "
-                                "لذلك تم حذفها تلقائياً من البوت وقاعدة البيانات للحفاظ على التزامن."
-                            ),
-                            reply_markup=build_main_keyboard(admin=(user_id == ADMIN_ID)),
-                        )
-                    except Exception:
-                        logger.exception("Failed to notify user %s about removed WhatsApp session %s", user_id, normalized_number)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Failed during WhatsApp session reconciliation loop")
-
-
 async def is_user_subscribed(bot, user_id: int) -> bool:
     if not SETTINGS.get("force_sub_enabled"):
         return True
@@ -5180,10 +5048,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_number:
             await query.message.reply_text("❌ تعذر تحديد الرقم المطلوب.")
             return
-        unlink_success, unlink_message = await unlink_number_everywhere(user.id, target_number)
-        if not unlink_success:
+        if not unlink_user_number(user.id, target_number):
             await query.message.reply_text(
-                unlink_message,
+                "❌ هذا الرقم غير مربوط من حسابك داخل البوت.",
                 reply_markup=build_main_keyboard(admin=is_admin(update)),
             )
             return
@@ -5193,8 +5060,15 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("drf_settings_payload", None)
             context.user_data.pop("awaiting_drf_field", None)
             context.user_data.pop("awaiting_drf_field_label", None)
+        unlink_note = ""
+        try:
+            await delete_pairing_session(target_number)
+            unlink_note = "\n🗑️ وتم حذف جلسة الرقم من خادم الربط وقاعدة البيانات تلقائيًا."
+        except Exception:
+            logger.exception("Failed to delete pairing session after unlinking %s", target_number)
+            unlink_note = "\n⚠️ تم فك الربط من البوت، لكن تعذر حذف جلسة الرقم من خادم الربط تلقائيًا."
         await query.message.reply_text(
-            unlink_message,
+            f"✅ تم إلغاء ربط الرقم {target_number} من حسابك داخل البوت.{unlink_note}",
             reply_markup=build_main_keyboard(admin=is_admin(update)),
         )
         if get_all_user_whatsapp_records(user.id):
@@ -5834,7 +5708,6 @@ async def post_init(app):
     TELEGRAM_APP = app
     TELEGRAM_LOOP = asyncio.get_running_loop()
     track_background_task(asyncio.create_task(periodic_site_settings_sync_loop()))
-    track_background_task(asyncio.create_task(reconcile_whatsapp_sessions_loop()))
     try:
         bot_info = await app.bot.get_me()
         username = str(getattr(bot_info, "username", "") or "").strip()
