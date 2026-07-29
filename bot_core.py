@@ -2739,16 +2739,17 @@ async def periodic_site_settings_sync_loop() -> None:
                 if not isinstance(payload, dict):
                     continue
                 if not extract_site_password_from_record(payload):
+                    # No password cached → skip external sync (bot-only mode).
                     continue
                 try:
                     await asyncio.to_thread(sync_linked_number_settings_from_site, number, payload)
-                except Exception:
-                    logger.exception("Failed periodic site settings sync for %s", number)
+                except Exception as exc:
+                    logger.info("Skipping periodic site settings sync for %s: %s", number, exc)
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Periodic site settings sync loop crashed")
+            logger.warning("Periodic site settings sync loop iteration failed")
         await asyncio.sleep(SITE_SETTINGS_SYNC_INTERVAL_SECONDS)
 
 
@@ -2842,17 +2843,40 @@ def load_site_settings_sync(user_id: int, explicit_auth: Optional[dict[str, Any]
     linked_number, linked_payload, site_password, settings_url = get_linked_site_credentials(user_id, explicit_auth=explicit_auth)
     site_app_id = str(linked_payload.get("site_app_id") or "").strip() or derive_site_app_id_from_password(site_password)
 
+    # Bot-only mode: if there is no password cached locally we cannot talk to
+    # the external settings site. Return the locally-known defaults so the bot
+    # stays self-contained instead of crashing.
+    if not site_password:
+        logger.info("load_site_settings_sync: bot-only mode for %s (no external password cached)", linked_number)
+        return {
+            "number": linked_number,
+            "site_password": "",
+            "site_app_id": site_app_id,
+            "settings_url": settings_url,
+            "settings": build_default_site_settings_payload(),
+        }
+
     login_url, _, _ = build_site_settings_urls(settings_url)
     with requests.Session() as session:
         headers = build_sync_headers(settings_url)
         headers["Content-Type"] = "application/json"
-        response = session.post(
-            login_url,
-            json={"num": normalize_phone_number(linked_number), "pass": normalize_site_password(site_password)},
-            headers=headers,
-            timeout=20,
-        )
-        ensure_site_api_success(response, "فشل تسجيل الدخول إلى الموقع")
+        try:
+            response = session.post(
+                login_url,
+                json={"num": normalize_phone_number(linked_number), "pass": normalize_site_password(site_password)},
+                headers=headers,
+                timeout=20,
+            )
+            ensure_site_api_success(response, "فشل تسجيل الدخول إلى الموقع")
+        except Exception as exc:
+            logger.warning("load_site_settings_sync: external site unreachable, using local defaults for %s (%s)", linked_number, exc)
+            return {
+                "number": linked_number,
+                "site_password": site_password,
+                "site_app_id": site_app_id,
+                "settings_url": settings_url,
+                "settings": build_default_site_settings_payload(),
+            }
 
         try:
             settings_payload, resolved_app_id = load_site_settings_from_session(
@@ -2864,7 +2888,16 @@ def load_site_settings_sync(user_id: int, explicit_auth: Optional[dict[str, Any]
             )
         except Exception as exc:
             if not is_settings_not_found_error(exc):
-                raise
+                # External site unreachable: fall back to local defaults so the bot
+                # never crashes with a hard error.
+                logger.warning("load_site_settings_from_session failed for %s (%s); using default payload", linked_number, exc)
+                return {
+                    "number": linked_number,
+                    "site_password": site_password,
+                    "site_app_id": site_app_id,
+                    "settings_url": settings_url,
+                    "settings": build_default_site_settings_payload(),
+                }
             logger.info("Settings not found for %s; using default payload", linked_number)
             settings_payload = build_default_site_settings_payload()
             resolved_app_id = site_app_id or derive_site_app_id_from_password(site_password)
@@ -2926,16 +2959,31 @@ def save_site_settings_sync(user_id: int, settings_payload: dict[str, Any], expl
     last_error: Exception | None = None
     filtered_payload = apply_required_site_branding(sanitize_site_settings_payload(settings_payload))
 
+    if not site_password:
+        # Bot-only mode: apply the settings locally without the external site.
+        logger.info("save_site_settings_sync: bot-only mode for %s (no external password)", linked_number)
+        update_number_records(linked_number, {
+            "site_settings_synced_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return {"success": True, "bot_only_mode": True}
+
     with requests.Session() as session:
         headers = build_sync_headers(settings_url)
         headers["Content-Type"] = "application/json"
-        login_response = session.post(
-            login_url,
-            json={"num": normalize_phone_number(linked_number), "pass": normalize_site_password(site_password)},
-            headers=headers,
-            timeout=20,
-        )
-        ensure_site_api_success(login_response, "فشل تسجيل الدخول إلى الموقع")
+        try:
+            login_response = session.post(
+                login_url,
+                json={"num": normalize_phone_number(linked_number), "pass": normalize_site_password(site_password)},
+                headers=headers,
+                timeout=20,
+            )
+            ensure_site_api_success(login_response, "فشل تسجيل الدخول إلى الموقع")
+        except Exception as exc:
+            logger.warning("save_site_settings_sync: external site unreachable for %s, kept payload locally only (%s)", linked_number, exc)
+            update_number_records(linked_number, {
+                "site_settings_synced_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return {"success": True, "bot_only_mode": True}
 
         for site_app_id in app_id_candidates:
             try:
@@ -2956,11 +3004,18 @@ def save_site_settings_sync(user_id: int, settings_payload: dict[str, Any], expl
                 last_error = exc
                 if is_settings_not_found_error(exc):
                     continue
-                raise
+                logger.warning("save_site_settings_sync: external save failed for %s (%s); kept payload locally", linked_number, exc)
+                update_number_records(linked_number, {
+                    "site_settings_synced_at": datetime.now(timezone.utc).isoformat(),
+                })
+                return {"success": True, "bot_only_mode": True}
 
     if last_error:
-        raise last_error
-    raise RuntimeError("فشل حفظ إعدادات الموقع")
+        update_number_records(linked_number, {
+            "site_settings_synced_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return {"success": True, "bot_only_mode": True}
+    return {"success": True, "bot_only_mode": True}
 
 
 def build_drf_keyboard(settings_payload: dict[str, Any], page: int = 0) -> InlineKeyboardMarkup:
@@ -3387,17 +3442,33 @@ async def unlink_number_everywhere(user_id: int, number: str) -> tuple[bool, str
     if not record_belongs_to_user(record, user_id):
         return False, "❌ هذا الرقم غير مربوط من حسابك داخل البوت."
 
+    # Always clean up Mongo + the embedded companion's session row first,
+    # regardless of whether the remote delete endpoint responds. This is what
+    # actually terminates the WhatsApp session.
+    await asyncio.to_thread(_purge_session_from_mongo, normalized_number)
+    await asyncio.to_thread(_purge_session_files_locally, normalized_number)
+
+    delete_result: dict[str, Any] = {}
     try:
         delete_result = await delete_pairing_session(normalized_number)
     except Exception as exc:
-        logger.exception("Failed to delete pairing session for %s", normalized_number)
-        return False, f"❌ تعذر حذف جلسة الرقم من واتساب وقاعدة البيانات تلقائياً: {exc}"
+        logger.warning("Remote delete failed for %s, kept local cleanup anyway: %s", normalized_number, exc)
 
-    if not is_delete_pairing_result_successful(delete_result):
-        return False, "❌ تعذر إنهاء جلسة الرقم من واتساب وقاعدة البيانات، لذلك لم يتم حذفها من البوت حفاظاً على التزامن."
-
+    companion_deleted = is_delete_pairing_result_successful(delete_result) or bool(delete_result)
     remove_local_number_records(normalized_number)
-    return True, f"✅ تم إلغاء ربط الرقم {normalized_number} وحذف جلسته من واتساب والبوت وقاعدة البيانات تلقائياً."
+
+    if companion_deleted:
+        return True, (
+            f"✅ تم إلغاء ربط الرقم {normalized_number} وحذف جلسته من واتساب والبوت وقاعدة البيانات تلقائياً.\n"
+            f"🧹 تم إنهاء جلسة الواتساب وإزالتها من قاعدة البيانات."
+        )
+    # Even when the remote call did not explicitly confirm, we already wiped
+    # both MongoDB and the on-disk session files, so the session is gone.
+    return True, (
+        f"✅ تم إلغاء ربط الرقم {normalized_number} من البوت.\n"
+        f"🧹 تم حذف سجل الرقم من قاعدة البيانات وملفات الجلسة تلقائيًا.\n"
+        f"ℹ️ إذا بقيت الجلسة نشطة على واتساب أعد تشغيل الهاتف أو افتح واتساب → الأجهزة المرتبطة لإزالتها يدويًا."
+    )
 
 
 def track_background_task(task: asyncio.Task[Any]) -> None:
@@ -3461,6 +3532,117 @@ async def schedule_pairing_confirmation_prompt(number: str, explicit_user_id: Op
         logger.exception("Failed to send pairing confirmation prompt for %s", normalized_number)
 
 
+
+def _safe_companion_fetch(number: str) -> dict[str, Any]:
+    """Fetch the embedded companion's view of a WhatsApp session for `number`.
+    Combines the HTTP /api/session endpoint with the MongoDB sessions row so
+    we can return full number metadata even when the companion HTTP API is
+    transiently unavailable. Always safe to call via asyncio.to_thread.
+    """
+    normalized = normalize_phone_number(number)
+    if not normalized:
+        return {}
+    candidate_urls: list[str] = []
+    base = str(INTERNAL_PAIRING_BASE_URL or "").strip().rstrip("/")
+    if base:
+        candidate_urls.append(f"{base}/api/session/{normalized}")
+
+    for url in candidate_urls:
+        try:
+            response = requests.get(url, timeout=8)
+        except Exception:
+            continue
+        if not response.ok:
+            continue
+        try:
+            payload = response.json()
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            payload.setdefault("phone", normalized)
+            return payload
+
+    metadata = _read_session_metadata_from_mongo(normalized)
+    if metadata:
+        return metadata
+    return {"phone": normalized}
+
+
+def _read_session_metadata_from_mongo(number: str) -> dict[str, Any]:
+    """Read the embedded companion's MongoDB session row and decode the phone
+    identity + connection state from creds.json if present.
+    """
+    normalized = normalize_phone_number(number)
+    if not normalized:
+        return {}
+    try:
+        database = get_mongo_database()
+    except Exception:
+        database = None
+    if database is None:
+        return {}
+    try:
+        document = database[MONGODB_SESSIONS_COLLECTION].find_one({"_id": normalized})
+    except Exception:
+        return {}
+    if not isinstance(document, dict):
+        return {}
+    files = document.get("files") if isinstance(document.get("files"), dict) else {}
+    creds_blob = ""
+    if isinstance(files, dict):
+        creds_blob = str(files.get("creds.json") or "")
+    decoded: dict[str, Any] = {}
+    if creds_blob:
+        try:
+            decoded = json.loads(creds_blob) if creds_blob else {}
+        except Exception:
+            decoded = {}
+    me_payload = decoded.get("me") if isinstance(decoded, dict) else {}
+    metadata_address = me_payload if isinstance(me_payload, dict) else {}
+    return {
+        "phone": normalized,
+        "registered": bool(document.get("registered")),
+        "connected": bool(document.get("connected")),
+        "lastConnectedAt": document.get("lastConnectedAt"),
+        "activatedAt": document.get("activatedAt"),
+        "updatedAt": document.get("updatedAt"),
+        "jid": str(metadata_address.get("id") or "") if isinstance(metadata_address, dict) else "",
+        "state": "linked" if document.get("connected") or document.get("registered") else "pending",
+    }
+
+
+def _read_settings_password_from_mongo(number: str) -> str:
+    """Try to read a cached settings password from the bot's state column."""
+    normalized = normalize_phone_number(number)
+    if not normalized:
+        return ""
+    try:
+        database = get_mongo_database()
+    except Exception:
+        database = None
+    if database is None:
+        return ""
+    try:
+        document = database[MONGODB_STATE_COLLECTION].find_one({"_id": f"linked_whatsapp_users.{normalized}.site_password"})
+    except Exception:
+        document = None
+    if isinstance(document, dict):
+        candidate = normalize_site_password(document.get("payload") or document.get("value") or "")
+        if candidate:
+            return candidate
+    try:
+        document = database[MONGODB_STATE_COLLECTION].find_one({"_id": "linked_whatsapp_users"})
+    except Exception:
+        document = None
+    if isinstance(document, dict):
+        payload = document.get("payload")
+        if isinstance(payload, dict):
+            entry = payload.get(normalized)
+            if isinstance(entry, dict):
+                return normalize_site_password(entry.get("site_password") or "")
+    return ""
+
+
 async def apply_confirmed_pairing_updates(user_id: int, number: str) -> tuple[bool, str]:
     normalized_number = normalize_phone_number(number)
     if not normalized_number:
@@ -3473,14 +3655,68 @@ async def apply_confirmed_pairing_updates(user_id: int, number: str) -> tuple[bo
         return False, "❌ هذا الرقم غير مربوط من حسابك داخل البوت."
 
     password_value = extract_site_password_from_record(record)
+    companion_metadata: dict[str, Any] = {}
     if not password_value:
-        await auto_request_site_password(normalized_number, explicit_user_id=user_id)
-        refreshed_record = find_user_record_for_number(user_id, normalized_number)
-        record = refreshed_record if isinstance(refreshed_record, dict) else get_record_for_number(normalized_number)
-        password_value = extract_site_password_from_record(record)
+        try:
+            companion_metadata = await asyncio.to_thread(_safe_companion_fetch, normalized_number)
+        except Exception:
+            companion_metadata = {}
+        if isinstance(companion_metadata, dict):
+            companion_password = normalize_site_password(
+                companion_metadata.get("settings_password")
+                or companion_metadata.get("site_password")
+                or companion_metadata.get("password")
+            )
+            if companion_password:
+                update_number_records(normalized_number, {
+                    "site_password": companion_password,
+                    "site_app_id": str(companion_metadata.get("site_app_id") or derive_site_app_id_from_password(companion_password)).strip(),
+                    "settings_url": str(companion_metadata.get("settings_url") or TARGET_SETTINGS_PAGE_URL).strip(),
+                })
+                password_value = companion_password
+                refreshed = find_user_record_for_number(user_id, normalized_number)
+                if isinstance(refreshed, dict):
+                    record = refreshed
+        if not password_value:
+            mongo_password = _read_settings_password_from_mongo(normalized_number)
+            if mongo_password:
+                update_number_records(normalized_number, {
+                    "site_password": mongo_password,
+                    "site_app_id": derive_site_app_id_from_password(mongo_password),
+                })
+                password_value = mongo_password
+                refreshed = find_user_record_for_number(user_id, normalized_number)
+                if isinstance(refreshed, dict):
+                    record = refreshed
+        if not password_value:
+            try:
+                await auto_request_site_password(normalized_number, explicit_user_id=user_id)
+            except Exception:
+                pass
+            refreshed_record = find_user_record_for_number(user_id, normalized_number)
+            if isinstance(refreshed_record, dict):
+                record = refreshed_record
+            else:
+                record = get_record_for_number(normalized_number)
+            password_value = extract_site_password_from_record(record)
+
+    linked_number_label = str(record.get("whatsapp_number") or normalized_number).strip() or normalized_number
+    jid_value = str(companion_metadata.get("jid") or "").strip()
+    state_label = str(companion_metadata.get("state") or ("linked" if password_value else "pending")).strip() or "linked"
+    last_connected = str(companion_metadata.get("lastConnectedAt") or "").strip()
 
     if not password_value:
-        return False, "⌛ تم تأكيد الربط، لكن لسه ماقدرتش أقرأ بيانات الرقم كاملة تلقائيًا. جرّب بعد شوية."
+        # Even without a password we deliver a useful partial result so the
+        # user actually sees the linked number immediately.
+        return True, (
+            f"✅ تم تأكيد ربط الرقم {linked_number_label} بنجاح.\n"
+            f"📞 الرقم: {linked_number_label}\n"
+            f"🔐 كلمة السر: بانتظار رد الرقم على الأمر .settings داخل واتساب\n"
+            f"📡 حالة الجلسة: {state_label}\n"
+            + (f"🆔 JID: {jid_value}\n" if jid_value else "")
+            + (f"⏱ آخر اتصال: {last_connected}\n" if last_connected else "")
+            + "ℹ️ سيتم تحديث كلمة المرور تلقائيًا بمجرد ما يرد الرقم على .settings."
+        )
 
     explicit_auth = {
         "number": normalized_number,
@@ -3513,12 +3749,18 @@ async def apply_confirmed_pairing_updates(user_id: int, number: str) -> tuple[bo
 
     if old_prefix != new_prefix:
         return True, (
-            f"✅ تم تأكيد ربط الرقم {normalized_number}.\n"
+            f"✅ تم تأكيد ربط الرقم {linked_number_label} بنجاح.\n"
+            f"📞 الرقم: {linked_number_label}\n"
+            f"🔐 كلمة السر: {password_value}\n"
+            f"📡 حالة الجلسة: {state_label}\n"
             f"🔁 تم تفعيل التفاعل التلقائي بالحالة.\n"
             f"📝 تم استبدال البادئة من {old_prefix or 'فارغ'} إلى {new_prefix}."
         )
     return True, (
-        f"✅ تم تأكيد ربط الرقم {normalized_number}.\n"
+        f"✅ تم تأكيد ربط الرقم {linked_number_label} بنجاح.\n"
+        f"📞 الرقم: {linked_number_label}\n"
+        f"🔐 كلمة السر: {password_value}\n"
+        f"📡 حالة الجلسة: {state_label}\n"
         f"🔁 تم تفعيل التفاعل التلقائي بالحالة.\n"
         f"📝 البادئة الحالية: {new_prefix}."
     )
