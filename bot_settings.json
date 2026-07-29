@@ -1,0 +1,20 @@
+{
+  "current_emoji": "🔥",
+  "auto_reply_enabled": true,
+  "pair_code_api_url": "http://127.0.0.1:3100/api/pairing",
+  "pair_code_api_method": "POST",
+  "pair_code_api_token": "",
+  "pair_code_api_number_field": "number",
+  "start_message": "👋 مرحباً بك!\n\n{emoji} الإيموجي الحالي: {emoji}\n{admin_text}",
+  "force_sub_enabled": false,
+  "force_sub_channel": "",
+  "auto_reply_channel_url": "https://bwt-lwts.onrender.com",
+  "auto_reply_message": "🔗 هذا رابط القناة الخاصة بنا\n{channel_url}\n\n📞 رقم التواصل: 967773987296",
+  "whatsapp_alive_message": "✅ *Golden Queen is active now*\n\n👑 *Owner:* Golden Queen\n🤖 *Status:* Ready",
+  "whatsapp_bot_message": "✅ *كود الاقتران الجديد*\n\n🔑 *الكود:* {code}\n\n📱 *طريقة الربط:*\n1️⃣ افتح واتساب.\n2️⃣ ادخل إلى الأجهزة المرتبطة.\n3️⃣ اختر ربط جهاز.\n4️⃣ أدخل الكود أعلاه مباشرة باعلى سرعة (يفضل خلال 30 ثانية من استخراج الكود).\n\n⚠️ *هام جدًا:* استخدم آخر كود فقط. إذا ظهر *جار تسجيل الدخول* لمدة تزيد عن دقيقة واحدة أو توقف لمتصفح واتساب، اطلب كودًا جديدًا فورًا وأعد المحاولة فوراً، لا تنسخ قديما.",
+  "whatsapp_settings_message": "⚙️ رسالة الإعدادات",
+  "emoji_sync_api_url": "",
+  "emoji_sync_api_token": "",
+  "webhook_secret": "",
+  "force_sub_url": ""
+}

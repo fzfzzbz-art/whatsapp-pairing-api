@@ -2688,6 +2688,20 @@ def apply_site_emoji_to_local_state(number: str, linked_payload: dict[str, Any],
     return changed
 
 
+def is_invalid_site_login_error(error: Any) -> bool:
+    error_text = str(error or "").strip().lower()
+    if not error_text:
+        return False
+    return any(fragment in error_text for fragment in (
+        "wrong user number or password",
+        "invalid password",
+        "invalid credentials",
+        "wrong password",
+        "wrong user",
+        "فشل تسجيل الدخول",
+    ))
+
+
 def sync_linked_number_settings_from_site(number: str, linked_payload: Optional[dict[str, Any]] = None) -> bool:
     normalized_number = normalize_phone_number(number)
     if not normalized_number:
@@ -2710,7 +2724,13 @@ def sync_linked_number_settings_from_site(number: str, linked_payload: Optional[
     except (TypeError, ValueError):
         linked_user_id = 0
 
-    site_payload = load_site_settings_sync(linked_user_id or 0, explicit_auth)
+    try:
+        site_payload = load_site_settings_sync(linked_user_id or 0, explicit_auth)
+    except RuntimeError as exc:
+        if is_invalid_site_login_error(exc):
+            logger.warning("Skipping periodic site settings sync for %s بسبب بيانات دخول غير صالحة", normalized_number)
+            return False
+        raise
     settings_payload = site_payload.get("settings") if isinstance(site_payload, dict) else {}
     if not isinstance(settings_payload, dict):
         return False
