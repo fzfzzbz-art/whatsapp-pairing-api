@@ -6718,6 +6718,79 @@ module.exports = {
 };
 '''
 
+EMBEDDED_LIVE_RUNTIME_BOOTSTRAP_JS = r'''require('./server');
+
+const { pairingBridge } = require('./lib/pairingBridge');
+const liveBridge = require('../lib/liveWhatsAppBridge');
+
+const activatePhone = typeof liveBridge?.activatePhone === 'function' ? liveBridge.activatePhone : null;
+const bootstrapAll = typeof liveBridge?.bootstrapAll === 'function' ? liveBridge.bootstrapAll : null;
+
+function normalizePhone(raw = '') {
+  return String(raw || '').replace(/\D/g, '').trim();
+}
+
+async function safeActivate(phone, reason = 'bootstrap') {
+  const normalized = normalizePhone(phone);
+  if (!normalized || !activatePhone) return false;
+  try {
+    await activatePhone(normalized, { reason });
+    return true;
+  } catch (error) {
+    console.error('[embedded-live-bootstrap] activate failed for', normalized, reason, error?.message || error);
+    return false;
+  }
+}
+
+async function reconcile(reason = 'interval') {
+  if (!bootstrapAll) return [];
+  try {
+    return await bootstrapAll({ concurrency: 2, reason });
+  } catch (error) {
+    console.error('[embedded-live-bootstrap] reconcile failed:', error?.message || error);
+    return [];
+  }
+}
+
+function defer(fn, delayMs) {
+  const timer = setTimeout(fn, delayMs);
+  if (timer && typeof timer.unref === 'function') {
+    timer.unref();
+  }
+  return timer;
+}
+
+function scheduleActivation(phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return;
+  for (const [index, delayMs] of [2000, 7000, 15000, 30000].entries()) {
+    defer(() => {
+      safeActivate(normalized, `pairing-bridge:${index + 1}`).catch(() => {});
+    }, delayMs);
+  }
+}
+
+if (pairingBridge && pairingBridge.emitter && typeof pairingBridge.emitter.on === 'function') {
+  pairingBridge.emitter.on('phone.activated', (phone) => {
+    scheduleActivation(phone);
+  });
+}
+
+defer(() => {
+  reconcile('boot').catch(() => {});
+}, 1500);
+
+const reconcileTimer = setInterval(() => {
+  reconcile('interval').catch(() => {});
+}, Math.max(5000, Number(process.env.LIVE_RUNTIME_RECONCILE_MS || 20000)));
+if (reconcileTimer && typeof reconcileTimer.unref === 'function') {
+  reconcileTimer.unref();
+}
+
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+'''
+
 EMBEDDED_SERVER_JS = r'''const express = require('express');
 const fs = require('fs-extra');
 const path = require('path');
@@ -7450,6 +7523,7 @@ def ensure_embedded_companion_files(base_dir: Optional[Path] = None) -> dict[str
     embedded_files = {
         "package.json": EMBEDDED_PACKAGE_JSON,
         "server.js": EMBEDDED_SERVER_JS,
+        "live-runtime-bootstrap.js": EMBEDDED_LIVE_RUNTIME_BOOTSTRAP_JS,
         "index.html": EMBEDDED_INDEX_HTML,
         "lib/pairingBridge.js": EMBEDDED_PAIRING_BRIDGE_JS,
     }
@@ -7717,7 +7791,7 @@ def start_embedded_companion_process() -> bool:
     launch_targets = [
         {
             "label": "embedded-runtime",
-            "command": ["node", "server.js"],
+            "command": ["node", "live-runtime-bootstrap.js"],
             "cwd": EMBEDDED_COMPANION_DIR,
             "prepare": ensure_embedded_companion_dependencies,
             "drop_telegram_token": False,
