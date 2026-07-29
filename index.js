@@ -3824,13 +3824,11 @@ function startSessionPing(sock, phone) {
             }
             if (Date.now() - lastMongoTouchAt >= SESSION_MONGO_TOUCH_INTERVAL_MS) {
                 lastMongoTouchAt = Date.now();
-                const heartbeatMetadata = {
+                await touchMongoSessionState(normalized, {
                     ownerId: getPhoneOwner(normalized) || '',
                     registered: true,
                     lastConnectedAt: new Date().toISOString()
-                };
-                await touchMongoSessionState(normalized, heartbeatMetadata);
-                await flushSessionSnapshotSync(normalized, heartbeatMetadata);
+                });
             }
         } catch (_) {}
     }, SESSION_PING_INTERVAL_MS);
@@ -4074,13 +4072,7 @@ function revokePhoneSettingsAccess(userId, phone) {
 }
 
 function hasPhoneSettingsAccess(userId, phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return false;
-    if (userOwnsPhone(userId, normalizedPhone)) {
-        grantPhoneSettingsAccess(userId, normalizedPhone, getActivePhoneAppId(normalizedPhone));
-        return true;
-    }
-    return Boolean(getPhoneSettingsAuthSession(userId, normalizedPhone));
+    return Boolean(getPhoneSettingsAuthSession(userId, phone));
 }
 
 function getPhoneSettingsSectionConfig(sectionKey = 'general') {
