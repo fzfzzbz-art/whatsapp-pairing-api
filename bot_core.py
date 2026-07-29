@@ -47,8 +47,6 @@ from telegram.ext import (
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    stream=sys.stdout,
-    force=True,
 )
 logger = logging.getLogger(__name__)
 
@@ -1764,7 +1762,6 @@ def build_owned_numbers_text(user_id: int, purpose: str = "manage") -> str:
     purpose_line = {
         "unlink": "اختر الرقم الذي تريد إلغاء ربطه من البوت.",
         "emoji": "اختر الرقم الذي تريد تغيير إيموجي التفاعل له بدون إرسال كلمة السر.",
-        "settings": "اختر الرقم الذي تريد فتح إعداداته مباشرة من داخل البوت.",
     }.get(str(purpose or "").strip().lower(), "يمكنك إلغاء ربط أي رقم من الأزرار بالأسفل.")
 
     lines = ["📱 أرقامك المربوطة داخل البوت:", ""]
@@ -1896,8 +1893,8 @@ async def send_password_for_user_number(message, user_id: int, target_number: An
         "\n".join([
             f"✅ باسورد الرقم {number} جاهز.",
             f"🔐 كلمة السر: {password_value}",
-            "🤖 إدارة الرقم وتعديل إعداداته تتم من داخل البوت فقط.",
-            "😀 تقدر الآن تفتح إعدادات الرقم أو تغيّر إيموجي الحالة مباشرة من داخل البوت.",
+            f"⚙️ صفحة الإعدادات: {settings_url}",
+            "😀 تقدر الآن تفتح إعدادات الرقم من داخل البوت أو تغيّر إيموجي الحالة مباشرة.",
         ]),
         reply_markup=build_main_keyboard(admin=(int(user_id) == int(ADMIN_ID))),
     )
@@ -4023,7 +4020,8 @@ async def notify_site_password_detected(number: str, explicit_user_id: Optional[
     message_lines = [
         f"✅ تم اكتشاف كلمة سر الرقم {normalized_number} بنجاح.",
         f"🔐 كلمة سر الإعدادات: {site_password}",
-        "🤖 تم حفظ بيانات هذا الرقم داخل البوت، ويمكنك الآن فتح الإعدادات أو تغيير إيموجي الحالة من داخل البوت فقط.",
+        f"⚙️ صفحة الإعدادات: {TARGET_SETTINGS_PAGE_URL}",
+        "📌 تم حفظ البيانات داخل البوت لهذا الرقم، ويمكنك الآن فتح الإعدادات أو تغيير إيموجي الحالة.",
     ]
 
     try:
@@ -5015,11 +5013,20 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data.startswith("drf_lang:"):
-        context.user_data.pop("selected_drf_language", None)
-        context.user_data.pop("awaiting_drf_credentials", None)
-        user = update.effective_user
-        if user:
-            await open_linked_number_settings_panel(query.message, context, user.id)
+        selected_language = get_pair_language_code(query.data.split(":", 1)[1])
+        context.user_data["selected_drf_language"] = selected_language
+        context.user_data["awaiting_drf_credentials"] = True
+        context.user_data.pop("awaiting_pair_number", None)
+        context.user_data.pop("awaiting_user_emoji", None)
+        context.user_data.pop("awaiting_emoji_credentials", None)
+        context.user_data.pop("admin_waiting_field", None)
+        context.user_data.pop("awaiting_drf_field", None)
+        context.user_data.pop("awaiting_drf_field_label", None)
+        context.user_data.pop("drf_auth_payload", None)
+        context.user_data.pop("drf_settings_payload", None)
+        await query.message.reply_text(
+            get_drf_language_pack(selected_language)["prompt"].format(settings_url=TARGET_SETTINGS_PAGE_URL)
+        )
         return
 
     if query.data == "user_set_emoji":
