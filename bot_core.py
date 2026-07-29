@@ -419,7 +419,7 @@ GREEN_API_ID_INSTANCE = os.getenv("GREEN_API_ID_INSTANCE", "").strip()
 GREEN_API_TOKEN_INSTANCE = os.getenv("GREEN_API_TOKEN_INSTANCE", "").strip()
 GREEN_API_PHONE_NUMBER = os.getenv("GREEN_API_PHONE_NUMBER", "").strip()
 
-DEFAULT_REMOTE_PAIRING_BASE_URL = "https://whatsapp-pairing-api-production-639f.up.railway.app/"
+DEFAULT_REMOTE_PAIRING_BASE_URL = ""
 COMPANION_PORT = int((os.getenv("COMPANION_PORT") or os.getenv("PAIRING_SERVER_PORT") or "3100").strip() or "3100")
 PUBLIC_BASE_URL = (
     os.getenv("PUBLIC_BASE_URL")
@@ -435,108 +435,19 @@ INTERNAL_PAIRING_BASE_URL = (
 DEFAULT_LOCAL_SETTINGS_BASE_URL = (
     PUBLIC_BASE_URL
     or INTERNAL_PAIRING_BASE_URL
-    or DEFAULT_REMOTE_PAIRING_BASE_URL
-).strip().rstrip("/") or DEFAULT_REMOTE_PAIRING_BASE_URL
+).strip().rstrip("/") or INTERNAL_PAIRING_BASE_URL
 TARGET_SITE_BASE_URL = (
     os.getenv("TARGET_SITE_BASE_URL")
     or DEFAULT_LOCAL_SETTINGS_BASE_URL
 ).strip().rstrip("/") or DEFAULT_LOCAL_SETTINGS_BASE_URL
-TARGET_PAIRING_API_BASE_URL = (
-    os.getenv("TARGET_PAIRING_API_BASE_URL")
-    or INTERNAL_PAIRING_BASE_URL
-    or TARGET_SITE_BASE_URL
-).strip().rstrip("/") or TARGET_SITE_BASE_URL
-TARGET_PAIRING_API_URL = (os.getenv("TARGET_PAIRING_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
+TARGET_PAIRING_API_BASE_URL = INTERNAL_PAIRING_BASE_URL
+TARGET_PAIRING_API_URL = f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
 TARGET_SETTINGS_PAGE_URL = (os.getenv("TARGET_SETTINGS_PAGE_URL") or f"{TARGET_SITE_BASE_URL}/settings").strip() or f"{TARGET_SITE_BASE_URL}/settings"
-TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/login").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/login"
-TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load"
-TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save"
-LEGACY_PAIR_API_URLS = {
-    "https://whatsapp-pairing-api-e9eh.onrender.com/api/pairing",
-    "https://bot.goldenqueen.store/api/pairing",
-}
-DEFAULT_PAIRING_COOKIES = [
-    {
-        "name": "m5a4xojbcp2nx3gptmm633qal3gzmadn",
-        "value": "fizzyacerbitymellow.com",
-        "domain": "bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1777477096,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "pbpr0tpuw4isk85t8yg3jb2lj5vqf",
-        "value": "wayfarerorthodox.com",
-        "domain": "bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1777477096,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "pp_delay_c5cf409eb691bc551ab1f2b790da676d",
-        "value": "1",
-        "domain": ".bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1809004740,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "pp_main_c5cf409eb691bc551ab1f2b790da676d",
-        "value": "1",
-        "domain": ".bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1809008640,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "pp_sub_c5cf409eb691bc551ab1f2b790da676d",
-        "value": "3",
-        "domain": ".bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1809011940,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "sb_count_d37cd119c5f308c460407f05318cdca6",
-        "value": "2",
-        "domain": ".bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1809011940,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "sb_count_d37cd119c5f308c460407f05318cdca6",
-        "value": "3",
-        "domain": "bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1777484285,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-    {
-        "name": "sb_main_d37cd119c5f308c460407f05318cdca6",
-        "value": "1",
-        "domain": ".bot.goldenqueen.store",
-        "path": "/",
-        "expires": 1809008640,
-        "httpOnly": False,
-        "secure": False,
-        "sameSite": "lax",
-    },
-]
+TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_SITE_BASE_URL}/api/login").strip() or f"{TARGET_SITE_BASE_URL}/api/login"
+TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_SITE_BASE_URL}/api/settings/load").strip() or f"{TARGET_SITE_BASE_URL}/api/settings/load"
+TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_SITE_BASE_URL}/api/settings/save").strip() or f"{TARGET_SITE_BASE_URL}/api/settings/save"
+LEGACY_PAIR_API_URLS: set[str] = set()
+DEFAULT_PAIRING_COOKIES: list[dict[str, Any]] = []
 DEFAULT_PAIRING_LANGUAGE = "ar"
 PAIRING_LANGUAGE_TEXTS = {
     "si": {
@@ -3318,27 +3229,16 @@ def delete_pairing_session_sync(number: str) -> dict[str, Any]:
     if not normalized_number:
         return {"success": False, "error": "invalid phone"}
 
-    candidate_bases: list[str] = []
-    for base in (INTERNAL_PAIRING_BASE_URL, get_url_base(resolve_pair_code_api_url(), INTERNAL_PAIRING_BASE_URL)):
-        cleaned_base = str(base or "").strip().rstrip("/")
-        if cleaned_base and cleaned_base not in candidate_bases:
-            candidate_bases.append(cleaned_base)
+    local_base = str(INTERNAL_PAIRING_BASE_URL or "").strip().rstrip("/")
+    if not local_base:
+        return {"success": False, "error": "local pairing runtime unavailable"}
 
-    last_error: Optional[Exception] = None
-    for base in candidate_bases:
-        try:
-            response = requests.delete(f"{base}/api/session/{normalized_number}", timeout=25)
-            if response.status_code in {200, 202, 204, 404}:
-                if "application/json" in response.headers.get("content-type", ""):
-                    return response.json()
-                return {"success": response.status_code != 404, "status_code": response.status_code}
-        except Exception as exc:
-            last_error = exc
-            continue
-
-    if last_error is not None:
-        raise last_error
-    return {"success": False}
+    response = requests.delete(f"{local_base}/api/session/{normalized_number}", timeout=25)
+    if response.status_code in {200, 202, 204, 404}:
+        if "application/json" in response.headers.get("content-type", ""):
+            return response.json()
+        return {"success": response.status_code != 404, "status_code": response.status_code}
+    return {"success": False, "status_code": response.status_code, "response": response.text[:500]}
 
 
 async def delete_pairing_session(number: str) -> dict[str, Any]:
@@ -6409,12 +6309,18 @@ async function createSocket(phone, options = {}) {
         const statusCode = getDisconnectStatusCode(update.lastDisconnect);
         const permanent = isPermanentDisconnect(update.lastDisconnect);
         const restartRequired = statusCode === Number(DisconnectReason.restartRequired);
+        const disconnectTimestamp = new Date().toISOString();
         await updateSessionIndex(normalized, {
           connected: false,
           registered: state?.creds?.registered === true,
           pendingPairing: state?.creds?.registered !== true,
-          lastDisconnectAt: new Date().toISOString(),
+          lastDisconnectAt: disconnectTimestamp,
           lastDisconnectReason: String(update.lastDisconnect?.error?.message || statusCode || ''),
+        });
+        await persistState({
+          registered: state?.creds?.registered === true,
+          connected: false,
+          lastDisconnectAt: disconnectTimestamp,
         });
         if (permanent) {
           await purgeSession(normalized, { removeRemote: true });
@@ -7328,12 +7234,18 @@ async function createSocket(phone, options = {}) {
         const statusCode = getDisconnectStatusCode(update.lastDisconnect);
         const permanent = isPermanentDisconnect(update.lastDisconnect);
         const restartRequired = statusCode === Number(DisconnectReason.restartRequired);
+        const disconnectTimestamp = new Date().toISOString();
         await updateSessionIndex(normalized, {
           connected: false,
           registered: state?.creds?.registered === true,
           pendingPairing: state?.creds?.registered !== true,
-          lastDisconnectAt: new Date().toISOString(),
+          lastDisconnectAt: disconnectTimestamp,
           lastDisconnectReason: String(update.lastDisconnect?.error?.message || statusCode || ''),
+        });
+        await persistState({
+          registered: state?.creds?.registered === true,
+          connected: false,
+          lastDisconnectAt: disconnectTimestamp,
         });
         if (permanent) {
           await purgeSession(normalized, { removeRemote: true });
@@ -7648,13 +7560,6 @@ def start_embedded_companion_process() -> bool:
     base_env.setdefault("MONGODB_SESSIONS_COLLECTION", MONGODB_SESSIONS_COLLECTION)
 
     launch_targets = [
-        {
-            "label": "main-project-runtime",
-            "command": ["node", "index.js"],
-            "cwd": BASE_DIR,
-            "prepare": ensure_project_runtime_dependencies,
-            "drop_telegram_token": True,
-        },
         {
             "label": "embedded-runtime",
             "command": ["node", "server.js"],
