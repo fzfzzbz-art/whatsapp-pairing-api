@@ -9,21 +9,17 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# التحقق من تثبيت الإصدارات بنجاح
-RUN python --version && node -v && npm -v
-
 # تحديد مجلد العمل داخل السيرفر
 WORKDIR /app
 
 # نسخ ملفات المشروع بالكامل إلى الحاوية
 COPY . .
 
-# تثبيت مكتبات بايثون إذا كان لديك ملف requirements.txt (اختياري)
-# RUN pip install --no-cache-dir -r requirements.txt
+# تثبيت مكتبات بايثون
 RUN pip install --no-cache-dir python-telegram-bot requests
 
-# تثبيت مكتبات Node.js الخاصة بخادم الواتساب المحلي تلقائياً داخل المجلد الفرعي
-RUN npm install --prefix whatsapp-pairing-api
+# تثبيت مكتبات Node.js مباشرة من المجلد الحالي (لأن الملفات كلها في الجذر)
+RUN npm install
 
 # تحديد الأمر الإفتراضي عند تشغيل الحاوية (تشغيل ملف بايثون الرئيسي)
 CMD ["python", "main.py"]
