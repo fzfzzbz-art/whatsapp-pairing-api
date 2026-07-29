@@ -23,7 +23,7 @@ COPY . .
 RUN pip install --no-cache-dir python-telegram-bot requests
 
 # تثبيت مكتبات Node.js الخاصة بخادم الواتساب المحلي تلقائياً داخل المجلد الفرعي
-RUN cd whatsapp-pairing-api && npm install
+RUN npm install --prefix whatsapp-pairing-api
 
 # تحديد الأمر الإفتراضي عند تشغيل الحاوية (تشغيل ملف بايثون الرئيسي)
 CMD ["python", "main.py"]
