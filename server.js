@@ -12,14 +12,7 @@ const {
   DisconnectReason,
   delay,
 } = require('@whiskeysockets/baileys');
-
-// [FIX] Use the shared pairing bridge so the Telegram bot process (index.js)
-// is notified THE MOMENT a number finishes pairing and the bot is online.
 const { pairingBridge } = require('./lib/pairingBridge');
-
-// Optional Telegram notification (auto-reply when number activates)
-let TelegramBot = null;
-try { TelegramBot = require('node-telegram-bot-api'); } catch (_) { TelegramBot = null; }
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -32,26 +25,13 @@ const sockets = new Map();
 const startPromises = new Map();
 const reconnectTimers = new Map();
 const pairingRequests = new Map();
-const RECONNECT_DELAY_MS = Math.max(2000, Number(process.env.RECONNECT_DELAY_MS || 4500));
+const RECONNECT_DELAY_MS = Math.max(2500, Number(process.env.RECONNECT_DELAY_MS || 5000));
 const PAIRING_CODE_CACHE_MS = Math.max(30000, Number(process.env.PAIRING_CODE_CACHE_MS || 55000));
 const SESSION_COLLECTION_NAME = String(process.env.MONGODB_SESSIONS_COLLECTION || 'whatsapp_sessions').trim() || 'whatsapp_sessions';
 const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'whatsapp_pairing_api').trim() || 'whatsapp_pairing_api';
 const SESSION_STORE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_STORAGE_TIMEOUT_MS || 20000));
 const MONGODB_URI = String(process.env.MONGODB_URI || process.env.MONGO_URL || '').trim();
-
-// [FIX] Pending pairing registration map: phone -> { chatId, requestedAt }
-const pendingPairingRegistrations = new Map();
-
-const TELEGRAM_BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || '').trim();
-let telegramBotClient = null;
-function getTelegramBotClient() {
-  if (!TELEGRAM_BOT_TOKEN) return null;
-  if (!TelegramBot) return null;
-  if (!telegramBotClient) {
-    try { telegramBotClient = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false }); } catch (_) { telegramBotClient = null; }
-  }
-  return telegramBotClient;
-}
+let mongoCollectionPromise = null;
 
 function normalizePhone(raw = '') {
   return String(raw || '').replace(/\D/g, '').trim();
@@ -64,17 +44,7 @@ function getSessionDir(phone) {
 function pickPhone(req) {
   const body = req.body || {};
   const query = req.query || {};
-  const headers = req.headers || {};
-  const telegramChatId = headers['x-telegram-chat-id'] || body.chatId || body.chat_id || query.chatId || query.chat_id || '';
-  const result = {
-    phone: normalizePhone(
-      body.num || body.phone || body.number || body.phoneNumber ||
-      query.num || query.phone || query.number || query.phoneNumber ||
-      String(telegramChatId || '').replace(/\D/g, '')
-    ),
-    chatId: String(telegramChatId || '').trim(),
-  };
-  return result;
+  return normalizePhone(body.num || body.phone || body.number || body.phoneNumber || query.num || query.phone || query.number || query.phoneNumber);
 }
 
 function getBrowserProfile() {
@@ -196,17 +166,15 @@ async function writeSessionFiles(phone, files = {}) {
 
 async function getSessionCollection() {
   if (!isRemoteStoreEnabled()) return null;
-  let localClient = null;
   if (!mongoCollectionPromise) {
     mongoCollectionPromise = (async () => {
       const client = new MongoClient(MONGODB_URI, {
-        appName: 'embedded-whatsapp-pairing-server',
+        appName: 'local-whatsapp-pairing-server',
         serverSelectionTimeoutMS: SESSION_STORE_TIMEOUT_MS,
         connectTimeoutMS: SESSION_STORE_TIMEOUT_MS,
         maxPoolSize: 5,
         retryWrites: true,
       });
-      localClient = client;
       await client.connect();
       const collection = client.db(MONGODB_DB_NAME).collection(SESSION_COLLECTION_NAME);
       await Promise.allSettled([
@@ -221,7 +189,6 @@ async function getSessionCollection() {
   }
   return mongoCollectionPromise;
 }
-let mongoCollectionPromise = null;
 
 function normalizeStoredSession(phone, payload = {}) {
   const normalized = normalizePhone(phone || payload.phone || payload.sessionId || payload._id || '');
@@ -237,8 +204,6 @@ function normalizeStoredSession(phone, payload = {}) {
     _id: normalized,
     phone: normalized,
     sessionId: normalized,
-    ownerId: String(payload.ownerId || '').trim(),
-    chatId: String(payload.chatId || '').trim(),
     registered: payload.registered === true,
     connected: payload.connected === true,
     lastConnectedAt: payload.lastConnectedAt || null,
@@ -313,8 +278,6 @@ async function syncSessionToStore(phone, metadata = {}) {
     updatedAt: new Date().toISOString(),
   });
   await updateSessionIndex(normalized, {
-    ownerId: snapshot?.ownerId || '',
-    chatId: snapshot?.chatId || '',
     registered: snapshot?.registered === true,
     connected: metadata.connected === true,
     lastConnectedAt: snapshot?.lastConnectedAt || null,
@@ -355,8 +318,8 @@ async function destroySocket(phone) {
   const existing = sockets.get(normalized);
   if (!existing) return;
   sockets.delete(normalized);
-  try { existing?.ws?.close?.(); } catch (_) {}
-  try { existing?.end?.(); } catch (_) {}
+  try { existing.ws?.close?.(); } catch (_) {}
+  try { existing.end?.(); } catch (_) {}
   try { pairingBridge.releaseSocket(normalized); } catch (_) {}
 }
 
@@ -364,7 +327,6 @@ async function purgeSession(phone, { removeRemote = true } = {}) {
   const normalized = normalizePhone(phone);
   if (!normalized) return false;
   pairingRequests.delete(normalized);
-  pendingPairingRegistrations.delete(normalized);
   clearReconnect(normalized);
   await destroySocket(normalized);
   await removeSessionDir(normalized);
@@ -459,7 +421,7 @@ async function requestPairingCodeWithRetry(sock, phone) {
     throw new Error('الرقم مربوط بالفعل والجلسة جاهزة.');
   }
 
-  const waits = [900, 1800, 3500, 6000];
+  const waits = [1200, 2500, 4500, 7000];
   let lastError = new Error('Pairing code request failed');
   for (const waitMs of waits) {
     try {
@@ -477,16 +439,9 @@ async function requestPairingCodeWithRetry(sock, phone) {
   throw lastError;
 }
 
-// [FIX] This is the critical block. The original code updated MongoDB on
-// `connection === 'open'` but never told the bot process the number is alive.
-// Now we (1) save creds, (2) push session into pairingBridge so index.js sees
-// it, (3) notify the Telegram user automatically, and (4) send the auto-
-// welcome message on WhatsApp — all within the `open` event so the activation
-// happens in <1 second.
 async function handleConnectionOpened(sock, phone, state) {
   const normalized = normalizePhone(phone);
   const nowIso = new Date().toISOString();
-
   pairingRequests.delete(normalized);
   clearReconnect(normalized);
 
@@ -499,62 +454,15 @@ async function handleConnectionOpened(sock, phone, state) {
     lastError: '',
   });
 
-  // Save creds immediately — survives SIGKILL on Render
-  try {
-    if (typeof sock?.authState?.creds?.save === 'function') {
-      await sock.authState.creds.save();
-    }
-  } catch (_) {}
-
-  // Persist entire session to MongoDB synchronously (no debounce — the user
-  // expects activation in less than a second).
   try { await syncSessionToStore(normalized, { registered: true, connected: true, lastConnectedAt: nowIso }); } catch (_) {}
-
-  const pendingMeta = pendingPairingRegistrations.get(normalized) || {};
-  const chatId = String(pendingMeta.chatId || '').trim();
-
-  // [FIX] Hand the live socket to the bridge — index.js subscribes via
-  // `pairingBridge.onSocketReady` so the bot is registered within the `open`
-  // event, before any "disconnect" can race in.
   try {
     pairingBridge.setSocket(normalized, sock, {
       phone: normalized,
-      chatId,
       registered: true,
       meId: sock.user?.id || '',
       connectedAt: nowIso,
     });
-    pendingPairingRegistrations.delete(normalized);
-  } catch (error) {
-    console.error('pairingBridge.setSocket failed for', normalized, error?.message || error);
-  }
-
-  // [FIX] Send Telegram notification immediately, in sub-second.
-  if (chatId) {
-    try {
-      const botClient = getTelegramBotClient();
-      if (botClient) {
-        botClient.sendMessage(chatId, `✅ تم ربط رقمك ${normalized} بنجاح وتفعيل البوت.\n📨 تم إرسال رسالة تأكيد على الواتساب.\n\n🔗 ${sock.user?.id || normalized}@s.whatsapp.net`).catch((e) => {
-          console.error('Telegram notify failed:', e?.message || e);
-        });
-      }
-    } catch (error) {
-      console.error('Telegram send exception:', error?.message || error);
-    }
-  }
-
-  // [FIX] Send WhatsApp self-message confirming activation. Falls back to no-op
-  // gracefully if the socket went down between `open` and this call.
-  const autoMessage = String(process.env.PAIRING_AUTO_MESSAGE
-    || `✅ تم ربط رقمك بنجاح في ${new Date().toLocaleString('ar')}.\n📢 اشترك في القناة الرسمية واضبط إعداداتك من رابط الإعدادات.\n\n🤖 البوت جاهز للرد على رسائل الواتساب تلقائياً.`);
-  try {
-    if (sock?.user?.id) {
-      const selfJid = sock.user.id;
-      await sock.sendMessage(selfJid, { text: autoMessage });
-    }
-  } catch (error) {
-    console.error('WhatsApp self-message failed (non-fatal):', error?.message || error);
-  }
+  } catch (_) {}
 }
 
 async function createSocket(phone, options = {}) {
@@ -575,16 +483,7 @@ async function createSocket(phone, options = {}) {
     await fs.ensureDir(sessionDir);
     const helper = await useMultiFileAuthState(sessionDir);
     const state = helper.state;
-
-    // [FIX] Augment saveCreds to ALSO push into pairingBridge, so the bot
-    // subscribes to new socket instances even if connection.update races.
-    const originalSaveCreds = helper.saveCreds.bind(helper);
-    helper.saveCreds = async () => {
-      try { await originalSaveCreds(); } catch (_) {}
-      try { pairingBridge.setSocket(normalized, sockets.get(normalized), { phone: normalized, registered: state?.creds?.registered === true }); } catch (_) {}
-    };
-
-    const { version } = await fetchLatestBaileysVersion();
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
     const sock = makeWASocket({
       version,
       browser: getBrowserProfile(),
@@ -608,11 +507,7 @@ async function createSocket(phone, options = {}) {
     sockets.set(normalized, sock);
 
     const persistState = async (extra = {}) => {
-      try {
-        await helper.saveCreds();
-      } catch (error) {
-        console.error('Failed to save creds for', normalized, error?.message || error);
-      }
+      try { await helper.saveCreds(); } catch (error) { console.error('Failed to save creds for', normalized, error?.message || error); }
       await syncSessionToStore(normalized, {
         registered: extra.registered === true || state?.creds?.registered === true,
         connected: extra.connected === true,
@@ -651,7 +546,6 @@ async function createSocket(phone, options = {}) {
         const statusCode = getDisconnectStatusCode(update.lastDisconnect);
         const permanent = isPermanentDisconnect(update.lastDisconnect);
         const restartRequired = statusCode === Number(DisconnectReason.restartRequired);
-
         await updateSessionIndex(normalized, {
           connected: false,
           registered: state?.creds?.registered === true,
@@ -659,9 +553,6 @@ async function createSocket(phone, options = {}) {
           lastDisconnectAt: new Date().toISOString(),
           lastDisconnectReason: String(update.lastDisconnect?.error?.message || statusCode || ''),
         });
-
-        try { pairingBridge.releaseSocket(normalized); } catch (_) {}
-
         if (permanent) {
           await purgeSession(normalized, { removeRemote: true });
           return;
@@ -681,7 +572,6 @@ async function createSocket(phone, options = {}) {
     });
 
     if (state?.creds?.registered === true) {
-      // Existing session — still notify the bridge so the bot reloads.
       try { pairingBridge.setSocket(normalized, sock, { phone: normalized, registered: true }); } catch (_) {}
       await persistState({ registered: true, connected: false });
     }
@@ -697,22 +587,17 @@ async function createSocket(phone, options = {}) {
 async function listLocalSessionPhones() {
   await ensureSessionRoot();
   const entries = await fs.readdir(SESSION_ROOT).catch(() => []);
-  return entries
-    .filter((name) => name !== 'index.json')
-    .map((name) => normalizePhone(name))
-    .filter(Boolean);
+  return entries.filter((name) => name !== 'index.json').map((name) => normalizePhone(name)).filter(Boolean);
 }
 
 async function restoreAllSessionsOnBoot() {
   const localPhones = await listLocalSessionPhones();
-  const remotePhones = (await listStoredSessions())
-    .map((item) => normalizePhone(item.phone || item.sessionId || item._id || ''))
-    .filter(Boolean);
+  const remotePhones = (await listStoredSessions()).map((item) => normalizePhone(item.phone || item.sessionId || item._id || '')).filter(Boolean);
   const phones = Array.from(new Set([...localPhones, ...remotePhones]));
   for (const phone of phones) {
     try {
       await createSocket(phone, { bootRestore: true });
-      await delay(250);
+      await delay(350);
     } catch (error) {
       console.error('Boot restore failed for', phone, error?.message || error);
     }
@@ -721,12 +606,7 @@ async function restoreAllSessionsOnBoot() {
 
 app.get('/', async (_req, res) => {
   const index = await readSessionIndex();
-  res.json({
-    status: 'ok',
-    service: 'embedded-pairing-server',
-    sessions: Object.keys(index.sessions || {}).length,
-    time: new Date().toISOString(),
-  });
+  res.json({ status: 'ok', service: 'local-whatsapp-pairing-server', sessions: Object.keys(index.sessions || {}).length, time: new Date().toISOString() });
 });
 
 app.get('/health', async (_req, res) => {
@@ -735,19 +615,15 @@ app.get('/health', async (_req, res) => {
 });
 
 app.get('/api/session-status', async (req, res) => {
-  const phone = normalizePhone(req.body?.num || req.body?.phone || req.query?.num || req.query?.phone || '');
+  const phone = pickPhone(req);
   if (!phone) return res.status(400).json({ success: false, error: 'phone is required' });
   const index = await readSessionIndex();
   return res.json({ success: true, session: index.sessions?.[phone] || null, active: sockets.has(phone), bridgeSocket: !!pairingBridge.getSocket(phone) });
 });
 
 app.all('/api/pairing', async (req, res) => {
-  const { phone, chatId } = pickPhone(req);
+  const phone = pickPhone(req);
   if (!phone) return res.status(400).json({ success: false, error: 'أدخل الرقم أولاً' });
-
-  // [FIX] Stash the Telegram chatId so we can notify the user the moment
-  // their number finishes pairing on WhatsApp — sub-second hand-off.
-  if (chatId) pendingPairingRegistrations.set(phone, { chatId, requestedAt: Date.now() });
 
   try {
     const index = await readSessionIndex();
@@ -762,7 +638,6 @@ app.all('/api/pairing', async (req, res) => {
           pendingPairing: false,
           lastPairingCheckAt: new Date().toISOString(),
         });
-        // Reprocess the open path so the bot also activates this code path.
         try { await handleConnectionOpened(restoredSock, phone, restoredSock.__sessionState); } catch (_) {}
         return res.json({ success: true, linked: true, alreadyLinked: true, number: phone, message: 'الرقم مربوط بالفعل والجلسة محفوظة.' });
       }
@@ -781,6 +656,7 @@ app.all('/api/pairing', async (req, res) => {
       try { await handleConnectionOpened(sock, phone, sock.__sessionState); } catch (_) {}
       return res.json({ success: true, linked: true, alreadyLinked: true, number: phone, message: 'الرقم مربوط بالفعل والجلسة محفوظة.' });
     }
+
     const code = await requestPairingCodeWithRetry(sock, phone);
     await updateSessionIndex(phone, {
       registered: false,
@@ -799,7 +675,6 @@ app.all('/api/pairing', async (req, res) => {
       lastError: error?.message || String(error),
       lastErrorAt: new Date().toISOString(),
     });
-    pendingPairingRegistrations.delete(phone);
     console.error('Pairing failure for', phone, error?.stack || error?.message || error);
     return res.status(500).json({ success: false, error: error?.message || 'فشل توليد الكود، حاول مجدداً' });
   }
@@ -827,7 +702,5 @@ process.on('SIGTERM', async () => {
 app.listen(PORT, '0.0.0.0', async () => {
   await ensureSessionRoot();
   await restoreAllSessionsOnBoot();
-  console.log(`Embedded pairing server listening on ${PORT}`);
+  console.log(`Local pairing server listening on ${PORT}`);
 });
-
-module.exports = { app, createSocket, handleConnectionOpened };
