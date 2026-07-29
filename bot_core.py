@@ -429,15 +429,25 @@ INTERNAL_PAIRING_BASE_URL = (
     os.getenv("INTERNAL_PAIRING_BASE_URL")
     or f"http://127.0.0.1:{COMPANION_PORT}"
 ).strip().rstrip("/")
-TARGET_SITE_BASE_URL = (
-    os.getenv("TARGET_SITE_BASE_URL")
+DEFAULT_LOCAL_SETTINGS_BASE_URL = (
+    PUBLIC_BASE_URL
+    or INTERNAL_PAIRING_BASE_URL
     or DEFAULT_REMOTE_PAIRING_BASE_URL
 ).strip().rstrip("/") or DEFAULT_REMOTE_PAIRING_BASE_URL
-TARGET_PAIRING_API_URL = (os.getenv("TARGET_PAIRING_API_URL") or f"{TARGET_SITE_BASE_URL}/api/pairing").strip() or f"{TARGET_SITE_BASE_URL}/api/pairing"
+TARGET_SITE_BASE_URL = (
+    os.getenv("TARGET_SITE_BASE_URL")
+    or DEFAULT_LOCAL_SETTINGS_BASE_URL
+).strip().rstrip("/") or DEFAULT_LOCAL_SETTINGS_BASE_URL
+TARGET_PAIRING_API_BASE_URL = (
+    os.getenv("TARGET_PAIRING_API_BASE_URL")
+    or INTERNAL_PAIRING_BASE_URL
+    or TARGET_SITE_BASE_URL
+).strip().rstrip("/") or TARGET_SITE_BASE_URL
+TARGET_PAIRING_API_URL = (os.getenv("TARGET_PAIRING_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
 TARGET_SETTINGS_PAGE_URL = (os.getenv("TARGET_SETTINGS_PAGE_URL") or f"{TARGET_SITE_BASE_URL}/settings").strip() or f"{TARGET_SITE_BASE_URL}/settings"
-TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_SITE_BASE_URL}/api/login").strip() or f"{TARGET_SITE_BASE_URL}/api/login"
-TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_SITE_BASE_URL}/api/settings/load").strip() or f"{TARGET_SITE_BASE_URL}/api/settings/load"
-TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_SITE_BASE_URL}/api/settings/save").strip() or f"{TARGET_SITE_BASE_URL}/api/settings/save"
+TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/login").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/login"
+TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load"
+TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save"
 LEGACY_PAIR_API_URLS = {
     "https://whatsapp-pairing-api-e9eh.onrender.com/api/pairing",
     "https://bot.goldenqueen.store/api/pairing",
@@ -2743,10 +2753,23 @@ def build_site_settings_urls(settings_url: str) -> tuple[str, str, str]:
     cleaned_settings_url = str(settings_url or TARGET_SETTINGS_PAGE_URL).strip() or TARGET_SETTINGS_PAGE_URL
     parsed = urlparse(cleaned_settings_url)
     base_url = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else TARGET_SITE_BASE_URL
+    normalized_base = str(base_url or TARGET_SITE_BASE_URL).strip().rstrip("/") or TARGET_SITE_BASE_URL
+    public_base = str(PUBLIC_BASE_URL or "").strip().rstrip("/")
+    local_api_base = str(TARGET_PAIRING_API_BASE_URL or INTERNAL_PAIRING_BASE_URL or normalized_base).strip().rstrip("/") or normalized_base
+
+    if normalized_base in {
+        str(DEFAULT_REMOTE_PAIRING_BASE_URL).strip().rstrip("/"),
+        str(TARGET_SITE_BASE_URL).strip().rstrip("/"),
+        public_base,
+    }:
+        api_base = local_api_base
+    else:
+        api_base = normalized_base
+
     return (
-        f"{base_url}/api/login",
-        f"{base_url}/api/settings/load",
-        f"{base_url}/api/settings/save",
+        f"{api_base}/api/login",
+        f"{api_base}/api/settings/load",
+        f"{api_base}/api/settings/save",
     )
 
 
@@ -3069,7 +3092,14 @@ async def open_linked_number_settings_panel(message, context: ContextTypes.DEFAU
             "site_app_id": str(linked_payload.get("site_app_id") or "").strip(),
             "settings_url": normalize_settings_url(linked_payload.get("settings_url")),
         }
-        await show_drf_panel(message, context, user_id, page=0, force_reload=True)
+        try:
+            await show_drf_panel(message, context, user_id, page=0, force_reload=True)
+        except Exception as exc:
+            logger.exception("Failed to open settings panel for %s", linked_number)
+            await message.reply_text(
+                f"❌ تعذر فتح إعدادات الرقم الآن.\nتفاصيل الخطأ: {exc}",
+                reply_markup=build_main_keyboard(admin=(int(user_id) == int(ADMIN_ID))),
+            )
         return
 
     if linked_number and not linked_password:
@@ -3090,7 +3120,14 @@ async def open_linked_number_settings_panel(message, context: ContextTypes.DEFAU
                 "site_app_id": str(refreshed_record.get("site_app_id") or linked_payload.get("site_app_id") or "").strip(),
                 "settings_url": normalize_settings_url(refreshed_record.get("settings_url") or linked_payload.get("settings_url")),
             }
-            await show_drf_panel(message, context, user_id, page=0, force_reload=True)
+            try:
+                await show_drf_panel(message, context, user_id, page=0, force_reload=True)
+            except Exception as exc:
+                logger.exception("Failed to reopen settings panel after password refresh for %s", linked_number)
+                await message.reply_text(
+                    f"❌ تم العثور على كلمة المرور لكن تعذر تحميل الإعدادات.\nتفاصيل الخطأ: {exc}",
+                    reply_markup=build_main_keyboard(admin=(int(user_id) == int(ADMIN_ID))),
+                )
             return
 
     manual_lines = [
@@ -7401,6 +7438,34 @@ def stop_embedded_companion_process() -> None:
         EMBEDDED_COMPANION_LOG_HANDLE = None
 
 
+def ensure_project_runtime_dependencies() -> None:
+    if shutil.which("node") is None:
+        raise RuntimeError("Node.js غير متوفر على الاستضافة، لذلك محرك واتساب المحلي لن يعمل.")
+
+    project_index_file = BASE_DIR / "index.js"
+    if not project_index_file.exists():
+        raise RuntimeError("تعذر العثور على index.js داخل المشروع الرئيسي.")
+
+    required_paths = [
+        BASE_DIR / "node_modules" / "express",
+        BASE_DIR / "node_modules" / "fs-extra",
+        BASE_DIR / "node_modules" / "pino",
+        BASE_DIR / "node_modules" / "mongodb",
+        BASE_DIR / "node_modules" / "@whiskeysockets" / "baileys",
+    ]
+    if all(path.exists() for path in required_paths):
+        return
+
+    if shutil.which("npm") is None:
+        raise RuntimeError("npm غير متوفر على الاستضافة، لذلك لا يمكن تثبيت مكتبات محرك واتساب.")
+
+    logger.info("Installing main project npm dependencies...")
+    subprocess.check_call(
+        ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"],
+        cwd=str(BASE_DIR),
+    )
+
+
 def ensure_embedded_companion_dependencies() -> None:
     if shutil.which("node") is None:
         raise RuntimeError("Node.js غير متوفر على الاستضافة، لذلك خادم الاقتران الداخلي لن يعمل.")
@@ -7408,6 +7473,16 @@ def ensure_embedded_companion_dependencies() -> None:
         raise RuntimeError("npm غير متوفر على الاستضافة، لذلك لا يمكن تثبيت مكتبات خادم الاقتران.")
 
     ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
+
+    embedded_node_modules = EMBEDDED_COMPANION_DIR / "node_modules"
+    root_node_modules = BASE_DIR / "node_modules"
+    if not embedded_node_modules.exists() and root_node_modules.exists():
+        try:
+            os.symlink(root_node_modules, embedded_node_modules, target_is_directory=True)
+        except FileExistsError:
+            pass
+        except Exception:
+            logger.exception("Failed to link root node_modules into embedded runtime")
 
     required_paths = [
         EMBEDDED_COMPANION_DIR / "node_modules" / "express",
@@ -7434,41 +7509,67 @@ def start_embedded_companion_process() -> bool:
 
     ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
 
-    try:
-        ensure_embedded_companion_dependencies()
-    except Exception as exc:
-        PAIRING_RUNTIME_DISABLED_REASON = str(exc)
-        logger.exception("Embedded companion prerequisites failed")
-        return False
+    base_env = os.environ.copy()
+    base_env["PAIRING_SERVER_PORT"] = str(COMPANION_PORT)
+    base_env["COMPANION_PORT"] = str(COMPANION_PORT)
+    base_env["APP_PORT"] = str(COMPANION_PORT)
+    base_env["PORT"] = str(COMPANION_PORT)
+    base_env.setdefault("LOG_LEVEL", base_env.get("LOG_LEVEL", "silent"))
+    base_env.setdefault("MONGODB_URI", MONGODB_URI)
+    base_env.setdefault("MONGO_URL", MONGODB_URI)
+    base_env.setdefault("MONGODB_DB_NAME", MONGODB_DB_NAME)
+    base_env.setdefault("MONGODB_SESSIONS_COLLECTION", MONGODB_SESSIONS_COLLECTION)
 
-    env = os.environ.copy()
-    env["PAIRING_SERVER_PORT"] = str(COMPANION_PORT)
-    env["COMPANION_PORT"] = str(COMPANION_PORT)
-    env.setdefault("LOG_LEVEL", env.get("LOG_LEVEL", "silent"))
-    env.setdefault("MONGODB_URI", MONGODB_URI)
-    env.setdefault("MONGO_URL", MONGODB_URI)
-    env.setdefault("MONGODB_DB_NAME", MONGODB_DB_NAME)
-    env.setdefault("MONGODB_SESSIONS_COLLECTION", MONGODB_SESSIONS_COLLECTION)
-    env.pop("PORT", None)
+    launch_targets = [
+        {
+            "label": "main-project-runtime",
+            "command": ["node", "index.js"],
+            "cwd": BASE_DIR,
+            "prepare": ensure_project_runtime_dependencies,
+            "drop_telegram_token": True,
+        },
+        {
+            "label": "embedded-runtime",
+            "command": ["node", "server.js"],
+            "cwd": EMBEDDED_COMPANION_DIR,
+            "prepare": ensure_embedded_companion_dependencies,
+            "drop_telegram_token": False,
+        },
+    ]
 
-    try:
-        EMBEDDED_COMPANION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        EMBEDDED_COMPANION_LOG_HANDLE = open(EMBEDDED_COMPANION_LOG_PATH, "ab")
-        EMBEDDED_COMPANION_PROCESS = subprocess.Popen(
-            ["node", "server.js"],
-            cwd=str(EMBEDDED_COMPANION_DIR),
-            env=env,
-            stdout=EMBEDDED_COMPANION_LOG_HANDLE,
-            stderr=subprocess.STDOUT,
-        )
-        wait_for_embedded_companion()
-        PAIRING_RUNTIME_DISABLED_REASON = ""
-        return True
-    except Exception as exc:
-        PAIRING_RUNTIME_DISABLED_REASON = str(exc)
-        logger.exception("Failed to start embedded companion process")
+    last_error: Optional[Exception] = None
+    for target in launch_targets:
         stop_embedded_companion_process()
-        return False
+        try:
+            target["prepare"]()
+            env = dict(base_env)
+            if target.get("drop_telegram_token"):
+                env["BOT_TOKEN"] = ""
+                env["TELEGRAM_BOT_TOKEN"] = ""
+                env["ENABLE_TELEGRAM_PAIR_BOT"] = "false"
+                env["DISABLE_TELEGRAM_BOT"] = "true"
+            EMBEDDED_COMPANION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            EMBEDDED_COMPANION_LOG_HANDLE = open(EMBEDDED_COMPANION_LOG_PATH, "ab")
+            EMBEDDED_COMPANION_PROCESS = subprocess.Popen(
+                target["command"],
+                cwd=str(target["cwd"]),
+                env=env,
+                stdout=EMBEDDED_COMPANION_LOG_HANDLE,
+                stderr=subprocess.STDOUT,
+            )
+            wait_for_embedded_companion()
+            PAIRING_RUNTIME_DISABLED_REASON = ""
+            logger.info("Started local WhatsApp runtime using %s", target["label"])
+            return True
+        except Exception as exc:
+            last_error = exc
+            PAIRING_RUNTIME_DISABLED_REASON = f"{target['label']}: {exc}"
+            logger.exception("Failed to start %s", target["label"])
+            stop_embedded_companion_process()
+
+    if last_error is not None:
+        PAIRING_RUNTIME_DISABLED_REASON = str(last_error)
+    return False
 
 
 atexit.register(stop_embedded_companion_process)
@@ -7488,7 +7589,7 @@ def main():
     embedded_companion_started = start_embedded_companion_process()
     if not embedded_companion_started:
         raise RuntimeError(
-            "تعذر تشغيل خادم الاقتران المحلي داخل نفس الملف. تأكد أن الاستضافة تدعم Node.js و npm مع Python.\n"
+            "تعذر تشغيل محرك واتساب المحلي داخل نفس المشروع. تأكد أن الاستضافة تدعم Node.js و npm مع Python وأن npm install تم بنجاح أثناء البناء.\n"
             f"سبب الخطأ: {PAIRING_RUNTIME_DISABLED_REASON or 'unknown error'}"
         )
 
