@@ -1,18 +1,169 @@
-const settings = {
-  packname: 'Knight Bot',
-  author: '‎',
-  botName: 'Knight Bot',
-  botOwner: 'Professor', // غيّر الاسم كما تريد
-  ownerNumber: '919876543210', // غيّر الرقم بدون + وبدون مسافات
-  giphyApiKey: 'qnl7ssQChTdPjsKta2Ax2LMaGXz303tq',
-  commandMode: 'public',
-  maxStoreMessages: 10,
-  storeWriteInterval: 10000,
-  description: 'بوت واتساب لإدارة المجموعات والتحميل من السوشل ميديا والذكاء الاصطناعي.',
-  version: '3.0.8',
-  repoUrl: 'https://t.me/Faresw_bot',
-  channelLink: 'https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v',
-  updateZipUrl: 'https://github.com/faresjahsh/Knightbot-MD/archive/refs/heads/main.zip',
-};
+const fs = require('fs');
+const path = require('path');
 
-module.exports = settings;
+function readJsonSafe(filePath, fallback) {
+    try {
+        const txt = fs.readFileSync(filePath, 'utf8');
+        return JSON.parse(txt);
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function normalizePhone(value = '') {
+    return String(value || '').replace(/\D/g, '');
+}
+
+function getSessionProfileDir(phone = '') {
+    const normalizedPhone = normalizePhone(phone);
+    return normalizedPhone ? path.join(process.cwd(), 'sessions', normalizedPhone, 'profile') : '';
+}
+
+function getCredentialsFile(phone = '') {
+    const profileDir = getSessionProfileDir(phone);
+    return profileDir ? path.join(profileDir, 'phone-settings-credentials.json') : '';
+}
+
+function collectPasswords(node, bucket = [], appId = '') {
+    if (!node) return bucket;
+    if (Array.isArray(node)) {
+        for (const item of node) collectPasswords(item, bucket, appId);
+        return bucket;
+    }
+    if (typeof node !== 'object') return bucket;
+
+    for (const [key, value] of Object.entries(node)) {
+        const normalizedKey = String(key || '').toLowerCase();
+        if (value && typeof value === 'object') {
+            if (typeof value.password === 'string' && value.password.trim()) {
+                bucket.push({
+                    appId: String(value.appId || key || appId || 'default').trim() || 'default',
+                    password: String(value.password).trim()
+                });
+            }
+            collectPasswords(value, bucket, key || appId);
+            continue;
+        }
+        if (['password', 'pass', 'pwd', 'site_password', 'settings_password'].includes(normalizedKey) && String(value || '').trim()) {
+            bucket.push({
+                appId: String(appId || 'default').trim() || 'default',
+                password: String(value).trim()
+            });
+        }
+    }
+    return bucket;
+}
+
+function getPhoneSettingsAccess(phone = '') {
+    const credentialsFile = getCredentialsFile(phone);
+    if (!credentialsFile || !fs.existsSync(credentialsFile)) {
+        return { password: '', appId: '', source: '' };
+    }
+
+    const parsed = readJsonSafe(credentialsFile, {});
+    const found = collectPasswords(parsed, []);
+    const unique = found.filter((entry, index, arr) => {
+        const signature = `${entry.appId}::${entry.password}`;
+        return arr.findIndex((item) => `${item.appId}::${item.password}` === signature) === index;
+    });
+    const preferred = unique[0] || { password: '', appId: '' };
+    return {
+        password: String(preferred.password || '').trim(),
+        appId: String(preferred.appId || '').trim() || 'default',
+        source: credentialsFile
+    };
+}
+
+const isOwnerOrSudo = require('../lib/isOwner');
+
+async function settingsCommand(sock, chatId, message) {
+    try {
+        const senderId = message.key.participant || message.key.remoteJid;
+        const isOwner = await isOwnerOrSudo(senderId, sock, chatId);
+
+        if (!message.key.fromMe && !isOwner) {
+            await sock.sendMessage(chatId, { text: 'Only bot owner can use this command!' }, { quoted: message });
+            return;
+        }
+
+        const isGroup = chatId.endsWith('@g.us');
+        const dataDir = './data';
+
+        const mode = readJsonSafe(`${dataDir}/messageCount.json`, { isPublic: true });
+        const autoStatus = readJsonSafe(`${dataDir}/autoStatus.json`, { enabled: false });
+        const autoread = readJsonSafe(`${dataDir}/autoread.json`, { enabled: false });
+        const autotyping = readJsonSafe(`${dataDir}/autotyping.json`, { enabled: false });
+        const pmblocker = readJsonSafe(`${dataDir}/pmblocker.json`, { enabled: false });
+        const anticall = readJsonSafe(`${dataDir}/anticall.json`, { enabled: false });
+        const userGroupData = readJsonSafe(`${dataDir}/userGroupData.json`, {
+            antilink: {}, antibadword: {}, welcome: {}, goodbye: {}, chatbot: {}, antitag: {}
+        });
+        const autoReaction = Boolean(userGroupData.autoReaction);
+
+        const currentPhone = normalizePhone(sock?.user?.id || sock?.authState?.creds?.me?.id || senderId || '');
+        const access = getPhoneSettingsAccess(currentPhone);
+
+        const groupId = isGroup ? chatId : null;
+        const antilinkOn = groupId ? Boolean(userGroupData.antilink && userGroupData.antilink[groupId]) : false;
+        const antibadwordOn = groupId ? Boolean(userGroupData.antibadword && userGroupData.antibadword[groupId]) : false;
+        const welcomeOn = groupId ? Boolean(userGroupData.welcome && userGroupData.welcome[groupId]) : false;
+        const goodbyeOn = groupId ? Boolean(userGroupData.goodbye && userGroupData.goodbye[groupId]) : false;
+        const chatbotOn = groupId ? Boolean(userGroupData.chatbot && userGroupData.chatbot[groupId]) : false;
+        const antitagCfg = groupId ? (userGroupData.antitag && userGroupData.antitag[groupId]) : null;
+
+        const lines = [];
+        lines.push('*BOT SETTINGS*');
+        lines.push('');
+        if (currentPhone) lines.push(`• Linked Number: ${currentPhone}`);
+        lines.push(`• Mode: ${mode.isPublic ? 'Public' : 'Private'}`);
+        lines.push(`• Auto Status: ${autoStatus.enabled ? 'ON' : 'OFF'}`);
+        lines.push(`• Autoread: ${autoread.enabled ? 'ON' : 'OFF'}`);
+        lines.push(`• Autotyping: ${autotyping.enabled ? 'ON' : 'OFF'}`);
+        lines.push(`• PM Blocker: ${pmblocker.enabled ? 'ON' : 'OFF'}`);
+        lines.push(`• Anticall: ${anticall.enabled ? 'ON' : 'OFF'}`);
+        lines.push(`• Auto Reaction: ${autoReaction ? 'ON' : 'OFF'}`);
+
+        if (access.password) {
+            lines.push('');
+            lines.push('*PHONE SETTINGS ACCESS*');
+            lines.push(`• App ID: ${access.appId || 'default'}`);
+            lines.push(`• Password: ${access.password}`);
+            lines.push(`• كلمة السر: ${access.password}`);
+        }
+
+        if (groupId) {
+            lines.push('');
+            lines.push(`Group: ${groupId}`);
+            if (antilinkOn) {
+                const al = userGroupData.antilink[groupId];
+                lines.push(`• Antilink: ON (action: ${al.action || 'delete'})`);
+            } else {
+                lines.push('• Antilink: OFF');
+            }
+            if (antibadwordOn) {
+                const ab = userGroupData.antibadword[groupId];
+                lines.push(`• Antibadword: ON (action: ${ab.action || 'delete'})`);
+            } else {
+                lines.push('• Antibadword: OFF');
+            }
+            lines.push(`• Welcome: ${welcomeOn ? 'ON' : 'OFF'}`);
+            lines.push(`• Goodbye: ${goodbyeOn ? 'ON' : 'OFF'}`);
+            lines.push(`• Chatbot: ${chatbotOn ? 'ON' : 'OFF'}`);
+            if (antitagCfg && antitagCfg.enabled) {
+                lines.push(`• Antitag: ON (action: ${antitagCfg.action || 'delete'})`);
+            } else {
+                lines.push('• Antitag: OFF');
+            }
+        } else {
+            lines.push('');
+            lines.push('Note: Per-group settings will be shown when used inside a group.');
+        }
+
+        await sock.sendMessage(chatId, { text: lines.join('\n') }, { quoted: message });
+    } catch (error) {
+        console.error('Error in settings command:', error);
+        await sock.sendMessage(chatId, { text: 'Failed to read settings.' }, { quoted: message });
+    }
+}
+
+module.exports = settingsCommand;
