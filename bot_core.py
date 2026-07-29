@@ -51,6 +51,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
+EMBEDDED_COMPANION_DIR = Path(os.getenv("EMBEDDED_COMPANION_DIR") or str(BASE_DIR / "_embedded_pairing_runtime")).resolve()
 ENV_PATH = BASE_DIR / ".env"
 SETTINGS_PATH = BASE_DIR / "bot_settings.json"
 USERS_PATH = BASE_DIR / "bot_users.json"
@@ -7324,7 +7325,7 @@ app.listen(PORT, '0.0.0.0', async () => {
 '''
 
 def ensure_embedded_companion_files(base_dir: Optional[Path] = None) -> dict[str, Path]:
-    target_dir = Path(base_dir) if base_dir else BASE_DIR
+    target_dir = Path(base_dir) if base_dir else EMBEDDED_COMPANION_DIR
     embedded_files = {
         "package.json": EMBEDDED_PACKAGE_JSON,
         "server.js": EMBEDDED_SERVER_JS,
@@ -7406,12 +7407,14 @@ def ensure_embedded_companion_dependencies() -> None:
     if shutil.which("npm") is None:
         raise RuntimeError("npm غير متوفر على الاستضافة، لذلك لا يمكن تثبيت مكتبات خادم الاقتران.")
 
+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
+
     required_paths = [
-        BASE_DIR / "node_modules" / "express",
-        BASE_DIR / "node_modules" / "fs-extra",
-        BASE_DIR / "node_modules" / "pino",
-        BASE_DIR / "node_modules" / "mongodb",
-        BASE_DIR / "node_modules" / "@whiskeysockets" / "baileys",
+        EMBEDDED_COMPANION_DIR / "node_modules" / "express",
+        EMBEDDED_COMPANION_DIR / "node_modules" / "fs-extra",
+        EMBEDDED_COMPANION_DIR / "node_modules" / "pino",
+        EMBEDDED_COMPANION_DIR / "node_modules" / "mongodb",
+        EMBEDDED_COMPANION_DIR / "node_modules" / "@whiskeysockets" / "baileys",
     ]
     if all(path.exists() for path in required_paths):
         return
@@ -7419,7 +7422,7 @@ def ensure_embedded_companion_dependencies() -> None:
     logger.info("Installing embedded companion npm dependencies...")
     subprocess.check_call(
         ["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
-        cwd=str(BASE_DIR),
+        cwd=str(EMBEDDED_COMPANION_DIR),
     )
 
 
@@ -7429,7 +7432,7 @@ def start_embedded_companion_process() -> bool:
     if EMBEDDED_COMPANION_PROCESS is not None and EMBEDDED_COMPANION_PROCESS.poll() is None:
         return True
 
-    ensure_embedded_companion_files()
+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
 
     try:
         ensure_embedded_companion_dependencies()
@@ -7453,7 +7456,7 @@ def start_embedded_companion_process() -> bool:
         EMBEDDED_COMPANION_LOG_HANDLE = open(EMBEDDED_COMPANION_LOG_PATH, "ab")
         EMBEDDED_COMPANION_PROCESS = subprocess.Popen(
             ["node", "server.js"],
-            cwd=str(BASE_DIR),
+            cwd=str(EMBEDDED_COMPANION_DIR),
             env=env,
             stdout=EMBEDDED_COMPANION_LOG_HANDLE,
             stderr=subprocess.STDOUT,
@@ -7481,7 +7484,7 @@ def main():
 
     SETTINGS["pair_code_api_url"] = resolve_pair_code_api_url().rstrip("/")
     save_settings()
-    ensure_embedded_companion_files()
+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
     embedded_companion_started = start_embedded_companion_process()
     if not embedded_companion_started:
         raise RuntimeError(
