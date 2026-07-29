@@ -116,8 +116,6 @@ BOT_LINK_CACHE = {"url": ""}
 PAIRING_RUNTIME_DISABLED_REASON = ""
 EMBEDDED_COMPANION_LOG_PATH = BASE_DIR / "embedded_companion.log"
 EMBEDDED_COMPANION_LOG_HANDLE = None
-EMBEDDED_COMPANION_LOCK = threading.RLock()
-PAIRING_RUNTIME_MONITOR_INTERVAL_SECONDS = max(15, int((os.getenv("PAIRING_RUNTIME_MONITOR_INTERVAL_SECONDS") or "25").strip() or "25"))
 DEFAULT_LINKED_MESSAGE_IMAGE_URL = "https://www.genspark.ai/api/files/s/18UAzOdi"
 SITE_SETTINGS_SYNC_INTERVAL_SECONDS = max(20, int((os.getenv("SITE_SETTINGS_SYNC_INTERVAL_SECONDS") or "45").strip() or "45"))
 
@@ -421,7 +419,7 @@ GREEN_API_ID_INSTANCE = os.getenv("GREEN_API_ID_INSTANCE", "").strip()
 GREEN_API_TOKEN_INSTANCE = os.getenv("GREEN_API_TOKEN_INSTANCE", "").strip()
 GREEN_API_PHONE_NUMBER = os.getenv("GREEN_API_PHONE_NUMBER", "").strip()
 
-DEFAULT_REMOTE_PAIRING_BASE_URL = ""
+DEFAULT_REMOTE_PAIRING_BASE_URL = "https://whatsapp-pairing-api-production-639f.up.railway.app/"
 COMPANION_PORT = int((os.getenv("COMPANION_PORT") or os.getenv("PAIRING_SERVER_PORT") or "3100").strip() or "3100")
 PUBLIC_BASE_URL = (
     os.getenv("PUBLIC_BASE_URL")
@@ -437,19 +435,108 @@ INTERNAL_PAIRING_BASE_URL = (
 DEFAULT_LOCAL_SETTINGS_BASE_URL = (
     PUBLIC_BASE_URL
     or INTERNAL_PAIRING_BASE_URL
-).strip().rstrip("/") or INTERNAL_PAIRING_BASE_URL
+    or DEFAULT_REMOTE_PAIRING_BASE_URL
+).strip().rstrip("/") or DEFAULT_REMOTE_PAIRING_BASE_URL
 TARGET_SITE_BASE_URL = (
     os.getenv("TARGET_SITE_BASE_URL")
     or DEFAULT_LOCAL_SETTINGS_BASE_URL
 ).strip().rstrip("/") or DEFAULT_LOCAL_SETTINGS_BASE_URL
-TARGET_PAIRING_API_BASE_URL = INTERNAL_PAIRING_BASE_URL
-TARGET_PAIRING_API_URL = f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
+TARGET_PAIRING_API_BASE_URL = (
+    os.getenv("TARGET_PAIRING_API_BASE_URL")
+    or INTERNAL_PAIRING_BASE_URL
+    or TARGET_SITE_BASE_URL
+).strip().rstrip("/") or TARGET_SITE_BASE_URL
+TARGET_PAIRING_API_URL = (os.getenv("TARGET_PAIRING_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/pairing"
 TARGET_SETTINGS_PAGE_URL = (os.getenv("TARGET_SETTINGS_PAGE_URL") or f"{TARGET_SITE_BASE_URL}/settings").strip() or f"{TARGET_SITE_BASE_URL}/settings"
-TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_SITE_BASE_URL}/api/login").strip() or f"{TARGET_SITE_BASE_URL}/api/login"
-TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_SITE_BASE_URL}/api/settings/load").strip() or f"{TARGET_SITE_BASE_URL}/api/settings/load"
-TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_SITE_BASE_URL}/api/settings/save").strip() or f"{TARGET_SITE_BASE_URL}/api/settings/save"
-LEGACY_PAIR_API_URLS: set[str] = set()
-DEFAULT_PAIRING_COOKIES: list[dict[str, Any]] = []
+TARGET_SITE_LOGIN_API_URL = (os.getenv("TARGET_SITE_LOGIN_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/login").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/login"
+TARGET_SITE_SETTINGS_LOAD_API_URL = (os.getenv("TARGET_SITE_SETTINGS_LOAD_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/load"
+TARGET_SITE_SETTINGS_SAVE_API_URL = (os.getenv("TARGET_SITE_SETTINGS_SAVE_API_URL") or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save").strip() or f"{TARGET_PAIRING_API_BASE_URL}/api/settings/save"
+LEGACY_PAIR_API_URLS = {
+    "https://whatsapp-pairing-api-e9eh.onrender.com/api/pairing",
+    "https://bot.goldenqueen.store/api/pairing",
+}
+DEFAULT_PAIRING_COOKIES = [
+    {
+        "name": "m5a4xojbcp2nx3gptmm633qal3gzmadn",
+        "value": "fizzyacerbitymellow.com",
+        "domain": "bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1777477096,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "pbpr0tpuw4isk85t8yg3jb2lj5vqf",
+        "value": "wayfarerorthodox.com",
+        "domain": "bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1777477096,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "pp_delay_c5cf409eb691bc551ab1f2b790da676d",
+        "value": "1",
+        "domain": ".bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1809004740,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "pp_main_c5cf409eb691bc551ab1f2b790da676d",
+        "value": "1",
+        "domain": ".bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1809008640,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "pp_sub_c5cf409eb691bc551ab1f2b790da676d",
+        "value": "3",
+        "domain": ".bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1809011940,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "sb_count_d37cd119c5f308c460407f05318cdca6",
+        "value": "2",
+        "domain": ".bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1809011940,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "sb_count_d37cd119c5f308c460407f05318cdca6",
+        "value": "3",
+        "domain": "bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1777484285,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+    {
+        "name": "sb_main_d37cd119c5f308c460407f05318cdca6",
+        "value": "1",
+        "domain": ".bot.goldenqueen.store",
+        "path": "/",
+        "expires": 1809008640,
+        "httpOnly": False,
+        "secure": False,
+        "sameSite": "lax",
+    },
+]
 DEFAULT_PAIRING_LANGUAGE = "ar"
 PAIRING_LANGUAGE_TEXTS = {
     "si": {
@@ -3231,21 +3318,27 @@ def delete_pairing_session_sync(number: str) -> dict[str, Any]:
     if not normalized_number:
         return {"success": False, "error": "invalid phone"}
 
-    local_base = str(INTERNAL_PAIRING_BASE_URL or "").strip().rstrip("/")
-    if not local_base:
-        return delete_pairing_session_storage_fallback(normalized_number)
+    candidate_bases: list[str] = []
+    for base in (INTERNAL_PAIRING_BASE_URL, get_url_base(resolve_pair_code_api_url(), INTERNAL_PAIRING_BASE_URL)):
+        cleaned_base = str(base or "").strip().rstrip("/")
+        if cleaned_base and cleaned_base not in candidate_bases:
+            candidate_bases.append(cleaned_base)
 
-    try:
-        ensure_pairing_runtime_available()
-        response = requests.delete(f"{local_base}/api/session/{normalized_number}", timeout=25)
-        if response.status_code in {200, 202, 204, 404}:
-            if "application/json" in response.headers.get("content-type", ""):
-                return response.json()
-            return {"success": response.status_code != 404, "status_code": response.status_code}
-        return {"success": False, "status_code": response.status_code, "response": response.text[:500]}
-    except requests.RequestException:
-        logger.exception("Embedded delete session request failed for %s, using storage fallback", normalized_number)
-        return delete_pairing_session_storage_fallback(normalized_number)
+    last_error: Optional[Exception] = None
+    for base in candidate_bases:
+        try:
+            response = requests.delete(f"{base}/api/session/{normalized_number}", timeout=25)
+            if response.status_code in {200, 202, 204, 404}:
+                if "application/json" in response.headers.get("content-type", ""):
+                    return response.json()
+                return {"success": response.status_code != 404, "status_code": response.status_code}
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+    return {"success": False}
 
 
 async def delete_pairing_session(number: str) -> dict[str, Any]:
@@ -4480,12 +4573,13 @@ def request_pair_code_sync(number: str) -> dict[str, str]:
             "خدمة الربط غير مكتملة الإعداد. تأكد من رابط API وطريقة الإرسال واسم الحقل المطلوب."
         )
 
-    using_internal_runtime = is_internal_pairing_api_url(api_url)
-    if using_internal_runtime:
-        ensure_pairing_runtime_available()
+    normalized_internal_url = TARGET_PAIRING_API_URL.rstrip("/")
+    if PAIRING_RUNTIME_DISABLED_REASON and api_url.rstrip("/") == normalized_internal_url:
+        raise RuntimeError(
+            f"خادم الاقتران الداخلي غير متاح حالياً على الاستضافة: {PAIRING_RUNTIME_DISABLED_REASON}"
+        )
 
     last_error: Optional[Exception] = None
-    runtime_restart_attempted = False
 
     for number_variant in build_number_variants(number):
         normalized_number = normalize_phone_number(number_variant)
@@ -4563,13 +4657,6 @@ def request_pair_code_sync(number: str) -> dict[str, str]:
                 )
             except Exception as exc:
                 last_error = exc
-                if using_internal_runtime and not runtime_restart_attempted and isinstance(exc, requests.RequestException):
-                    runtime_restart_attempted = True
-                    try:
-                        ensure_pairing_runtime_available(force_restart=True)
-                        continue
-                    except Exception as restart_exc:
-                        last_error = restart_exc
                 continue
             finally:
                 if session is not None:
@@ -4637,11 +4724,6 @@ def fetch_pairing_status_sync(number: str) -> dict[str, Any]:
     normalized_number = normalize_phone_number(number)
     if not normalized_number:
         return {}
-
-    try:
-        ensure_pairing_runtime_available()
-    except Exception:
-        logger.exception("Failed to prepare pairing runtime before session-status lookup for %s", normalized_number)
 
     candidate_urls: list[str] = []
     for candidate_base in (INTERNAL_PAIRING_BASE_URL, get_url_base(resolve_pair_code_api_url(), INTERNAL_PAIRING_BASE_URL)):
@@ -5753,7 +5835,6 @@ async def post_init(app):
     TELEGRAM_LOOP = asyncio.get_running_loop()
     track_background_task(asyncio.create_task(periodic_site_settings_sync_loop()))
     track_background_task(asyncio.create_task(reconcile_whatsapp_sessions_loop()))
-    track_background_task(asyncio.create_task(pairing_runtime_monitor_loop()))
     try:
         bot_info = await app.bot.get_me()
         username = str(getattr(bot_info, "username", "") or "").strip()
@@ -5828,14 +5909,6 @@ const SESSION_STORE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_STORA
 const MONGODB_URI = String(process.env.MONGODB_URI || process.env.MONGO_URL || '').trim();
 let mongoCollectionPromise = null;
 
-process.on('unhandledRejection', (error) => {
-  console.error('Embedded pairing runtime unhandled rejection:', error?.stack || error?.message || error);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('Embedded pairing runtime uncaught exception:', error?.stack || error?.message || error);
-});
-
 function normalizePhone(raw = '') {
   return String(raw || '').replace(/\D/g, '').trim();
 }
@@ -5847,12 +5920,7 @@ function getSessionDir(phone) {
 function pickPhone(req) {
   const body = req.body || {};
   const query = req.query || {};
-  const params = req.params || {};
-  return normalizePhone(
-    body.num || body.phone || body.number || body.phoneNumber || body.msisdn || body.jid ||
-    query.num || query.phone || query.number || query.phoneNumber || query.msisdn || query.jid ||
-    params.phone || params.number || params.msisdn
-  );
+  return normalizePhone(body.num || body.phone || body.number || body.phoneNumber || query.num || query.phone || query.number || query.phoneNumber);
 }
 
 function getBrowserProfile() {
@@ -6341,18 +6409,12 @@ async function createSocket(phone, options = {}) {
         const statusCode = getDisconnectStatusCode(update.lastDisconnect);
         const permanent = isPermanentDisconnect(update.lastDisconnect);
         const restartRequired = statusCode === Number(DisconnectReason.restartRequired);
-        const disconnectTimestamp = new Date().toISOString();
         await updateSessionIndex(normalized, {
           connected: false,
           registered: state?.creds?.registered === true,
           pendingPairing: state?.creds?.registered !== true,
-          lastDisconnectAt: disconnectTimestamp,
+          lastDisconnectAt: new Date().toISOString(),
           lastDisconnectReason: String(update.lastDisconnect?.error?.message || statusCode || ''),
-        });
-        await persistState({
-          registered: state?.creds?.registered === true,
-          connected: false,
-          lastDisconnectAt: disconnectTimestamp,
         });
         if (permanent) {
           await purgeSession(normalized, { removeRemote: true });
@@ -6718,79 +6780,6 @@ module.exports = {
 };
 '''
 
-EMBEDDED_LIVE_RUNTIME_BOOTSTRAP_JS = r'''require('./server');
-
-const { pairingBridge } = require('./lib/pairingBridge');
-const liveBridge = require('../lib/liveWhatsAppBridge');
-
-const activatePhone = typeof liveBridge?.activatePhone === 'function' ? liveBridge.activatePhone : null;
-const bootstrapAll = typeof liveBridge?.bootstrapAll === 'function' ? liveBridge.bootstrapAll : null;
-
-function normalizePhone(raw = '') {
-  return String(raw || '').replace(/\D/g, '').trim();
-}
-
-async function safeActivate(phone, reason = 'bootstrap') {
-  const normalized = normalizePhone(phone);
-  if (!normalized || !activatePhone) return false;
-  try {
-    await activatePhone(normalized, { reason });
-    return true;
-  } catch (error) {
-    console.error('[embedded-live-bootstrap] activate failed for', normalized, reason, error?.message || error);
-    return false;
-  }
-}
-
-async function reconcile(reason = 'interval') {
-  if (!bootstrapAll) return [];
-  try {
-    return await bootstrapAll({ concurrency: 2, reason });
-  } catch (error) {
-    console.error('[embedded-live-bootstrap] reconcile failed:', error?.message || error);
-    return [];
-  }
-}
-
-function defer(fn, delayMs) {
-  const timer = setTimeout(fn, delayMs);
-  if (timer && typeof timer.unref === 'function') {
-    timer.unref();
-  }
-  return timer;
-}
-
-function scheduleActivation(phone) {
-  const normalized = normalizePhone(phone);
-  if (!normalized) return;
-  for (const [index, delayMs] of [2000, 7000, 15000, 30000].entries()) {
-    defer(() => {
-      safeActivate(normalized, `pairing-bridge:${index + 1}`).catch(() => {});
-    }, delayMs);
-  }
-}
-
-if (pairingBridge && pairingBridge.emitter && typeof pairingBridge.emitter.on === 'function') {
-  pairingBridge.emitter.on('phone.activated', (phone) => {
-    scheduleActivation(phone);
-  });
-}
-
-defer(() => {
-  reconcile('boot').catch(() => {});
-}, 1500);
-
-const reconcileTimer = setInterval(() => {
-  reconcile('interval').catch(() => {});
-}, Math.max(5000, Number(process.env.LIVE_RUNTIME_RECONCILE_MS || 20000)));
-if (reconcileTimer && typeof reconcileTimer.unref === 'function') {
-  reconcileTimer.unref();
-}
-
-process.on('SIGTERM', () => process.exit(0));
-process.on('SIGINT', () => process.exit(0));
-'''
-
 EMBEDDED_SERVER_JS = r'''const express = require('express');
 const fs = require('fs-extra');
 const path = require('path');
@@ -6826,14 +6815,6 @@ const SESSION_STORE_TIMEOUT_MS = Math.max(5000, Number(process.env.SESSION_STORA
 const MONGODB_URI = String(process.env.MONGODB_URI || process.env.MONGO_URL || '').trim();
 let mongoCollectionPromise = null;
 
-process.on('unhandledRejection', (error) => {
-  console.error('Embedded pairing runtime unhandled rejection:', error?.stack || error?.message || error);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('Embedded pairing runtime uncaught exception:', error?.stack || error?.message || error);
-});
-
 function normalizePhone(raw = '') {
   return String(raw || '').replace(/\D/g, '').trim();
 }
@@ -6845,12 +6826,7 @@ function getSessionDir(phone) {
 function pickPhone(req) {
   const body = req.body || {};
   const query = req.query || {};
-  const params = req.params || {};
-  return normalizePhone(
-    body.num || body.phone || body.number || body.phoneNumber || body.msisdn || body.jid ||
-    query.num || query.phone || query.number || query.phoneNumber || query.msisdn || query.jid ||
-    params.phone || params.number || params.msisdn
-  );
+  return normalizePhone(body.num || body.phone || body.number || body.phoneNumber || query.num || query.phone || query.number || query.phoneNumber);
 }
 
 function getBrowserProfile() {
@@ -7352,18 +7328,12 @@ async function createSocket(phone, options = {}) {
         const statusCode = getDisconnectStatusCode(update.lastDisconnect);
         const permanent = isPermanentDisconnect(update.lastDisconnect);
         const restartRequired = statusCode === Number(DisconnectReason.restartRequired);
-        const disconnectTimestamp = new Date().toISOString();
         await updateSessionIndex(normalized, {
           connected: false,
           registered: state?.creds?.registered === true,
           pendingPairing: state?.creds?.registered !== true,
-          lastDisconnectAt: disconnectTimestamp,
+          lastDisconnectAt: new Date().toISOString(),
           lastDisconnectReason: String(update.lastDisconnect?.error?.message || statusCode || ''),
-        });
-        await persistState({
-          registered: state?.creds?.registered === true,
-          connected: false,
-          lastDisconnectAt: disconnectTimestamp,
         });
         if (permanent) {
           await purgeSession(normalized, { removeRemote: true });
@@ -7523,7 +7493,6 @@ def ensure_embedded_companion_files(base_dir: Optional[Path] = None) -> dict[str
     embedded_files = {
         "package.json": EMBEDDED_PACKAGE_JSON,
         "server.js": EMBEDDED_SERVER_JS,
-        "live-runtime-bootstrap.js": EMBEDDED_LIVE_RUNTIME_BOOTSTRAP_JS,
         "index.html": EMBEDDED_INDEX_HTML,
         "lib/pairingBridge.js": EMBEDDED_PAIRING_BRIDGE_JS,
     }
@@ -7594,116 +7563,6 @@ def stop_embedded_companion_process() -> None:
         except Exception:
             pass
         EMBEDDED_COMPANION_LOG_HANDLE = None
-
-
-def get_embedded_companion_log_excerpt(max_chars: int = 2500) -> str:
-    try:
-        if not EMBEDDED_COMPANION_LOG_PATH.exists():
-            return ""
-        raw_text = EMBEDDED_COMPANION_LOG_PATH.read_text(encoding="utf-8", errors="ignore")
-        normalized_text = raw_text.strip()
-        if not normalized_text:
-            return ""
-        return normalized_text[-max_chars:]
-    except Exception:
-        logger.exception("Failed to read embedded companion log excerpt")
-        return ""
-
-
-def is_internal_pairing_api_url(raw_url: Any) -> bool:
-    normalized_url = normalize_pairing_api_url(raw_url, fallback="").rstrip("/")
-    return bool(normalized_url) and normalized_url == TARGET_PAIRING_API_URL.rstrip("/")
-
-
-def ensure_pairing_runtime_available(force_restart: bool = False) -> bool:
-    global PAIRING_RUNTIME_DISABLED_REASON
-    with EMBEDDED_COMPANION_LOCK:
-        if force_restart:
-            stop_embedded_companion_process()
-
-        process = EMBEDDED_COMPANION_PROCESS
-        process_running = process is not None and process.poll() is None
-        if process_running and not force_restart:
-            try:
-                response = requests.get(f"{INTERNAL_PAIRING_BASE_URL}/health", timeout=4)
-                if response.ok:
-                    PAIRING_RUNTIME_DISABLED_REASON = ""
-                    return True
-            except Exception as exc:
-                PAIRING_RUNTIME_DISABLED_REASON = str(exc)
-                logger.warning("Embedded companion health-check failed, restarting runtime: %s", exc)
-                stop_embedded_companion_process()
-
-        started = start_embedded_companion_process()
-        if started:
-            PAIRING_RUNTIME_DISABLED_REASON = ""
-            return True
-
-        log_excerpt = get_embedded_companion_log_excerpt()
-        details = PAIRING_RUNTIME_DISABLED_REASON or "unknown error"
-        if log_excerpt:
-            details = f"{details}\n--- companion log tail ---\n{log_excerpt}"
-        raise RuntimeError(f"تعذر تشغيل خادم الاقتران الداخلي تلقائياً: {details}")
-
-
-def delete_pairing_session_storage_fallback(number: str) -> dict[str, Any]:
-    normalized_number = normalize_phone_number(number)
-    if not normalized_number:
-        return {"success": False, "error": "invalid phone"}
-
-    removed_any = False
-    session_dir = EMBEDDED_COMPANION_DIR / "sessions" / normalized_number
-    try:
-        if session_dir.exists():
-            shutil.rmtree(session_dir, ignore_errors=True)
-            removed_any = True
-    except Exception:
-        logger.exception("Failed to remove local embedded session directory for %s", normalized_number)
-
-    index_path = EMBEDDED_COMPANION_DIR / "sessions" / "index.json"
-    try:
-        if index_path.exists():
-            index_payload = json.loads(index_path.read_text(encoding="utf-8") or "{}")
-            if isinstance(index_payload, dict):
-                sessions_payload = index_payload.get("sessions")
-                if isinstance(sessions_payload, dict) and normalized_number in sessions_payload:
-                    sessions_payload.pop(normalized_number, None)
-                    index_path.write_text(json.dumps(index_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-                    removed_any = True
-    except Exception:
-        logger.exception("Failed to clean embedded session index for %s", normalized_number)
-
-    try:
-        database = get_mongo_database()
-        if database is not None:
-            delete_result = database[MONGODB_SESSIONS_COLLECTION].delete_one({"_id": normalized_number})
-            if getattr(delete_result, "deleted_count", 0):
-                removed_any = True
-            else:
-                delete_result = database[MONGODB_SESSIONS_COLLECTION].delete_one({"phone": normalized_number})
-                if getattr(delete_result, "deleted_count", 0):
-                    removed_any = True
-    except Exception:
-        logger.exception("Failed to delete fallback MongoDB session for %s", normalized_number)
-
-    return {
-        "success": True,
-        "deleted": removed_any,
-        "storage_fallback": True,
-        "status_code": 200,
-    }
-
-
-async def pairing_runtime_monitor_loop() -> None:
-    while True:
-        await asyncio.sleep(PAIRING_RUNTIME_MONITOR_INTERVAL_SECONDS)
-        try:
-            if is_internal_pairing_api_url(SETTINGS.get("pair_code_api_url") or TARGET_PAIRING_API_URL):
-                await asyncio.to_thread(ensure_pairing_runtime_available)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Pairing runtime monitor failed")
 
 
 def ensure_project_runtime_dependencies() -> None:
@@ -7790,8 +7649,15 @@ def start_embedded_companion_process() -> bool:
 
     launch_targets = [
         {
+            "label": "main-project-runtime",
+            "command": ["node", "index.js"],
+            "cwd": BASE_DIR,
+            "prepare": ensure_project_runtime_dependencies,
+            "drop_telegram_token": True,
+        },
+        {
             "label": "embedded-runtime",
-            "command": ["node", "live-runtime-bootstrap.js"],
+            "command": ["node", "server.js"],
             "cwd": EMBEDDED_COMPANION_DIR,
             "prepare": ensure_embedded_companion_dependencies,
             "drop_telegram_token": False,
