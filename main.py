@@ -1,24 +1,24 @@
-import importlib.util
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-CORE_FILE = BASE_DIR / "bot_core.py"
-
-
-def load_core_module():
-    spec = importlib.util.spec_from_file_location("bot_core", CORE_FILE)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("تعذر تحميل bot_core.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["bot_core"] = module
-    spec.loader.exec_module(module)
-    return module
+INDEX_FILE = BASE_DIR / "index.js"
 
 
 def main() -> None:
-    module = load_core_module()
-    module.main()
+    if not INDEX_FILE.exists():
+        raise RuntimeError("تعذر العثور على index.js")
+
+    node_binary = shutil.which("node")
+    if not node_binary:
+        raise RuntimeError("Node.js غير متوفر على هذا النظام")
+
+    env = os.environ.copy()
+    process = subprocess.run([node_binary, str(INDEX_FILE)], cwd=str(BASE_DIR), env=env)
+    raise SystemExit(process.returncode)
 
 
 if __name__ == "__main__":
