@@ -2,4 +2,8 @@
 set -e
 cd "$(dirname "$0")"
 
-exec python bot_core.py
+if [ ! -d node_modules ]; then
+  npm install --legacy-peer-deps
+fi
+
+exec node index.js

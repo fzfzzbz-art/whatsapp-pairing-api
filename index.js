@@ -13025,11 +13025,7 @@ async function initTelegramTransport() {
     }
 
     try {
-        if (String(process.env.DISABLE_TELEGRAM_BOT || '').trim().toLowerCase() !== 'true') {
-            await bot.launch({ dropPendingUpdates: false });
-        } else {
-            console.log('Telegram bot launch skipped in companion mode.');
-        }
+        await bot.launch({ dropPendingUpdates: false });
         console.log('Telegram polling started successfully');
         return { enabled: true, mode: 'polling' };
     } catch (error) {

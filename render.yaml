@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt && npm install --omit=dev --legacy-peer-deps
-    startCommand: python bot_core.py
+    startCommand: python main.py
     healthcheckPath: /healthz
     envVars:
       - key: PORT
