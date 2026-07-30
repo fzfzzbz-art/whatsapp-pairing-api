@@ -1,0 +1,331 @@
+diff --git a/index.js b/index.js
+index 0e1904d..c15b1f7 100644
+--- a/index.js
++++ b/index.js
+@@ -25,6 +25,7 @@ const {
+     preloadLegacyProjectModules
+ } = require('./lib/legacyCommandBridge');
+ const { attachLinkingSiteRoutes } = require('./lib/linkingSite');
++const { runWithPhoneSession } = require('./lib/phoneSessionContext');
+ const {
+     isRemoteSessionStoreEnabled,
+     listRemoteSessions,
+@@ -956,6 +957,8 @@ const sessionSnapshotSyncTimers = new Map();
+ const sessionSnapshotSyncMetadata = new Map();
+ const sessionSnapshotSyncPromises = new Map();
+ const phoneJobQueues = new Map();
++const clientStartPromises = new Map();
++const phoneHistorySyncSkipUntil = new Map();
+ const recentStatusEvents = new Map();
+ const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+ const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
+@@ -991,6 +994,8 @@ const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSI
+ const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
+ const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
+ const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
++const MESSAGE_QUEUE_CONCURRENCY_PER_PHONE = Math.max(1, Math.min(4, Number(process.env.MESSAGE_QUEUE_CONCURRENCY_PER_PHONE || 1)));
++const INITIAL_MESSAGE_SYNC_GRACE_MS = Math.max(2000, Number(process.env.INITIAL_MESSAGE_SYNC_GRACE_MS || 10000));
+ const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
+ let sessionSupervisorStarted = false;
+ let lastRuntimeCleanupAt = 0;
+@@ -3797,6 +3802,43 @@ function enqueuePhoneJob(phone, job, maxConcurrent = 1) {
+     });
+ }
+ 
++function armPhoneHistorySyncGuard(phone, graceMs = INITIAL_MESSAGE_SYNC_GRACE_MS) {
++    const normalizedPhone = normalizePhone(phone);
++    if (!normalizedPhone) return 0;
++    const expiresAt = Date.now() + Math.max(1000, Number(graceMs) || INITIAL_MESSAGE_SYNC_GRACE_MS);
++    phoneHistorySyncSkipUntil.set(normalizedPhone, expiresAt);
++    return expiresAt;
++}
++
++function clearPhoneHistorySyncGuard(phone) {
++    const normalizedPhone = normalizePhone(phone);
++    if (!normalizedPhone) return;
++    phoneHistorySyncSkipUntil.delete(normalizedPhone);
++}
++
++function shouldSkipRecentMessageReplay(phone, msg = {}) {
++    const normalizedPhone = normalizePhone(phone);
++    if (!normalizedPhone) return false;
++    const skipUntil = Number(phoneHistorySyncSkipUntil.get(normalizedPhone) || 0);
++    if (!skipUntil || Date.now() >= skipUntil) return false;
++    if (msg?.key?.fromMe === true) return false;
++    return true;
++}
++
++async function runPhoneScoped(phone, task) {
++    const normalizedPhone = normalizePhone(phone);
++    return runWithPhoneSession(normalizedPhone, async () => {
++        return await task();
++    });
++}
++
++function queueIncomingPhoneMessage(phone, task) {
++    const normalizedPhone = normalizePhone(phone);
++    return enqueuePhoneJob(normalizedPhone, async () => {
++        return await runPhoneScoped(normalizedPhone, task);
++    }, MESSAGE_QUEUE_CONCURRENCY_PER_PHONE);
++}
++
+ function clearSessionPingTimer(phone) {
+     const normalized = normalizePhone(phone);
+     const timer = sessionPingTimers.get(normalized);
+@@ -7897,6 +7939,8 @@ async function purgeSessionData(phone) {
+     if (!normalized) return;
+     clearReconnectTimer(normalized);
+     clearSessionSnapshotSyncState(normalized);
++    clearPhoneHistorySyncGuard(normalized);
++    clientStartPromises.delete(normalized);
+     clearPairingRequest(normalized);
+     clearChannelPromotionTimer(normalized);
+     clearPresenceTimer(normalized);
+@@ -9086,12 +9130,13 @@ function isLinkedPhoneOwnerMessage(sock, phoneNumber, msg) {
+ }
+ 
+ async function handleIncomingMessage(sock, phoneNumber, msg) {
+-    try {
+-        if (!msg?.message) return;
+-        const from = normalizeWhatsAppJid(msg.key?.remoteJid);
+-        if (!from) return;
++    return runPhoneScoped(phoneNumber, async () => {
++        try {
++            if (!msg?.message) return;
++            const from = normalizeWhatsAppJid(msg.key?.remoteJid);
++            if (!from) return;
+ 
+-        const settings = getActivePhoneSettings(phoneNumber);
++            const settings = getActivePhoneSettings(phoneNumber);
+ 
+         if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
+             await applyLivePhoneSettingsSideEffects(phoneNumber);
+@@ -9189,10 +9234,11 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
+             console.error(`Linked Auto Reply Error (${phoneNumber}):`, error.message);
+         }
+ 
+-        return;
+-    } catch (error) {
+-        console.error(`Incoming Message Error (${phoneNumber}):`, error.message);
+-    }
++            return;
++        } catch (error) {
++            console.error(`Incoming Message Error (${phoneNumber}):`, error.message);
++        }
++    });
+ }
+ 
+ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null, options = {}) {
+@@ -9209,14 +9255,19 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         return existing;
+     }
+ 
+-    const sessionPath = getSessionPath(normalizedPhone);
+-    const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
++    if (clientStartPromises.has(normalizedPhone)) {
++        return clientStartPromises.get(normalizedPhone);
++    }
++
++    const startPromise = (async () => {
++        const sessionPath = getSessionPath(normalizedPhone);
++        const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
+ 
+-    const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
+-    const { version } = await getCachedBaileysVersion();
+-    const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
++        const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
++        const { version } = await getCachedBaileysVersion();
++        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+ 
+-    const sock = makeWASocket({
++        const sock = makeWASocket({
+         version,
+         logger: pino({ level: 'silent' }),
+         printQRInTerminal: false,
+@@ -9229,13 +9280,14 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         markOnlineOnConnect: false
+     });
+ 
+-    sock.ev.setMaxListeners?.(0);
+-    sock.ws?.setMaxListeners?.(0);
++        sock.ev.setMaxListeners?.(0);
++        sock.ws?.setMaxListeners?.(0);
+ 
+-    waClients.set(normalizedPhone, sock);
+-    touchClient(normalizedPhone);
++        waClients.set(normalizedPhone, sock);
++        touchClient(normalizedPhone);
++        armPhoneHistorySyncGuard(normalizedPhone);
+ 
+-    if (!state.creds.registered && autoRequestPairingCode) {
++        if (!state.creds.registered && autoRequestPairingCode) {
+         void (async () => {
+             try {
+                 const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
+@@ -9285,7 +9337,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         })();
+     }
+ 
+-    sock.ev.on('creds.update', async () => {
++        sock.ev.on('creds.update', async () => {
+         touchClient(normalizedPhone);
+         await saveCreds({
+             ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
+@@ -9293,7 +9345,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         });
+     });
+ 
+-    sock.ev.on('contacts.upsert', (items = []) => {
++        sock.ev.on('contacts.upsert', (items = []) => {
+         try {
+             touchClient(normalizedPhone);
+             processPhoneContactsUpdates(normalizedPhone, items);
+@@ -9302,7 +9354,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         }
+     });
+ 
+-    sock.ev.on('contacts.update', (items = []) => {
++        sock.ev.on('contacts.update', (items = []) => {
+         try {
+             touchClient(normalizedPhone);
+             processPhoneContactsUpdates(normalizedPhone, items);
+@@ -9311,40 +9363,51 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         }
+     });
+ 
+-    sock.ev.on('messages.upsert', async (payload) => {
+-        try {
+-            touchClient(normalizedPhone);
+-            const messages = payload?.messages || [];
+-            for (const msg of messages) {
+-                await handleIncomingMessage(sock, normalizedPhone, msg);
++        sock.ev.on('messages.upsert', async (payload) => {
++            try {
++                touchClient(normalizedPhone);
++                const messages = Array.isArray(payload?.messages) ? payload.messages : [];
++                for (const msg of messages) {
++                    if (shouldSkipRecentMessageReplay(normalizedPhone, msg)) continue;
++                    void queueIncomingPhoneMessage(normalizedPhone, async () => {
++                        await handleIncomingMessage(sock, normalizedPhone, msg);
++                    }).catch((error) => {
++                        console.error(`Queued messages.upsert Error (${normalizedPhone}):`, error?.message || error);
++                    });
++                }
++            } catch (error) {
++                console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
+             }
+-        } catch (error) {
+-            console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
+-        }
+-    });
++        });
+ 
+-    sock.ev.on('messages.update', async (updates = []) => {
+-        try {
+-            touchClient(normalizedPhone);
+-            for (const item of updates) {
+-                if (!item?.update) continue;
+-                const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
+-                const updateContent = unwrapMessageContent(item.update);
+-                const isStatusUpdate = remoteJid === 'status@broadcast';
+-                const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
+-                if (!isStatusUpdate && !isRevocationUpdate) continue;
+-                await handleIncomingMessage(sock, normalizedPhone, {
+-                    key: item.key,
+-                    message: item.update,
+-                    participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
+-                });
++        sock.ev.on('messages.update', async (updates = []) => {
++            try {
++                touchClient(normalizedPhone);
++                for (const item of updates) {
++                    if (!item?.update) continue;
++                    const syntheticMessage = {
++                        key: item.key,
++                        message: item.update,
++                        participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
++                    };
++                    if (shouldSkipRecentMessageReplay(normalizedPhone, syntheticMessage)) continue;
++                    const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
++                    const updateContent = unwrapMessageContent(item.update);
++                    const isStatusUpdate = remoteJid === 'status@broadcast';
++                    const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
++                    if (!isStatusUpdate && !isRevocationUpdate) continue;
++                    void queueIncomingPhoneMessage(normalizedPhone, async () => {
++                        await handleIncomingMessage(sock, normalizedPhone, syntheticMessage);
++                    }).catch((error) => {
++                        console.error(`Queued messages.update Error (${normalizedPhone}):`, error?.message || error);
++                    });
++                }
++            } catch (error) {
++                console.error(`messages.update Error (${normalizedPhone}):`, error.message);
+             }
+-        } catch (error) {
+-            console.error(`messages.update Error (${normalizedPhone}):`, error.message);
+-        }
+-    });
++        });
+ 
+-    sock.ev.on('group-participants.update', async (update) => {
++        sock.ev.on('group-participants.update', async (update) => {
+         try {
+             touchClient(normalizedPhone);
+             await dispatchLegacyGroupParticipantsUpdate(sock, normalizedPhone, update);
+@@ -9353,7 +9416,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         }
+     });
+ 
+-    sock.ev.on('call', async (calls = []) => {
++        sock.ev.on('call', async (calls = []) => {
+         try {
+             const settings = getActivePhoneSettings(normalizedPhone);
+             if (settings.antiCall !== 'on') return;
+@@ -9376,7 +9439,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         }
+     });
+ 
+-    sock.ev.on('connection.update', async (update) => {
++        sock.ev.on('connection.update', async (update) => {
+         touchClient(normalizedPhone);
+         const { connection, lastDisconnect } = update;
+         const pendingPair = pairingRequests.get(normalizedPhone);
+@@ -9387,6 +9450,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+                 incrementAnalytics('totalSessionsStarted');
+                 clearReconnectTimer(normalizedPhone);
+                 resetReconnectAttempts(normalizedPhone);
++                armPhoneHistorySyncGuard(normalizedPhone);
+                 startPresenceKeepAlive(sock, normalizedPhone);
+                 startSessionPing(sock, normalizedPhone);
+                 const connectionMetadata = {
+@@ -9474,6 +9538,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+                 waClients.delete(normalizedPhone);
+                 clientActivity.delete(normalizedPhone);
+                 clearSessionPingTimer(normalizedPhone);
++                clearPhoneHistorySyncGuard(normalizedPhone);
+ 
+                 const corruptedBootSession = bootRestore && shouldDiscardCorruptedBootSession(lastDisconnect);
+                 const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
+@@ -9518,7 +9583,13 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+         }
+     });
+ 
+-    return sock;
++        return sock;
++    })().finally(() => {
++        clientStartPromises.delete(normalizedPhone);
++    });
++
++    clientStartPromises.set(normalizedPhone, startPromise);
++    return startPromise;
+ }
+ 
+ async function createBotInstance(sessionId, ownerId = '') {
+@@ -13104,7 +13175,7 @@ async function gracefulShutdown(signal) {
+     pairingRequests.clear();
+ 
+     try {
+-        await flushAllSessionSnapshotSync();
++        await flushAllSessionSnapshotSyncs();
+     } catch (error) {
+         console.error('Session Flush Warning:', error.message || error);
+     }
