@@ -12,7 +12,6 @@ const {
   DisconnectReason,
   delay,
 } = require('@whiskeysockets/baileys');
-const { pairingBridge } = require('./lib/pairingBridge');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -25,7 +24,7 @@ const sockets = new Map();
 const startPromises = new Map();
 const reconnectTimers = new Map();
 const pairingRequests = new Map();
-const RECONNECT_DELAY_MS = Math.max(2500, Number(process.env.RECONNECT_DELAY_MS || 5000));
+const RECONNECT_DELAY_MS = Math.max(3000, Number(process.env.RECONNECT_DELAY_MS || 6000));
 const PAIRING_CODE_CACHE_MS = Math.max(30000, Number(process.env.PAIRING_CODE_CACHE_MS || 55000));
 const SESSION_COLLECTION_NAME = String(process.env.MONGODB_SESSIONS_COLLECTION || 'whatsapp_sessions').trim() || 'whatsapp_sessions';
 const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'whatsapp_pairing_api').trim() || 'whatsapp_pairing_api';
@@ -169,7 +168,7 @@ async function getSessionCollection() {
   if (!mongoCollectionPromise) {
     mongoCollectionPromise = (async () => {
       const client = new MongoClient(MONGODB_URI, {
-        appName: 'local-whatsapp-pairing-server',
+        appName: 'embedded-whatsapp-pairing-server',
         serverSelectionTimeoutMS: SESSION_STORE_TIMEOUT_MS,
         connectTimeoutMS: SESSION_STORE_TIMEOUT_MS,
         maxPoolSize: 5,
@@ -204,11 +203,11 @@ function normalizeStoredSession(phone, payload = {}) {
     _id: normalized,
     phone: normalized,
     sessionId: normalized,
+    ownerId: String(payload.ownerId || '').trim(),
     registered: payload.registered === true,
     connected: payload.connected === true,
     lastConnectedAt: payload.lastConnectedAt || null,
     lastDisconnectAt: payload.lastDisconnectAt || null,
-    activatedAt: payload.activatedAt || null,
     updatedAt: payload.updatedAt || new Date().toISOString(),
     files,
     fileCount: Object.keys(files).length,
@@ -278,10 +277,10 @@ async function syncSessionToStore(phone, metadata = {}) {
     updatedAt: new Date().toISOString(),
   });
   await updateSessionIndex(normalized, {
+    ownerId: snapshot?.ownerId || '',
     registered: snapshot?.registered === true,
     connected: metadata.connected === true,
     lastConnectedAt: snapshot?.lastConnectedAt || null,
-    activatedAt: snapshot?.activatedAt || null,
     remoteBackedUpAt: new Date().toISOString(),
     fileCount: snapshot?.fileCount || Object.keys(files).length,
   });
@@ -320,7 +319,6 @@ async function destroySocket(phone) {
   sockets.delete(normalized);
   try { existing.ws?.close?.(); } catch (_) {}
   try { existing.end?.(); } catch (_) {}
-  try { pairingBridge.releaseSocket(normalized); } catch (_) {}
 }
 
 async function purgeSession(phone, { removeRemote = true } = {}) {
@@ -439,32 +437,6 @@ async function requestPairingCodeWithRetry(sock, phone) {
   throw lastError;
 }
 
-async function handleConnectionOpened(sock, phone, state) {
-  const normalized = normalizePhone(phone);
-  const nowIso = new Date().toISOString();
-  pairingRequests.delete(normalized);
-  clearReconnect(normalized);
-
-  await updateSessionIndex(normalized, {
-    registered: true,
-    connected: true,
-    pendingPairing: false,
-    lastConnectedAt: nowIso,
-    meId: sock.user?.id || '',
-    lastError: '',
-  });
-
-  try { await syncSessionToStore(normalized, { registered: true, connected: true, lastConnectedAt: nowIso }); } catch (_) {}
-  try {
-    pairingBridge.setSocket(normalized, sock, {
-      phone: normalized,
-      registered: true,
-      meId: sock.user?.id || '',
-      connectedAt: nowIso,
-    });
-  } catch (_) {}
-}
-
 async function createSocket(phone, options = {}) {
   const normalized = normalizePhone(phone);
   if (!normalized) throw new Error('Phone is required');
@@ -483,7 +455,7 @@ async function createSocket(phone, options = {}) {
     await fs.ensureDir(sessionDir);
     const helper = await useMultiFileAuthState(sessionDir);
     const state = helper.state;
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+    const { version } = await fetchLatestBaileysVersion();
     const sock = makeWASocket({
       version,
       browser: getBrowserProfile(),
@@ -493,7 +465,7 @@ async function createSocket(phone, options = {}) {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
-      markOnlineOnConnect: true,
+      markOnlineOnConnect: false,
       syncFullHistory: false,
       defaultQueryTimeoutMs: 0,
       connectTimeoutMs: 60000,
@@ -507,7 +479,11 @@ async function createSocket(phone, options = {}) {
     sockets.set(normalized, sock);
 
     const persistState = async (extra = {}) => {
-      try { await helper.saveCreds(); } catch (error) { console.error('Failed to save creds for', normalized, error?.message || error); }
+      try {
+        await helper.saveCreds();
+      } catch (error) {
+        console.error('Failed to save creds for', normalized, error?.message || error);
+      }
       await syncSessionToStore(normalized, {
         registered: extra.registered === true || state?.creds?.registered === true,
         connected: extra.connected === true,
@@ -537,7 +513,17 @@ async function createSocket(phone, options = {}) {
       }
 
       if (connection === 'open') {
-        await handleConnectionOpened(sock, normalized, state);
+        pairingRequests.delete(normalized);
+        clearReconnect(normalized);
+        await updateSessionIndex(normalized, {
+          registered: true,
+          connected: true,
+          pendingPairing: false,
+          lastConnectedAt: new Date().toISOString(),
+          meId: sock.user?.id || '',
+          lastError: '',
+        });
+        await persistState({ registered: true, connected: true, lastConnectedAt: new Date().toISOString() });
         return;
       }
 
@@ -572,7 +558,6 @@ async function createSocket(phone, options = {}) {
     });
 
     if (state?.creds?.registered === true) {
-      try { pairingBridge.setSocket(normalized, sock, { phone: normalized, registered: true }); } catch (_) {}
       await persistState({ registered: true, connected: false });
     }
     return sock;
@@ -587,12 +572,17 @@ async function createSocket(phone, options = {}) {
 async function listLocalSessionPhones() {
   await ensureSessionRoot();
   const entries = await fs.readdir(SESSION_ROOT).catch(() => []);
-  return entries.filter((name) => name !== 'index.json').map((name) => normalizePhone(name)).filter(Boolean);
+  return entries
+    .filter((name) => name !== 'index.json')
+    .map((name) => normalizePhone(name))
+    .filter(Boolean);
 }
 
 async function restoreAllSessionsOnBoot() {
   const localPhones = await listLocalSessionPhones();
-  const remotePhones = (await listStoredSessions()).map((item) => normalizePhone(item.phone || item.sessionId || item._id || '')).filter(Boolean);
+  const remotePhones = (await listStoredSessions())
+    .map((item) => normalizePhone(item.phone || item.sessionId || item._id || ''))
+    .filter(Boolean);
   const phones = Array.from(new Set([...localPhones, ...remotePhones]));
   for (const phone of phones) {
     try {
@@ -606,7 +596,7 @@ async function restoreAllSessionsOnBoot() {
 
 app.get('/', async (_req, res) => {
   const index = await readSessionIndex();
-  res.json({ status: 'ok', service: 'local-whatsapp-pairing-server', sessions: Object.keys(index.sessions || {}).length, time: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'embedded-pairing-server', sessions: Object.keys(index.sessions || {}).length, time: new Date().toISOString() });
 });
 
 app.get('/health', async (_req, res) => {
@@ -618,7 +608,7 @@ app.get('/api/session-status', async (req, res) => {
   const phone = pickPhone(req);
   if (!phone) return res.status(400).json({ success: false, error: 'phone is required' });
   const index = await readSessionIndex();
-  return res.json({ success: true, session: index.sessions?.[phone] || null, active: sockets.has(phone), bridgeSocket: !!pairingBridge.getSocket(phone) });
+  return res.json({ success: true, session: index.sessions?.[phone] || null, active: sockets.has(phone) });
 });
 
 app.all('/api/pairing', async (req, res) => {
@@ -638,7 +628,6 @@ app.all('/api/pairing', async (req, res) => {
           pendingPairing: false,
           lastPairingCheckAt: new Date().toISOString(),
         });
-        try { await handleConnectionOpened(restoredSock, phone, restoredSock.__sessionState); } catch (_) {}
         return res.json({ success: true, linked: true, alreadyLinked: true, number: phone, message: 'الرقم مربوط بالفعل والجلسة محفوظة.' });
       }
     }
@@ -653,10 +642,8 @@ app.all('/api/pairing', async (req, res) => {
         pendingPairing: false,
         lastPairingCheckAt: new Date().toISOString(),
       });
-      try { await handleConnectionOpened(sock, phone, sock.__sessionState); } catch (_) {}
       return res.json({ success: true, linked: true, alreadyLinked: true, number: phone, message: 'الرقم مربوط بالفعل والجلسة محفوظة.' });
     }
-
     const code = await requestPairingCodeWithRetry(sock, phone);
     await updateSessionIndex(phone, {
       registered: false,
@@ -666,7 +653,7 @@ app.all('/api/pairing', async (req, res) => {
       lastError: '',
     });
     await syncSessionToStore(phone, { registered: false, connected: false });
-    return res.json({ success: true, linked: false, number: phone, code, pairingCode: code, expiresInSeconds: Math.round(PAIRING_CODE_CACHE_MS / 1000) });
+    return res.json({ success: true, linked: false, number: phone, code, pairingCode: code });
   } catch (error) {
     await updateSessionIndex(phone, {
       registered: false,
@@ -702,5 +689,5 @@ process.on('SIGTERM', async () => {
 app.listen(PORT, '0.0.0.0', async () => {
   await ensureSessionRoot();
   await restoreAllSessionsOnBoot();
-  console.log(`Local pairing server listening on ${PORT}`);
+  console.log(`Embedded pairing server listening on ${PORT}`);
 });

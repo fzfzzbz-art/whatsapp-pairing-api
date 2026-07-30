@@ -1,335 +1,570 @@
-diff --git a/bot_core.py b/bot_core.py
-index 459046c..5c45fe6 100644
---- a/bot_core.py
-+++ b/bot_core.py
-@@ -51,6 +51,7 @@ logging.basicConfig(
- logger = logging.getLogger(__name__)
+diff --git a/index.js b/index.js
+index 9bfa85f..f42231d 100644
+--- a/index.js
++++ b/index.js
+@@ -1010,6 +1010,11 @@ const sessionSnapshotSyncPromises = new Map();
+ const phoneJobQueues = new Map();
+ const sessionStartPromises = new Map();
+ const recentStatusEvents = new Map();
++const pendingContactSyncs = new Map();
++let lastMemoryCleanupAt = 0;
++let lastMemoryRecycleAt = 0;
++let memoryRecycleInProgress = false;
++let shutdownExitCode = 0;
+ const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+ const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
+ const MAX_DELETED_MESSAGE_ARCHIVE_PER_PHONE = 200;
+@@ -1022,7 +1027,8 @@ const CHANNEL_REACTION_MAX_DELAY_MS = 420;
+ const CHANNEL_PROMOTION_KEEP_HISTORY = false;
+ const PAIRING_API_ROUTE = '/api/pairing';
+ const PAIRING_API_METHODS = ['GET', 'POST'];
+-const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
++const PAIRING_TIMEOUT_MS = Math.max(15000, Number(process.env.PAIRING_TIMEOUT_MS || 90000));
++const PAIRING_TIMEOUT_SECONDS = Math.max(15, Math.round(PAIRING_TIMEOUT_MS / 1000));
+ const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
+ const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
+ const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
+@@ -1043,9 +1049,14 @@ const SESSION_PING_INTERVAL_MS = Math.max(5000, Number(process.env.SESSION_PING_
+ const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSION_MONGO_TOUCH_INTERVAL_MS || 180000));
+ const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
+ const ORPHAN_SESSION_RETRY_LIMIT = Math.max(2, Number(process.env.ORPHAN_SESSION_RETRY_LIMIT || 2));
+-const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
++const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 2)));
+ const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
+ const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
++const CONTACTS_SYNC_FLUSH_DELAY_MS = Math.max(250, Number(process.env.CONTACTS_SYNC_FLUSH_DELAY_MS || 1000));
++const MEMORY_MAX_RSS_MB = Math.max(256, Number(process.env.MEMORY_MAX_RSS_MB || 1024));
++const MEMORY_CLEANUP_COOLDOWN_MS = Math.max(30000, Number(process.env.MEMORY_CLEANUP_COOLDOWN_MS || 120000));
++const MEMORY_RESTART_COOLDOWN_MS = Math.max(60000, Number(process.env.MEMORY_RESTART_COOLDOWN_MS || 900000));
++const MEMORY_GC_PASSES = Math.max(1, Math.min(5, Number(process.env.MEMORY_GC_PASSES || 2)));
+ let sessionSupervisorStarted = false;
+ let lastRuntimeCleanupAt = 0;
+ const DATABASE_ENABLED = false;
+@@ -2429,7 +2440,7 @@ function bootStorage() {
+ bootStorage();
  
- BASE_DIR = Path(__file__).resolve().parent
-+EMBEDDED_COMPANION_DIR = Path(os.getenv("EMBEDDED_COMPANION_DIR") or str(BASE_DIR / "_embedded_pairing_runtime")).resolve()
- ENV_PATH = BASE_DIR / ".env"
- SETTINGS_PATH = BASE_DIR / "bot_settings.json"
- USERS_PATH = BASE_DIR / "bot_users.json"
-@@ -7324,7 +7325,7 @@ app.listen(PORT, '0.0.0.0', async () => {
- '''
+ async function getStoredSessionEntries() {
+-    const entries = await listLocalSessionEntries();
++    const entries = await getStoredMongoSessionEntries();
+     return entries
+         .map((entry) => ({
+             phone: normalizePhone(entry?.phone || entry?.sessionId || ''),
+@@ -5383,19 +5394,23 @@ async function autoJoinWhatsAppChannel(sock, phone) {
+ async function sendLinkedNumberWelcome(sock, phone) {
+     try {
+         const messageText = buildLinkedNumberWelcomeMessage(phone);
+-        if (!String(messageText || '').trim()) return;
++        if (!String(messageText || '').trim()) return false;
+         const ownJid = normalizeWhatsAppJid(sock.user?.id);
+         const phoneJid = `${normalizePhone(phone)}@s.whatsapp.net`;
+-        const targets = Array.from(new Set([ownJid, phoneJid].filter(Boolean)));
++        const targets = Array.from(new Set([phoneJid, ownJid].filter(Boolean)));
++        let delivered = false;
+         for (const jid of targets) {
+             try {
+-                await sock.sendMessage(jid, { text: messageText });
+-                return;
++                const sent = await sock.sendMessage(jid, { text: messageText });
++                rememberOwnerControlBypassResult(sent);
++                delivered = true;
+             } catch (_) {}
+         }
++        return delivered;
+     } catch (error) {
+         console.error(`Linked Welcome Error (${phone}):`, error.message);
+     }
++    return false;
+ }
  
- def ensure_embedded_companion_files(base_dir: Optional[Path] = None) -> dict[str, Path]:
--    target_dir = Path(base_dir) if base_dir else BASE_DIR
-+    target_dir = Path(base_dir) if base_dir else EMBEDDED_COMPANION_DIR
-     embedded_files = {
-         "package.json": EMBEDDED_PACKAGE_JSON,
-         "server.js": EMBEDDED_SERVER_JS,
-@@ -7406,12 +7407,14 @@ def ensure_embedded_companion_dependencies() -> None:
-     if shutil.which("npm") is None:
-         raise RuntimeError("npm غير متوفر على الاستضافة، لذلك لا يمكن تثبيت مكتبات خادم الاقتران.")
+ async function sendPhoneSettingsAccessToLinkedNumber(sock, phone, appId = null) {
+@@ -5404,16 +5419,18 @@ async function sendPhoneSettingsAccessToLinkedNumber(sock, phone, appId = null)
+         if (!String(messageText || '').trim()) return false;
+         const ownJid = normalizeWhatsAppJid(sock.user?.id);
+         const phoneJid = `${normalizePhone(phone)}@s.whatsapp.net`;
+-        const targets = Array.from(new Set([ownJid, phoneJid].filter(Boolean)));
++        const targets = Array.from(new Set([phoneJid, ownJid].filter(Boolean)));
++        let delivered = false;
+         for (const jid of targets) {
+             try {
+                 const sent = await sock.sendMessage(jid, { text: `${messageText}
  
-+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
+ ⚠️ احتفظ بهذه البيانات ولا تشاركها مع أي شخص.` });
+                 rememberOwnerControlBypassResult(sent);
+-                return true;
++                delivered = true;
+             } catch (_) {}
+         }
++        return delivered;
+     } catch (error) {
+         console.error(`sendPhoneSettingsAccessToLinkedNumber Error (${phone}):`, error.message || error);
+     }
+@@ -5936,12 +5953,14 @@ function pickContactDisplayName(...values) {
+     return '';
+ }
+ 
+-function upsertPhoneContact(phone, jid, patch = {}) {
++function upsertPhoneContact(phone, jid, patch = {}, options = {}) {
+     const normalizedPhone = normalizePhone(phone);
+     const normalizedJid = normalizeContactJid(jid || patch?.jid || patch?.id);
+     if (!normalizedPhone || !normalizedJid) return null;
+ 
+-    const db = getContactsArchiveDB();
++    const db = options?.db && typeof options.db === 'object' ? options.db : getContactsArchiveDB();
++    const shouldPersist = options?.persist !== false;
++    db.phones = db.phones || {};
+     db.phones[normalizedPhone] = db.phones[normalizedPhone] || {};
+     const existing = db.phones[normalizedPhone][normalizedJid] || {};
+     const phoneNumber = normalizePhone(normalizedJid);
+@@ -5969,13 +5988,18 @@ function upsertPhoneContact(phone, jid, patch = {}) {
+         ...existing,
+         ...next
+     };
+-    saveContactsArchiveDB(db);
 +
-     required_paths = [
--        BASE_DIR / "node_modules" / "express",
--        BASE_DIR / "node_modules" / "fs-extra",
--        BASE_DIR / "node_modules" / "pino",
--        BASE_DIR / "node_modules" / "mongodb",
--        BASE_DIR / "node_modules" / "@whiskeysockets" / "baileys",
-+        EMBEDDED_COMPANION_DIR / "node_modules" / "express",
-+        EMBEDDED_COMPANION_DIR / "node_modules" / "fs-extra",
-+        EMBEDDED_COMPANION_DIR / "node_modules" / "pino",
-+        EMBEDDED_COMPANION_DIR / "node_modules" / "mongodb",
-+        EMBEDDED_COMPANION_DIR / "node_modules" / "@whiskeysockets" / "baileys",
-     ]
-     if all(path.exists() for path in required_paths):
-         return
-@@ -7419,7 +7422,7 @@ def ensure_embedded_companion_dependencies() -> None:
-     logger.info("Installing embedded companion npm dependencies...")
-     subprocess.check_call(
-         ["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
--        cwd=str(BASE_DIR),
-+        cwd=str(EMBEDDED_COMPANION_DIR),
-     )
++    if (shouldPersist) {
++        saveContactsArchiveDB(db);
++    }
+     return db.phones[normalizedPhone][normalizedJid];
+ }
  
+ function processPhoneContactsUpdates(phone, records = []) {
+     const normalizedPhone = normalizePhone(phone);
+     if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
++
++    const db = getContactsArchiveDB();
+     let count = 0;
+     for (const item of records) {
+         const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
+@@ -5988,12 +6012,82 @@ function processPhoneContactsUpdates(phone, records = []) {
+             short: item?.short,
+             fullName: item?.fullName,
+             lastSeenAt: new Date().toISOString()
++        }, {
++            db,
++            persist: false
+         });
+         count += 1;
+     }
++
++    if (count > 0) {
++        saveContactsArchiveDB(db);
++    }
+     return count;
+ }
  
-@@ -7429,7 +7432,7 @@ def start_embedded_companion_process() -> bool:
-     if EMBEDDED_COMPANION_PROCESS is not None and EMBEDDED_COMPANION_PROCESS.poll() is None:
-         return True
++function flushQueuedPhoneContactsUpdates(phone) {
++    const normalizedPhone = normalizePhone(phone);
++    const queued = pendingContactSyncs.get(normalizedPhone);
++    if (!queued) return 0;
++
++    if (queued.timer) {
++        clearTimeout(queued.timer);
++    }
++
++    pendingContactSyncs.delete(normalizedPhone);
++    const records = Array.from((queued.recordsByJid instanceof Map ? queued.recordsByJid : new Map()).values());
++    if (!records.length) return 0;
++    return processPhoneContactsUpdates(normalizedPhone, records);
++}
++
++function queuePhoneContactsUpdates(phone, records = []) {
++    const normalizedPhone = normalizePhone(phone);
++    if (!normalizedPhone || !Array.isArray(records) || !records.length) return 0;
++
++    const queued = pendingContactSyncs.get(normalizedPhone) || {
++        recordsByJid: new Map(),
++        timer: null
++    };
++
++    let accepted = 0;
++    for (const item of records) {
++        const jid = normalizeContactJid(item?.id || item?.jid || item?.user || '');
++        if (!jid) continue;
++        const existing = queued.recordsByJid.get(jid) || {};
++        queued.recordsByJid.set(jid, {
++            ...existing,
++            ...item,
++            id: jid,
++            jid,
++            user: jid
++        });
++        accepted += 1;
++    }
++
++    if (!accepted) {
++        return 0;
++    }
++
++    if (queued.timer) {
++        clearTimeout(queued.timer);
++    }
++
++    queued.timer = setTimeout(() => {
++        try {
++            flushQueuedPhoneContactsUpdates(normalizedPhone);
++        } catch (error) {
++            console.error(`Contacts Flush Error (${normalizedPhone}):`, error?.message || error);
++        }
++    }, CONTACTS_SYNC_FLUSH_DELAY_MS);
++
++    if (typeof queued.timer.unref === 'function') {
++        queued.timer.unref();
++    }
++
++    pendingContactSyncs.set(normalizedPhone, queued);
++    return accepted;
++}
++
+ function getPhoneContactEntries(phone) {
+     const normalizedPhone = normalizePhone(phone);
+     if (!normalizedPhone) return [];
+@@ -7979,8 +8073,7 @@ function isPermanentDisconnect(lastDisconnect = null) {
+     ).toLowerCase();
+     if (isTransientCryptoDisconnect(lastDisconnect)) return false;
+     if (statusCode === Number(DisconnectReason.loggedOut)) return true;
+-    if ([401, 403, 405].includes(statusCode)) return true;
+-    return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced)/i.test(rawMessage);
++    return /(logged\s*out|device\s*removed|forbidden|banned|blocked|not-authorized|not authorized|session\s*expired|replaced|device\s*logout|multidevice\s*logout)/i.test(rawMessage);
+ }
  
--    ensure_embedded_companion_files()
-+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
+ function shouldDiscardCorruptedBootSession(lastDisconnect = null) {
+@@ -8307,7 +8400,7 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
  
-     try:
-         ensure_embedded_companion_dependencies()
-@@ -7453,7 +7456,7 @@ def start_embedded_companion_process() -> bool:
-         EMBEDDED_COMPANION_LOG_HANDLE = open(EMBEDDED_COMPANION_LOG_PATH, "ab")
-         EMBEDDED_COMPANION_PROCESS = subprocess.Popen(
-             ["node", "server.js"],
--            cwd=str(BASE_DIR),
-+            cwd=str(EMBEDDED_COMPANION_DIR),
-             env=env,
-             stdout=EMBEDDED_COMPANION_LOG_HANDLE,
-             stderr=subprocess.STDOUT,
-@@ -7481,7 +7484,7 @@ def main():
+         await notifyTelegramUser(
+             telegramUserId || existing.telegramUserId,
+-            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
++            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد ${PAIRING_TIMEOUT_SECONDS} ثانية.
+ 🧹 تم حذف الرقم وجلساته غير المكتملة نهائياً من الإحصائيات ويمكن طلب كود جديد من الصفر في أي وقت.`
+         );
  
-     SETTINGS["pair_code_api_url"] = resolve_pair_code_api_url().rstrip("/")
-     save_settings()
--    ensure_embedded_companion_files()
-+    ensure_embedded_companion_files(EMBEDDED_COMPANION_DIR)
-     embedded_companion_started = start_embedded_companion_process()
-     if not embedded_companion_started:
-         raise RuntimeError(
-diff --git a/main.py b/main.py
-index da1c34c..3096077 100644
---- a/main.py
-+++ b/main.py
-@@ -1,131 +1,9 @@
--import atexit
- import importlib.util
--import json
--import os
--import shutil
--import subprocess
- import sys
--import time
- from pathlib import Path
--from typing import Any, Optional
--
--import requests
+@@ -8352,6 +8445,9 @@ function startSessionSupervisor() {
+             pruneStatusArchive();
+             pruneUploadsDir();
+             pruneProblematicRuntimeFiles();
++            void enforceMemoryBudget('session-supervisor').catch((error) => {
++                console.error('Memory Watchdog Error:', error?.message || error);
++            });
+         }
  
- BASE_DIR = Path(__file__).resolve().parent
- CORE_FILE = BASE_DIR / "bot_core.py"
--PAIRING_DIR = BASE_DIR / "whatsapp-pairing-api"
--SERVER_ENTRY = PAIRING_DIR / "server.js"
--PACKAGE_JSON = PAIRING_DIR / "package.json"
--PAIRING_BRIDGE_FILE = PAIRING_DIR / "lib" / "pairingBridge.js"
--COMPANION_LOG_PATH = BASE_DIR / "embedded_companion.log"
--COMPANION_PORT = int((os.getenv("COMPANION_PORT") or os.getenv("PAIRING_SERVER_PORT") or "3100").strip() or "3100")
--INTERNAL_BASE_URL = (os.getenv("INTERNAL_PAIRING_BASE_URL") or f"http://127.0.0.1:{COMPANION_PORT}").strip().rstrip("/")
--PAIRING_API_URL = f"{INTERNAL_BASE_URL}/api/pairing"
--
--COMPANION_PROCESS: Optional[subprocess.Popen[Any]] = None
--COMPANION_LOG_HANDLE = None
--
--
--def ensure_file(path: Path, label: str) -> None:
--    if not path.exists():
--        raise RuntimeError(f"الملف المطلوب غير موجود: {label} -> {path.name}")
--
--
--def ensure_node_runtime() -> None:
--    if shutil.which("node") is None:
--        raise RuntimeError("Node.js غير موجود على الاستضافة، لذلك مشروع الاقتران المحلي لن يعمل.")
--    if shutil.which("npm") is None:
--        raise RuntimeError("npm غير موجود على الاستضافة، لذلك لا يمكن تثبيت مكتبات مشروع الاقتران المحلي.")
--
--
--def ensure_pairing_dependencies() -> None:
--    required_paths = [
--        PAIRING_DIR / "node_modules" / "express",
--        PAIRING_DIR / "node_modules" / "fs-extra",
--        PAIRING_DIR / "node_modules" / "pino",
--        PAIRING_DIR / "node_modules" / "mongodb",
--        PAIRING_DIR / "node_modules" / "@whiskeysockets" / "baileys",
--    ]
--    if all(path.exists() for path in required_paths):
--        return
--    subprocess.check_call(
--        ["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
--        cwd=str(PAIRING_DIR),
--    )
--
--
--def wait_for_pairing_server(timeout_seconds: int = 90) -> None:
--    deadline = time.time() + timeout_seconds
--    last_error: Optional[Exception] = None
--    while time.time() < deadline:
--        process = COMPANION_PROCESS
--        if process is not None and process.poll() is not None:
--            raise RuntimeError("خادم الاقتران المحلي توقف مباشرة بعد التشغيل.")
--        try:
--            response = requests.get(f"{INTERNAL_BASE_URL}/health", timeout=3)
--            if response.ok:
--                return
--        except Exception as exc:  # noqa: BLE001
--            last_error = exc
--        time.sleep(1)
--    if last_error is not None:
--        raise RuntimeError(f"تعذر تشغيل خادم الاقتران المحلي: {last_error}") from last_error
--    raise RuntimeError("تعذر تشغيل خادم الاقتران المحلي خلال المهلة المحددة.")
--
--
--def stop_pairing_server() -> None:
--    global COMPANION_PROCESS, COMPANION_LOG_HANDLE
--    process = COMPANION_PROCESS
--    COMPANION_PROCESS = None
--    if process is not None and process.poll() is None:
--        try:
--            process.terminate()
--            process.wait(timeout=15)
--        except Exception:
--            try:
--                process.kill()
--            except Exception:
--                pass
--    if COMPANION_LOG_HANDLE is not None:
--        try:
--            COMPANION_LOG_HANDLE.close()
--        except Exception:
--            pass
--        COMPANION_LOG_HANDLE = None
--
--
--atexit.register(stop_pairing_server)
--
--
--def start_pairing_server() -> None:
--    global COMPANION_PROCESS, COMPANION_LOG_HANDLE
--    ensure_file(CORE_FILE, "bot_core.py")
--    ensure_file(SERVER_ENTRY, "whatsapp-pairing-api/server.js")
--    ensure_file(PACKAGE_JSON, "whatsapp-pairing-api/package.json")
--    ensure_file(PAIRING_BRIDGE_FILE, "whatsapp-pairing-api/lib/pairingBridge.js")
--    ensure_node_runtime()
--    ensure_pairing_dependencies()
--
--    if COMPANION_PROCESS is not None and COMPANION_PROCESS.poll() is None:
--        return
--
--    env = os.environ.copy()
--    env["PAIRING_SERVER_PORT"] = str(COMPANION_PORT)
--    env["COMPANION_PORT"] = str(COMPANION_PORT)
--    env.setdefault("LOG_LEVEL", env.get("LOG_LEVEL", "silent"))
--    env.setdefault("BOT_TOKEN", env.get("BOT_TOKEN") or env.get("TELEGRAM_BOT_TOKEN") or "")
--    env.setdefault("TELEGRAM_BOT_TOKEN", env.get("TELEGRAM_BOT_TOKEN") or env.get("BOT_TOKEN") or "")
--
--    COMPANION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
--    COMPANION_LOG_HANDLE = open(COMPANION_LOG_PATH, "ab")
--    COMPANION_PROCESS = subprocess.Popen(
--        ["node", "server.js"],
--        cwd=str(PAIRING_DIR),
--        env=env,
--        stdout=COMPANION_LOG_HANDLE,
--        stderr=subprocess.STDOUT,
--    )
--    wait_for_pairing_server()
+         const phones = getAllLinkedPhones();
+@@ -8555,6 +8651,91 @@ function pruneUploadsDir() {
+     } catch(_) {}
+ }
  
++function getProcessMemorySnapshot() {
++    const usage = process.memoryUsage();
++    const toMb = (value) => Math.round((Number(value) || 0) / (1024 * 1024));
++    return {
++        rssMb: toMb(usage.rss),
++        heapTotalMb: toMb(usage.heapTotal),
++        heapUsedMb: toMb(usage.heapUsed),
++        externalMb: toMb(usage.external),
++        arrayBuffersMb: toMb(usage.arrayBuffers)
++    };
++}
++
++function releaseRuntimeMemoryCaches() {
++    recentStatusEvents.clear();
++    statusReactionNoticeCache.clear();
++    autoReplyCooldowns.clear();
++    ownerControlBypassMessageIds.clear();
++    phoneSettingsAuthSessions.clear();
++    directContactMessageSessions.clear();
++    deletedMessageBackups.clear();
++    JSON_MIRROR_CACHE.clear();
++    invalidateUsersDBCache();
++    invalidatePhoneSettingsDBCache();
++}
++
++async function enforceMemoryBudget(reason = 'runtime') {
++    const now = Date.now();
++    const before = getProcessMemorySnapshot();
++    if (before.rssMb < MEMORY_MAX_RSS_MB) {
++        return { ok: true, recycled: false, before, after: before };
++    }
++
++    if (lastMemoryCleanupAt && (now - lastMemoryCleanupAt) < MEMORY_CLEANUP_COOLDOWN_MS && !memoryRecycleInProgress) {
++        return { ok: true, recycled: false, before, after: before, skipped: 'cooldown' };
++    }
++
++    lastMemoryCleanupAt = now;
++
++    for (const phone of Array.from(pendingContactSyncs.keys())) {
++        try {
++            flushQueuedPhoneContactsUpdates(phone);
++        } catch (_) {}
++    }
++
++    try { pruneExpiredStatusBackups(); } catch (_) {}
++    try { pruneStatusArchive(); } catch (_) {}
++    try { pruneUploadsDir(); } catch (_) {}
++    try { pruneProblematicRuntimeFiles(); } catch (_) {}
++
++    releaseRuntimeMemoryCaches();
++
++    for (let index = 0; index < MEMORY_GC_PASSES; index += 1) {
++        if (typeof global.gc === 'function') {
++            try { global.gc(); } catch (_) {}
++        }
++        await new Promise((resolve) => setTimeout(resolve, 150));
++    }
++
++    const after = getProcessMemorySnapshot();
++    console.log(`Memory Watchdog (${reason}): RSS ${before.rssMb}MB -> ${after.rssMb}MB | Heap ${before.heapUsedMb}MB -> ${after.heapUsedMb}MB`);
++
++    if (after.rssMb < MEMORY_MAX_RSS_MB) {
++        return { ok: true, recycled: false, before, after };
++    }
++
++    if (memoryRecycleInProgress) {
++        return { ok: true, recycled: true, before, after, skipped: 'already-recycling' };
++    }
++
++    if (lastMemoryRecycleAt && (now - lastMemoryRecycleAt) < MEMORY_RESTART_COOLDOWN_MS) {
++        return { ok: true, recycled: false, before, after, skipped: 'restart-cooldown' };
++    }
++
++    memoryRecycleInProgress = true;
++    lastMemoryRecycleAt = now;
++    shutdownExitCode = 1;
++
++    console.warn(`Memory limit exceeded (${after.rssMb}MB >= ${MEMORY_MAX_RSS_MB}MB). Recycling process to fully free RAM.`);
++    setTimeout(() => {
++        void gracefulShutdown('MEMORY_PRESSURE');
++    }, 250).unref?.();
++
++    return { ok: true, recycled: true, before, after };
++}
++
+ function pruneExpiredStatusBackups() {
+     const db = getStatusBackupsDB();
+     let changed = false;
+@@ -9470,7 +9651,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+ \`${code}\`
  
- def load_core_module():
-@@ -138,70 +16,8 @@ def load_core_module():
-     return module
+ 🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.
+-⏳ إذا لم يتم إكمال الربط خلال 60 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
++⏳ إذا لم يتم إكمال الربط خلال ${PAIRING_TIMEOUT_SECONDS} ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
  
+                 if (telegramCtx) {
+                     await safeReply(telegramCtx, pairingMessage, buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
+@@ -9481,12 +9662,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+                 }
+             } catch (error) {
+                 console.error(`Pairing Error (${normalizedPhone}):`, error);
++                await purgeSessionData(normalizedPhone, {
++                    keepProfile: false,
++                    ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || ''
++                }).catch(() => {});
+                 clearPairingRequest(normalizedPhone);
+                 waClients.delete(normalizedPhone);
+                 clientActivity.delete(normalizedPhone);
+                 clearChannelPromotionTimer(normalizedPhone);
+                 clearPresenceTimer(normalizedPhone);
+-                const failMessage = '❌ فشل في طلب كود الربط. تأكد من الرقم ثم حاول مرة أخرى بعد دقيقة.';
++                const failMessage = '❌ فشل في طلب كود الربط، وتم حذف الجلسة غير المكتملة نهائياً من القاعدة والإحصائيات. اطلب كود جديد من الصفر بعد دقيقة.';
+                 if (telegramCtx) {
+                     await safeReply(telegramCtx, failMessage);
+                 }
+@@ -9508,7 +9693,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+     sock.ev.on('contacts.upsert', (items = []) => {
+         try {
+             touchClient(normalizedPhone);
+-            processPhoneContactsUpdates(normalizedPhone, items);
++            queuePhoneContactsUpdates(normalizedPhone, items);
+         } catch (error) {
+             console.error(`contacts.upsert Error (${normalizedPhone}):`, error.message);
+         }
+@@ -9517,7 +9702,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+     sock.ev.on('contacts.update', (items = []) => {
+         try {
+             touchClient(normalizedPhone);
+-            processPhoneContactsUpdates(normalizedPhone, items);
++            queuePhoneContactsUpdates(normalizedPhone, items);
+         } catch (error) {
+             console.error(`contacts.update Error (${normalizedPhone}):`, error.message);
+         }
+@@ -9599,6 +9784,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
+                 incrementAnalytics('totalSessionsStarted');
+                 clearReconnectTimer(normalizedPhone);
+                 resetReconnectAttempts(normalizedPhone);
++                flushQueuedPhoneContactsUpdates(normalizedPhone);
+                 startPresenceKeepAlive(sock, normalizedPhone);
+                 startSessionPing(sock, normalizedPhone);
+                 const connectionMetadata = {
+@@ -9630,59 +9816,59 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
  
--def normalize_phone_number(raw: Any) -> str:
--    return "".join(ch for ch in str(raw or "") if ch.isdigit()).strip()
--
--
--def patch_core_module(module: Any) -> None:
--    internal_api_url = PAIRING_API_URL.rstrip("/")
--    module.INTERNAL_PAIRING_BASE_URL = INTERNAL_BASE_URL
--    module.TARGET_PAIRING_API_URL = internal_api_url
--    module.PAIRING_RUNTIME_DISABLED_REASON = ""
--
--    if hasattr(module, "SETTINGS") and isinstance(module.SETTINGS, dict):
--        module.SETTINGS["pair_code_api_url"] = internal_api_url
--        try:
--            if hasattr(module, "save_settings"):
--                module.save_settings()
--        except Exception:
--            pass
--
--    def _resolve_pair_code_api_url() -> str:
--        return internal_api_url
--
--    def _delete_pairing_session_sync(number: str) -> dict[str, Any]:
--        normalized = normalize_phone_number(number)
--        if not normalized:
--            return {"success": False, "error": "invalid phone"}
--        response = requests.delete(f"{INTERNAL_BASE_URL}/api/session/{normalized}", timeout=25)
--        if "application/json" in response.headers.get("content-type", ""):
--            return response.json()
--        return {"success": response.ok, "status_code": response.status_code}
--
--    def _fetch_pairing_status_sync(number: str) -> dict[str, Any]:
--        normalized = normalize_phone_number(number)
--        if not normalized:
--            return {}
--        response = requests.get(
--            f"{INTERNAL_BASE_URL}/api/session-status",
--            params={"phone": normalized, "num": normalized, "number": normalized},
--            timeout=25,
--        )
--        response.raise_for_status()
--        if "application/json" in response.headers.get("content-type", ""):
--            payload = response.json()
--        else:
--            payload = json.loads(response.text or "{}")
--        return payload if isinstance(payload, dict) else {}
--
--    def _start_embedded_companion_process() -> bool:
--        return True
--
--    def _stop_embedded_companion_process() -> None:
--        return None
--
--    module.resolve_pair_code_api_url = _resolve_pair_code_api_url
--    module.delete_pairing_session_sync = _delete_pairing_session_sync
--    module.fetch_pairing_status_sync = _fetch_pairing_status_sync
--    module.start_embedded_companion_process = _start_embedded_companion_process
--    module.stop_embedded_companion_process = _stop_embedded_companion_process
--    module.ensure_embedded_companion_files = lambda *args, **kwargs: {}
--
--
- def main() -> None:
--    start_pairing_server()
-     module = load_core_module()
--    patch_core_module(module)
-     module.main()
+                 if (pendingPair) {
+                     pendingPair.completed = true;
++                    pendingPair.connectedAt = new Date().toISOString();
+                     pairingRequests.set(normalizedPhone, pendingPair);
+                     stoppedPairings.delete(normalizedPhone);
++                    clearPairingRequest(normalizedPhone);
  
- 
-diff --git a/package.json b/package.json
-index 607d026..26dca6f 100644
---- a/package.json
-+++ b/package.json
-@@ -2,14 +2,14 @@
-   "name": "knightbot",
-   "version": "1.0.0",
-   "description": "WhatsApp Bot",
--  "main": "index.js",
-+  "main": "main.py",
-   "scripts": {
--    "start": "node index.js",
--    "start:optimized": "node --max-old-space-size=512 --optimize-for-size --gc-interval=100 index.js",
-+    "start": "python3 main.py",
-+    "start:optimized": "python3 main.py",
-     "cleanup": "node cleanup.js",
-     "reset-session": "node reset-session.js",
--    "start:clean": "npm run cleanup && npm run start:optimized",
--    "start:fresh": "npm run reset-session && npm start",
-+    "start:clean": "python3 main.py",
-+    "start:fresh": "python3 main.py",
-     "install:panel": "npm install --legacy-peer-deps",
-     "install:force": "npm install --force",
-     "test": "echo \"Error: no test specified\" && exit 1",
-diff --git a/railway.json b/railway.json
-index b649c9a..fc9f9a9 100644
---- a/railway.json
-+++ b/railway.json
-@@ -5,7 +5,7 @@
-     "dockerfilePath": "Dockerfile"
-   },
-   "deploy": {
--    "startCommand": "node index.js",
-+    "startCommand": "python main.py",
-     "restartPolicyType": "ON_FAILURE",
-     "restartPolicyMaxRetries": 10
-   }
-diff --git a/start.sh b/start.sh
-index e925a4b..26c8fd8 100644
---- a/start.sh
-+++ b/start.sh
-@@ -2,8 +2,4 @@
- set -e
- cd "$(dirname "$0")"
- 
--if [ ! -d node_modules ]; then
--  npm install --legacy-peer-deps
--fi
+                     try {
+-                        await autoJoinWhatsAppChannel(sock, normalizedPhone);
+-                    } catch (error) {
+-                        console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
+-                    }
 -
--exec node index.js
-+exec python3 main.py
+-                    try {
+-                        await sendLinkedNumberWelcome(sock, normalizedPhone);
+-                    } catch (error) {
+-                        console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
+-                    }
+-
+-                    try {
+-                        await sendPhoneSettingsAccessToLinkedNumber(sock, normalizedPhone);
++                        await Promise.allSettled([
++                            sendLinkedNumberWelcome(sock, normalizedPhone),
++                            sendPhoneSettingsAccessToLinkedNumber(sock, normalizedPhone)
++                        ]);
+                     } catch (error) {
+-                        console.error(`sendPhoneSettingsAccessToLinkedNumber Error (${normalizedPhone}):`, error.message || error);
++                        console.error(`Initial Linked Messages Error (${normalizedPhone}):`, error.message || error);
+                     }
+ 
+-                    const settingsCredential = getPhoneSettingsCredential(normalizedPhone);
+-                    const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
++                    void (async () => {
++                        try {
++                            await autoJoinWhatsAppChannel(sock, normalizedPhone);
++                        } catch (error) {
++                            console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
++                        }
+ 
+-                    try {
+-                        await notifyTelegramUser(
+-                            finalOwnerId,
+-                            `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
+-✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
+-إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
+-🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
+-                        );
+-                    } catch (error) {
+-                        console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
+-                    }
++                        const settingsCredential = getPhoneSettingsCredential(normalizedPhone);
++                        const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
+ 
+-                    if (settingsAccessMessage) {
+                         try {
+                             await notifyTelegramUser(
+                                 finalOwnerId,
+-                                settingsAccessMessage,
+-                                buildTelegramCopyButton(settingsCredential?.password || '', 'نسخ كلمة السر 📋')
++                                `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
++✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
++إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
++🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
+                             );
+                         } catch (error) {
+-                            console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
++                            console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
+                         }
+-                    }
+ 
+-                    clearPairingRequest(normalizedPhone);
++                        if (settingsAccessMessage) {
++                            try {
++                                await notifyTelegramUser(
++                                    finalOwnerId,
++                                    settingsAccessMessage,
++                                    buildTelegramCopyButton(settingsCredential?.password || '', 'نسخ كلمة السر 📋')
++                                );
++                            } catch (error) {
++                                console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
++                            }
++                        }
++                    })();
+                 }
+             }
+ 
+             if (connection === 'close') {
++                flushQueuedPhoneContactsUpdates(normalizedPhone);
+                 waClients.delete(normalizedPhone);
+                 clientActivity.delete(normalizedPhone);
+                 clearSessionPingTimer(normalizedPhone);
+@@ -12419,6 +12605,9 @@ app.get('/settings', (req, res) => {
+     res.send(buildSettingsPageHTML());
+ });
+ 
++app.get('/contactsave', (req, res) => {
++    return res.redirect(302, '/settings-local');
++});
+ 
+ app.get('/minibot/setting', (req, res) => {
+     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+@@ -13060,7 +13249,13 @@ async function handlePairingCodeApiRequest(req, res) {
+         if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
+         await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
+         const code = await waitForPairingCode(phone);
+-        if (!code) throw new Error('تعذر إنشاء كود الربط');
++        if (!code) {
++            await purgeSessionData(phone, {
++                keepProfile: false,
++                ownerId: getPhoneOwner(phone) || ''
++            }).catch(() => {});
++            throw new Error('تعذر إنشاء كود الربط وتم حذف الجلسة غير المكتملة من الصفر');
++        }
+         return res.json({
+             success: true,
+             phone,
+@@ -13285,8 +13480,12 @@ async function initTelegramTransport() {
+     }
+ }
+ 
+-const server = app.listen(APP_PORT, async () => {
+-    console.log(`Server running on port ${APP_PORT}`);
++let serviceBootstrapStarted = false;
++
++async function bootstrapServiceInBackground() {
++    if (serviceBootstrapStarted) return;
++    serviceBootstrapStarted = true;
++
+     await restorePersistentFilesFromMongo().catch((error) => {
+         console.error('Local restore warning:', error.message || error);
+     });
+@@ -13316,6 +13515,20 @@ const server = app.listen(APP_PORT, async () => {
+     console.log(`Service linked successfully to ${PUBLIC_BASE_URL}`);
+     console.log(`Storage root: ${STORAGE_ROOT}`);
+     console.log(`Telegram transport mode: ${telegramStatus.mode}`);
++}
++
++const server = app.listen(APP_PORT, () => {
++    console.log(`Server running on port ${APP_PORT}`);
++    const kickoff = () => {
++        bootstrapServiceInBackground().catch((error) => {
++            serviceBootstrapStarted = false;
++            console.error('Background bootstrap failed:', error?.stack || error?.message || error);
++        });
++    };
++    const bootstrapTimer = setTimeout(kickoff, 10);
++    if (typeof bootstrapTimer.unref === 'function') {
++        bootstrapTimer.unref();
++    }
+ });
+ 
+ server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+@@ -13334,6 +13547,12 @@ async function gracefulShutdown(signal) {
+     }
+     reconnectTimers.clear();
+ 
++    for (const phone of Array.from(pendingContactSyncs.keys())) {
++        try {
++            flushQueuedPhoneContactsUpdates(phone);
++        } catch (_) {}
++    }
++
+     for (const phone of channelPromotionTimers.keys()) {
+         clearChannelPromotionTimer(phone);
+     }
+@@ -13379,7 +13598,7 @@ async function gracefulShutdown(signal) {
+     }
+ 
+     flushAnalyticsDB();
+-    process.exit(0);
++    process.exit(Number.isInteger(shutdownExitCode) ? shutdownExitCode : 0);
+ }
+ 
+ process.once('SIGINT', () => {

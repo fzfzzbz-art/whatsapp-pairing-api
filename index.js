@@ -24,8 +24,6 @@ const {
     dispatchLegacyGroupParticipantsUpdate,
     preloadLegacyProjectModules
 } = require('./lib/legacyCommandBridge');
-const { attachLinkingSiteRoutes } = require('./lib/linkingSite');
-const { runWithPhoneSession } = require('./lib/phoneSessionContext');
 const {
     isRemoteSessionStoreEnabled,
     listRemoteSessions,
@@ -33,7 +31,7 @@ const {
     upsertRemoteSession,
     deleteRemoteSession,
     touchRemoteSession
-} = require('./lib/remoteSessionStore');
+} = require('./remoteSessionStore');
 
 EventEmitter.defaultMaxListeners = 0;
 
@@ -379,18 +377,9 @@ const PHONE_SETTINGS_AUTH_TTL_MS = Number(process.env.PHONE_SETTINGS_AUTH_TTL_MS
 const STATUS_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEPLOYMENT_BASE_URL = String(process.env.DEPLOYMENT_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.APP_URL || DEFAULT_BOT_LINK).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
 const DEFAULT_PUBLIC_BASE_URL = String(process.env.DEFAULT_PUBLIC_BASE_URL || DEPLOYMENT_BASE_URL || DEFAULT_BOT_LINK).trim().replace(/\/+$/, '') || DEFAULT_BOT_LINK;
-const THIRD_LINKING_SITE_PATH = (() => {
-    const rawPath = String(process.env.THIRD_LINKING_SITE_PATH || '/knightbot-freebot').trim() || '/knightbot-freebot';
-    return rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
-})();
-const THIRD_LINKING_SITE_URL = `${DEPLOYMENT_BASE_URL}${THIRD_LINKING_SITE_PATH}`;
-const LINKING_SITE_URL = `${DEPLOYMENT_BASE_URL}/linking-site`;
-const FREEBOT_SITE_URL = `${DEPLOYMENT_BASE_URL}/Freebot`;
-const DEFAULT_SITE_INFO_TEXT = [
-    '✅ هذا الرقم مربوط بنجاح.',
-    '⚙️ جميع الإعدادات والتعديلات تتم من داخل البوت فقط.',
-    '🔐 كلمة السر الخاصة بهذا الرقم تُرسل تلقائياً بعد الربط.'
-].join('\n');
+const DEFAULT_SITE_INFO_TEXT = `🌐 الموقع الرسمي: ${DEPLOYMENT_BASE_URL}
+⚙️ صفحة الإعدادات: ${DEPLOYMENT_BASE_URL}/settings
+🔗 API كود الاقتران: ${DEPLOYMENT_BASE_URL}/api/pairing`;
 const SITE_ENDPOINTS = {
     target_site_base_url: DEPLOYMENT_BASE_URL,
     target_settings_page_url: `${DEPLOYMENT_BASE_URL}/settings`,
@@ -868,13 +857,20 @@ const DEFAULT_PUBLIC_LINKED_COMMAND_MESSAGE = [
     '.set customMsg نص الرسالة — تعيين رسالة الحالة المخصصة',
     '.set statusCustomReact 😍 ❤️ 🔥 — تعيين إيموجيات التفاعل',
     '',
-    '⚙️ جميع إعدادات الرقم تتم من داخل البوت فقط.',
-    '🔐 لإظهار بيانات الدخول الحالية استخدم أمر .settings أو افتح إعدادات الرقم من بوت تيليجرام.'
+    '📢 قناة واتساب الرسمية:',
+    WHATSAPP_CHANNEL_LINK,
+    '⚙️ رابط الإعدادات:',
+    `${DEPLOYMENT_BASE_URL}/settings`,
+    '',
+    '🔗 رابط المشروع:',
+    'https://t.me/Faresw_bot'
 ].join('\n');
 const DEFAULT_LINKED_WELCOME_MESSAGE = [
     '✅ تم تسجيل رقمك بنجاح.',
-    '📱 ستصلك الآن بيانات الرقم وكلمة السر الخاصة به.',
-    '⚙️ جميع الإعدادات تتم من داخل البوت فقط.'
+    '📢 اشترك في قناة واتساب الرسمية:',
+    WHATSAPP_CHANNEL_LINK,
+    '⚙️ رابط الإعدادات:',
+    `${DEPLOYMENT_BASE_URL}/settings`
 ].join('\n');
 const DEFAULT_STATUS_LIKE_REPLY_MESSAGE = 'تمت مشاهدة الحالة بواسطة {name} ✅';
 const CHANNEL_PROMOTION_INTERVAL_MS = 5 * 60 * 1000; // كل 5 دقائق
@@ -942,6 +938,7 @@ const reconnectAttempts = new Map();
 const presenceTimers = new Map();
 const clientActivity = new Map();
 const stoppedPairings = new Set();
+const sessionStartPromises = new Map();
 const ownerReactionFlows = new Map();
 const directContactMessageSessions = new Map();
 const statusReactionNoticeCache = new Map();
@@ -957,8 +954,6 @@ const sessionSnapshotSyncTimers = new Map();
 const sessionSnapshotSyncMetadata = new Map();
 const sessionSnapshotSyncPromises = new Map();
 const phoneJobQueues = new Map();
-const clientStartPromises = new Map();
-const phoneHistorySyncSkipUntil = new Map();
 const recentStatusEvents = new Map();
 const DELETED_MESSAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DELETED_MESSAGE_BACKUPS_PER_PHONE = 600;
@@ -972,7 +967,8 @@ const CHANNEL_REACTION_MAX_DELAY_MS = 420;
 const CHANNEL_PROMOTION_KEEP_HISTORY = false;
 const PAIRING_API_ROUTE = '/api/pairing';
 const PAIRING_API_METHODS = ['GET', 'POST'];
-const PAIRING_TIMEOUT_MS = Number(process.env.PAIRING_TIMEOUT_MS || 60000);
+const PAIRING_TIMEOUT_MS = Math.max(15000, Number(process.env.PAIRING_TIMEOUT_MS || 90000));
+const PAIRING_TIMEOUT_SECONDS = Math.max(15, Math.round(PAIRING_TIMEOUT_MS / 1000));
 const RECONNECT_DELAY_MS = Number(process.env.RECONNECT_DELAY_MS || 5000);
 const MAX_RECONNECT_ATTEMPTS = Math.max(3, Number(process.env.MAX_RECONNECT_ATTEMPTS || 12));
 const SESSION_REMOTE_SYNC_DEBOUNCE_MS = Math.max(250, Number(process.env.SESSION_REMOTE_SYNC_DEBOUNCE_MS || 1500));
@@ -994,8 +990,6 @@ const SESSION_MONGO_TOUCH_INTERVAL_MS = Math.max(60000, Number(process.env.SESSI
 const RUNTIME_CLEANUP_INTERVAL_MS = Math.max(30000, Number(process.env.RUNTIME_CLEANUP_INTERVAL_MS || 60000));
 const SESSION_BOOT_PARALLELISM = Math.max(1, Math.min(16, Number(process.env.SESSION_BOOT_PARALLELISM || 4)));
 const MAX_PARALLEL_STATUS_JOBS_PER_PHONE = Math.max(1, Math.min(8, Number(process.env.MAX_PARALLEL_STATUS_JOBS_PER_PHONE || 3)));
-const MESSAGE_QUEUE_CONCURRENCY_PER_PHONE = Math.max(1, Math.min(4, Number(process.env.MESSAGE_QUEUE_CONCURRENCY_PER_PHONE || 1)));
-const INITIAL_MESSAGE_SYNC_GRACE_MS = Math.max(2000, Number(process.env.INITIAL_MESSAGE_SYNC_GRACE_MS || 10000));
 const STATUS_EVENT_DEDUPE_TTL_MS = Math.max(30000, Number(process.env.STATUS_EVENT_DEDUPE_TTL_MS || 300000));
 let sessionSupervisorStarted = false;
 let lastRuntimeCleanupAt = 0;
@@ -1438,49 +1432,7 @@ function extractSessionIdFromMongoDocument(doc = {}) {
 }
 
 async function getStoredMongoSessionEntries() {
-    const merged = new Map();
-    const localEntries = await listLocalSessionEntries();
-
-    for (const entry of localEntries) {
-        const phone = normalizePhone(entry?.phone || entry?.sessionId || '');
-        if (!phone) continue;
-        merged.set(phone, {
-            phone,
-            sessionId: phone,
-            ownerId: String(entry?.ownerId || '').trim(),
-            registered: entry?.registered === true,
-            lastConnectedAt: entry?.lastConnectedAt || null,
-            updatedAt: entry?.updatedAt || entry?.lastConnectedAt || null,
-            source: 'local'
-        });
-    }
-
-    if (isRemoteSessionStoreEnabled()) {
-        try {
-            const remoteEntries = await listRemoteSessions();
-            for (const entry of remoteEntries || []) {
-                const phone = normalizePhone(entry?.phone || entry?.sessionId || '');
-                if (!phone) continue;
-                const current = merged.get(phone) || {};
-                const currentDate = Date.parse(current?.updatedAt || current?.lastConnectedAt || 0) || 0;
-                const remoteDate = Date.parse(entry?.updatedAt || entry?.lastConnectedAt || 0) || 0;
-                const preferRemote = !currentDate || remoteDate >= currentDate;
-                merged.set(phone, {
-                    phone,
-                    sessionId: phone,
-                    ownerId: String((preferRemote ? entry?.ownerId : current?.ownerId) || entry?.ownerId || current?.ownerId || '').trim(),
-                    registered: preferRemote ? entry?.registered === true : current?.registered === true,
-                    lastConnectedAt: (preferRemote ? entry?.lastConnectedAt : current?.lastConnectedAt) || entry?.lastConnectedAt || current?.lastConnectedAt || null,
-                    updatedAt: (preferRemote ? entry?.updatedAt : current?.updatedAt) || entry?.updatedAt || current?.updatedAt || null,
-                    source: current?.source === 'local' ? 'local+remote' : 'remote'
-                });
-            }
-        } catch (error) {
-            console.error('Remote Session List Error:', error?.message || error);
-        }
-    }
-
-    return Array.from(merged.values()).sort((a, b) => (Date.parse(b?.updatedAt || b?.lastConnectedAt || 0) || 0) - (Date.parse(a?.updatedAt || a?.lastConnectedAt || 0) || 0));
+    return listLocalSessionEntries();
 }
 
 async function getMongoAuthState(phone) {
@@ -1538,7 +1490,10 @@ async function getMongoAuthState(phone) {
             lastConnectedAt: payload.lastConnectedAt
         });
 
-        await flushSessionSnapshotSync(normalizedPhone || sessionKey, payload);
+        // [STABILITY] Never block Baileys creds updates on a full session snapshot sync.
+        Promise.resolve(scheduleSessionSnapshotSync(normalizedPhone || sessionKey, payload)).catch((error) => {
+            console.error(`Deferred Session Sync Error (${normalizedPhone || sessionKey}):`, error?.message || error);
+        });
     };
 
     return { state, saveCreds };
@@ -1663,11 +1618,12 @@ function sessionHasLocalAuthFiles(phone = '') {
     return listLocalSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
 }
 
-const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
+// [STABILITY] Enable local pruning by default so large freshly-linked sessions do not block the bot.
+const LOCAL_SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.LOCAL_SESSION_PRUNE_ENABLED || 'true').trim().toLowerCase());
 const LOCAL_SESSION_FILE_LIMITS = Object.freeze({
-    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 10000)),
-    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 10000)),
-    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 10000))
+    prekey: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_PRE_KEYS || 200)),
+    session: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SIGNAL_SESSIONS || 200)),
+    sender: Math.max(20, Number(process.env.LOCAL_SESSION_MAX_SENDER_KEYS || 200))
 });
 
 function classifySessionJsonFile(fileName = '') {
@@ -2822,9 +2778,6 @@ function formatLinkedTemplate(template, phone = '') {
         .replaceAll('{prefix}', String(phoneSettings.prefix || DEFAULT_PHONE_SETTINGS.prefix || '.'))
         .replaceAll('{botLink}', String(botLink || ''))
         .replaceAll('{channelLink}', WHATSAPP_CHANNEL_LINK)
-        .replaceAll('{thirdSite}', THIRD_LINKING_SITE_URL)
-        .replaceAll('{freebotSite}', FREEBOT_SITE_URL)
-        .replaceAll('{linkingSite}', LINKING_SITE_URL)
         .trim();
 }
 
@@ -2962,13 +2915,13 @@ function buildPhoneSettingsAccessMessage(phone, appId = null) {
     const credential = getPhoneSettingsCredential(phone, appId);
     if (!credential) return '';
     return [
-        `🔐 بيانات دخول إعدادات الرقم ${credential.phone}`,
+        `🔐 بيانات دخول لوحة إعدادات الرقم ${credential.phone}`,
         '',
+        `🌐 الرابط: ${SITE_ENDPOINTS.target_settings_page_url}`,
         `📱 الرقم: ${credential.phone}`,
         `🗝️ كلمة السر: ${credential.password}`,
         '',
-        'هذه الكلمة خاصة بهذا الرقم فقط.',
-        '⚙️ تعديل الإعدادات يتم من داخل البوت فقط.'
+        'هذه الكلمة خاصة بهذا الرقم فقط.'
     ].join('\n');
 }
 
@@ -3802,43 +3755,6 @@ function enqueuePhoneJob(phone, job, maxConcurrent = 1) {
     });
 }
 
-function armPhoneHistorySyncGuard(phone, graceMs = INITIAL_MESSAGE_SYNC_GRACE_MS) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return 0;
-    const expiresAt = Date.now() + Math.max(1000, Number(graceMs) || INITIAL_MESSAGE_SYNC_GRACE_MS);
-    phoneHistorySyncSkipUntil.set(normalizedPhone, expiresAt);
-    return expiresAt;
-}
-
-function clearPhoneHistorySyncGuard(phone) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return;
-    phoneHistorySyncSkipUntil.delete(normalizedPhone);
-}
-
-function shouldSkipRecentMessageReplay(phone, msg = {}) {
-    const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone) return false;
-    const skipUntil = Number(phoneHistorySyncSkipUntil.get(normalizedPhone) || 0);
-    if (!skipUntil || Date.now() >= skipUntil) return false;
-    if (msg?.key?.fromMe === true) return false;
-    return true;
-}
-
-async function runPhoneScoped(phone, task) {
-    const normalizedPhone = normalizePhone(phone);
-    return runWithPhoneSession(normalizedPhone, async () => {
-        return await task();
-    });
-}
-
-function queueIncomingPhoneMessage(phone, task) {
-    const normalizedPhone = normalizePhone(phone);
-    return enqueuePhoneJob(normalizedPhone, async () => {
-        return await runPhoneScoped(normalizedPhone, task);
-    }, MESSAGE_QUEUE_CONCURRENCY_PER_PHONE);
-}
-
 function clearSessionPingTimer(phone) {
     const normalized = normalizePhone(phone);
     const timer = sessionPingTimers.get(normalized);
@@ -3913,6 +3829,7 @@ function startPresenceKeepAlive(sock, phone) {
             await sock.sendPresenceUpdate('available');
         } catch (_) {}
     }, 45000);
+    if (typeof timer.unref === 'function') timer.unref();
     presenceTimers.set(normalized, timer);
 }
 
@@ -4339,7 +4256,8 @@ function getPhoneSettingsKeyboard(phone) {
                     Markup.button.callback('إظهار كلمة السر 🔑', `settings_revealpass_${cleanPhone}`),
                     Markup.button.callback('تحديث العرض 🔄', `settings_dashboard_${cleanPhone}`)
                 ],
-                [Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)]
+                [Markup.button.callback('قفل الإعدادات 🔒', `settings_lock_${cleanPhone}`)],
+                [Markup.button.url('واجهة الويب 🌐', `${SITE_ENDPOINTS.target_site_base_url}`)]
             ]
         }
     };
@@ -6354,39 +6272,6 @@ function getDashboardStats(phone) {
     };
 }
 
-function buildLinkingSiteSummaryExtras() {
-    const analytics = getAnalyticsDB();
-    const linkedPhones = Array.from(new Set(getAllLinkedPhones().map((phone) => normalizePhone(phone)).filter(Boolean)));
-    const onlineBots = linkedPhones.filter((phone) => waClients.has(phone)).length;
-    const storedSessions = Object.keys(getSessionStoreDB().sessions || {}).length;
-    let commandsCount = 0;
-    try {
-        commandsCount = fs.readdirSync(path.join(__dirname, 'commands')).filter((name) => name.endsWith('.js')).length;
-    } catch (_) {}
-
-    return {
-        onlineBots,
-        storedSessions,
-        commandsCount,
-        analytics: {
-            totalIncomingMessages: Number(analytics.totalIncomingMessages || 0),
-            totalStatusEvents: Number(analytics.totalStatusEvents || 0),
-            totalStatusReactions: Number(analytics.totalStatusReactions || 0),
-            totalOwnerReplies: Number(analytics.totalOwnerReplies || 0),
-            totalReconnects: Number(analytics.totalReconnects || 0),
-            totalSessionsStarted: Number(analytics.totalSessionsStarted || 0)
-        },
-        routes: {
-            main: DEPLOYMENT_BASE_URL,
-            linkingSite: LINKING_SITE_URL,
-            freebot: FREEBOT_SITE_URL,
-            thirdSite: THIRD_LINKING_SITE_URL,
-            settings: SITE_ENDPOINTS.target_settings_page_url,
-            pairing: buildPairingApiDescriptor('').endpoint
-        }
-    };
-}
-
 function isAdmin(userId) {
     const settings = getSettings();
     return (settings.admins || []).map(String).includes(String(userId));
@@ -6423,7 +6308,9 @@ function buildLinkedNumberCommandsOverview(phone = '') {
         '.bot / .help / الاوامر — عرض جميع أوامر الرقم المربوط بالعربي',
         '.settings / الإعدادات — عرض إعدادات الرقم الحالية',
         ...buildLinkedOwnerQuickCommands(phone),
-        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت فقط.',
+        '⚙️ جميع إعدادات الرقم تُدار من داخل البوت ولوحة الإعدادات.',
+        `🌐 رابط الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`,
+        `📢 قناة واتساب الرسمية: ${WHATSAPP_CHANNEL_LINK}`,
         '🤖 الردود التلقائية المخصصة تعمل من خلال إعدادات البوت ولكل رقم إعداداته المستقلة.',
         '🛡️ المطور يقدر يضيف ردود ورسائل عامة تنطبق على كل الأرقام المربوطة.'
     ].join('\n');
@@ -7939,8 +7826,6 @@ async function purgeSessionData(phone) {
     if (!normalized) return;
     clearReconnectTimer(normalized);
     clearSessionSnapshotSyncState(normalized);
-    clearPhoneHistorySyncGuard(normalized);
-    clientStartPromises.delete(normalized);
     clearPairingRequest(normalized);
     clearChannelPromotionTimer(normalized);
     clearPresenceTimer(normalized);
@@ -8067,6 +7952,35 @@ function bumpReconnectAttempts(phone) {
     return next;
 }
 
+async function prepareFreshSessionReplacement(phone, ownerId = '', reason = 'fresh_session') {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    const existingSock = waClients.get(normalized);
+
+    clearReconnectTimer(normalized);
+    clearSessionSnapshotSyncState(normalized);
+    clearPairingRequest(normalized);
+    clearPresenceTimer(normalized);
+    clearGhostPendingMessagesForPhone(normalized);
+    stoppedPairings.delete(normalized);
+    clientActivity.delete(normalized);
+
+    if (existingSock) {
+        try { await existingSock.logout?.(); } catch (_) {}
+        try { existingSock.ws?.close?.(); } catch (_) {}
+        try { existingSock.end?.(); } catch (_) {}
+        waClients.delete(normalized);
+    }
+
+    await deleteMongoSessionState(normalized);
+
+    if (ownerId) {
+        addLinkedNumber(ownerId, normalized);
+    }
+
+    return true;
+}
+
 async function cleanupSessionAfterReconnectFailure(phone, ownerId = null, reason = '') {
     const normalized = normalizePhone(phone);
     if (!normalized) return false;
@@ -8088,14 +8002,15 @@ async function cleanupSessionAfterReconnectFailure(phone, ownerId = null, reason
         waClients.delete(normalized);
     }
 
+    await deleteMongoSessionState(normalized);
+    deletePhoneSettings(normalized);
+    clearPhoneSettingsAuthForPhone(normalized);
+    removeLinkedNumber(normalized);
+
     if (resolvedOwnerId) {
         const suffix = reason ? `
 السبب: ${reason}` : '';
-        await notifyTelegramUser(
-            resolvedOwnerId,
-            `⚠️ توقفت محاولة إعادة الاتصال التلقائي مؤقتاً للرقم ${normalized}.${suffix}
-✅ تم الاحتفاظ بالجلسة والملفات والإعدادات كما هي، وسيستطيع البوت استعادتها تلقائياً عند التشغيل التالي أو عند توفر الاتصال من جديد.`
-        );
+        await notifyTelegramUser(resolvedOwnerId, `⚠️ تم حذف جلسة الرقم ${normalized} من البوت لأن إعادة الاتصال فشلت مرتين ولم يتم الاتصال بواتساب.${suffix}`);
     }
 
     return true;
@@ -8107,8 +8022,13 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
 
     const attemptNumber = bumpReconnectAttempts(normalized);
     if (attemptNumber > MAX_RECONNECT_ATTEMPTS) {
-        console.warn(`Reconnect attempts exceeded for ${normalized}; session will be preserved and retries will continue.`);
-        resetReconnectAttempts(normalized);
+        clearReconnectTimer(normalized);
+        void cleanupSessionAfterReconnectFailure(
+            normalized,
+            ownerId || getPhoneOwner(normalized),
+            `تجاوز الحد الأقصى لمحاولات إعادة الاتصال (${MAX_RECONNECT_ATTEMPTS})`
+        );
+        return;
     }
 
     incrementAnalytics('totalReconnects');
@@ -8121,7 +8041,7 @@ function scheduleReconnect(phone, ownerId = null, delay = RECONNECT_DELAY_MS) {
             console.error(`Reconnect Error (${normalized}) [attempt ${attemptNumber}]:`, error.message);
             scheduleReconnect(normalized, ownerId || getPhoneOwner(normalized), RECONNECT_DELAY_MS);
         }
-    }, Math.max(RECONNECT_DELAY_MS, Number(delay) || RECONNECT_DELAY_MS));
+    }, delay);
 
     if (typeof timer.unref === 'function') {
         timer.unref();
@@ -8160,7 +8080,7 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
 
         await notifyTelegramUser(
             telegramUserId || existing.telegramUserId,
-            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد 60 ثانية.
+            `⏱️ انتهت مدة كود اقتران الرقم ${normalized} بعد ${PAIRING_TIMEOUT_SECONDS} ثانية.
 الرجاء إرسال رقمك من جديد للحصول على كود جديد.`
         );
 
@@ -8181,7 +8101,7 @@ function schedulePairingTimeout(phone, telegramUserId, sessionPath, sock) {
     });
 }
 
-async function waitForPairingCode(phone, timeoutMs = 20000) {
+async function waitForPairingCode(phone, timeoutMs = Math.max(30000, PAIRING_TIMEOUT_MS)) {
     const normalized = normalizePhone(phone);
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
@@ -9130,13 +9050,12 @@ function isLinkedPhoneOwnerMessage(sock, phoneNumber, msg) {
 }
 
 async function handleIncomingMessage(sock, phoneNumber, msg) {
-    return runPhoneScoped(phoneNumber, async () => {
-        try {
-            if (!msg?.message) return;
-            const from = normalizeWhatsAppJid(msg.key?.remoteJid);
-            if (!from) return;
+    try {
+        if (!msg?.message) return;
+        const from = normalizeWhatsAppJid(msg.key?.remoteJid);
+        if (!from) return;
 
-            const settings = getActivePhoneSettings(phoneNumber);
+        const settings = getActivePhoneSettings(phoneNumber);
 
         if (!msg.key?.fromMe && settings.ghostMode === 'on' && from !== 'status@broadcast') {
             await applyLivePhoneSettingsSideEffects(phoneNumber);
@@ -9234,40 +9153,48 @@ async function handleIncomingMessage(sock, phoneNumber, msg) {
             console.error(`Linked Auto Reply Error (${phoneNumber}):`, error.message);
         }
 
-            return;
-        } catch (error) {
-            console.error(`Incoming Message Error (${phoneNumber}):`, error.message);
-        }
-    });
+        return;
+    } catch (error) {
+        console.error(`Incoming Message Error (${phoneNumber}):`, error.message);
+    }
 }
 
 async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pairingNotifier = null, options = {}) {
     const normalizedPhone = normalizePhone(phoneNumber);
     const bootRestore = options?.bootRestore === true;
+    const forceFreshSession = options?.forceFreshSession === true;
     if (!normalizedPhone) return null;
 
-    clearReconnectTimer(normalizedPhone);
-    stoppedPairings.delete(normalizedPhone);
-
-    const existing = waClients.get(normalizedPhone);
-    if (existing) {
-        touchClient(normalizedPhone);
-        return existing;
-    }
-
-    if (clientStartPromises.has(normalizedPhone)) {
-        return clientStartPromises.get(normalizedPhone);
+    const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
+    const inflightStart = sessionStartPromises.get(normalizedPhone);
+    if (inflightStart) {
+        if (!forceFreshSession) {
+            return inflightStart;
+        }
+        throw new Error('يوجد تشغيل أو استعادة جاري لهذا الرقم، انتظر قليلاً ثم أعد المحاولة');
     }
 
     const startPromise = (async () => {
+        clearReconnectTimer(normalizedPhone);
+        stoppedPairings.delete(normalizedPhone);
+
+        if (forceFreshSession) {
+            await prepareFreshSessionReplacement(normalizedPhone, requestedOwnerId, String(options?.replaceReason || 'fresh_session'));
+        }
+
+        const existing = waClients.get(normalizedPhone);
+        if (existing) {
+            touchClient(normalizedPhone);
+            return existing;
+        }
+
         const sessionPath = getSessionPath(normalizedPhone);
         const autoRequestPairingCode = options?.autoRequestPairingCode !== false;
 
         const { state, saveCreds } = await getMongoAuthState(normalizedPhone);
         const { version } = await getCachedBaileysVersion();
-        const requestedOwnerId = String(ownerId || telegramCtx?.from?.id || getPhoneOwner(normalizedPhone) || '');
 
-        const sock = makeWASocket({
+    const sock = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
@@ -9280,23 +9207,38 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         markOnlineOnConnect: false
     });
 
-        sock.ev.setMaxListeners?.(0);
-        sock.ws?.setMaxListeners?.(0);
+    sock.ev.setMaxListeners?.(0);
+    sock.ws?.setMaxListeners?.(0);
 
-        waClients.set(normalizedPhone, sock);
-        touchClient(normalizedPhone);
-        armPhoneHistorySyncGuard(normalizedPhone);
+    waClients.set(normalizedPhone, sock);
+    touchClient(normalizedPhone);
 
-        if (!state.creds.registered && autoRequestPairingCode) {
+    if (!state.creds.registered && autoRequestPairingCode) {
         void (async () => {
             try {
                 const requestDelayMs = Math.max(500, Number(process.env.PAIRING_CODE_REQUEST_DELAY_MS || 1200));
-                const requestTimeoutMs = Math.max(8000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 20000));
+                const requestTimeoutMs = Math.max(12000, Number(process.env.PAIRING_CODE_REQUEST_TIMEOUT_MS || 30000));
+                const requestAttempts = Math.max(1, Number(process.env.PAIRING_CODE_REQUEST_ATTEMPTS || 2));
                 await new Promise((resolve) => setTimeout(resolve, requestDelayMs));
-                const code = await Promise.race([
-                    sock.requestPairingCode(normalizedPhone),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
-                ]);
+                let code = '';
+                let lastPairingError = null;
+                for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
+                    try {
+                        code = await Promise.race([
+                            sock.requestPairingCode(normalizedPhone),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out')), requestTimeoutMs))
+                        ]);
+                        if (code) break;
+                    } catch (error) {
+                        lastPairingError = error;
+                        if (attempt < requestAttempts) {
+                            await new Promise((resolve) => setTimeout(resolve, Math.min(2500, requestDelayMs * attempt)));
+                        }
+                    }
+                }
+                if (!code) {
+                    throw (lastPairingError || new Error('Pairing code request timed out'));
+                }
                 schedulePairingTimeout(normalizedPhone, requestedOwnerId, sessionPath, sock);
                 pairingRequests.set(normalizedPhone, {
                     ...(pairingRequests.get(normalizedPhone) || {}),
@@ -9310,7 +9252,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
 \`${code}\`
 
 🔐 افتح واتساب > الأجهزة المرتبطة > ربط جهاز > ثم أدخل الكود.
-⏳ إذا لم يتم إكمال الربط خلال 60 ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
+⏳ إذا لم يتم إكمال الربط خلال ${PAIRING_TIMEOUT_SECONDS} ثانية سيتم إنهاء الكود تلقائياً ويجب طلب كود جديد.`;
 
                 if (telegramCtx) {
                     await safeReply(telegramCtx, pairingMessage, buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
@@ -9337,7 +9279,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         })();
     }
 
-        sock.ev.on('creds.update', async () => {
+    sock.ev.on('creds.update', async () => {
         touchClient(normalizedPhone);
         await saveCreds({
             ownerId: requestedOwnerId || getPhoneOwner(normalizedPhone) || '',
@@ -9345,7 +9287,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         });
     });
 
-        sock.ev.on('contacts.upsert', (items = []) => {
+    sock.ev.on('contacts.upsert', (items = []) => {
         try {
             touchClient(normalizedPhone);
             processPhoneContactsUpdates(normalizedPhone, items);
@@ -9354,7 +9296,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
-        sock.ev.on('contacts.update', (items = []) => {
+    sock.ev.on('contacts.update', (items = []) => {
         try {
             touchClient(normalizedPhone);
             processPhoneContactsUpdates(normalizedPhone, items);
@@ -9363,51 +9305,40 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
-        sock.ev.on('messages.upsert', async (payload) => {
-            try {
-                touchClient(normalizedPhone);
-                const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-                for (const msg of messages) {
-                    if (shouldSkipRecentMessageReplay(normalizedPhone, msg)) continue;
-                    void queueIncomingPhoneMessage(normalizedPhone, async () => {
-                        await handleIncomingMessage(sock, normalizedPhone, msg);
-                    }).catch((error) => {
-                        console.error(`Queued messages.upsert Error (${normalizedPhone}):`, error?.message || error);
-                    });
-                }
-            } catch (error) {
-                console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
+    sock.ev.on('messages.upsert', async (payload) => {
+        try {
+            touchClient(normalizedPhone);
+            const messages = payload?.messages || [];
+            for (const msg of messages) {
+                await handleIncomingMessage(sock, normalizedPhone, msg);
             }
-        });
+        } catch (error) {
+            console.error(`messages.upsert Error (${normalizedPhone}):`, error.message);
+        }
+    });
 
-        sock.ev.on('messages.update', async (updates = []) => {
-            try {
-                touchClient(normalizedPhone);
-                for (const item of updates) {
-                    if (!item?.update) continue;
-                    const syntheticMessage = {
-                        key: item.key,
-                        message: item.update,
-                        participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
-                    };
-                    if (shouldSkipRecentMessageReplay(normalizedPhone, syntheticMessage)) continue;
-                    const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
-                    const updateContent = unwrapMessageContent(item.update);
-                    const isStatusUpdate = remoteJid === 'status@broadcast';
-                    const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
-                    if (!isStatusUpdate && !isRevocationUpdate) continue;
-                    void queueIncomingPhoneMessage(normalizedPhone, async () => {
-                        await handleIncomingMessage(sock, normalizedPhone, syntheticMessage);
-                    }).catch((error) => {
-                        console.error(`Queued messages.update Error (${normalizedPhone}):`, error?.message || error);
-                    });
-                }
-            } catch (error) {
-                console.error(`messages.update Error (${normalizedPhone}):`, error.message);
+    sock.ev.on('messages.update', async (updates = []) => {
+        try {
+            touchClient(normalizedPhone);
+            for (const item of updates) {
+                if (!item?.update) continue;
+                const remoteJid = normalizeWhatsAppJid(item?.key?.remoteJid);
+                const updateContent = unwrapMessageContent(item.update);
+                const isStatusUpdate = remoteJid === 'status@broadcast';
+                const isRevocationUpdate = Boolean(updateContent?.protocolMessage?.key?.id);
+                if (!isStatusUpdate && !isRevocationUpdate) continue;
+                await handleIncomingMessage(sock, normalizedPhone, {
+                    key: item.key,
+                    message: item.update,
+                    participant: item.key?.participant || item.update?.protocolMessage?.key?.participant
+                });
             }
-        });
+        } catch (error) {
+            console.error(`messages.update Error (${normalizedPhone}):`, error.message);
+        }
+    });
 
-        sock.ev.on('group-participants.update', async (update) => {
+    sock.ev.on('group-participants.update', async (update) => {
         try {
             touchClient(normalizedPhone);
             await dispatchLegacyGroupParticipantsUpdate(sock, normalizedPhone, update);
@@ -9416,7 +9347,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
-        sock.ev.on('call', async (calls = []) => {
+    sock.ev.on('call', async (calls = []) => {
         try {
             const settings = getActivePhoneSettings(normalizedPhone);
             if (settings.antiCall !== 'on') return;
@@ -9439,7 +9370,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
         }
     });
 
-        sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', async (update) => {
         touchClient(normalizedPhone);
         const { connection, lastDisconnect } = update;
         const pendingPair = pairingRequests.get(normalizedPhone);
@@ -9450,7 +9381,6 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 incrementAnalytics('totalSessionsStarted');
                 clearReconnectTimer(normalizedPhone);
                 resetReconnectAttempts(normalizedPhone);
-                armPhoneHistorySyncGuard(normalizedPhone);
                 startPresenceKeepAlive(sock, normalizedPhone);
                 startSessionPing(sock, normalizedPhone);
                 const connectionMetadata = {
@@ -9460,7 +9390,9 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                 };
 
                 await touchMongoSessionState(normalizedPhone, connectionMetadata);
-                await flushSessionSnapshotSync(normalizedPhone, connectionMetadata);
+                Promise.resolve(scheduleSessionSnapshotSync(normalizedPhone, connectionMetadata)).catch((error) => {
+                    console.error(`Deferred Open Session Sync Error (${normalizedPhone}):`, error?.message || error);
+                });
 
                 try {
                     await applyLivePhoneSettingsSideEffects(normalizedPhone);
@@ -9485,50 +9417,55 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
                     pairingRequests.set(normalizedPhone, pendingPair);
                     stoppedPairings.delete(normalizedPhone);
 
-                    try {
-                        await autoJoinWhatsAppChannel(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    try {
-                        await sendLinkedNumberWelcome(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
-                    }
-
-                    try {
-                        await sendPhoneSettingsAccessToLinkedNumber(sock, normalizedPhone);
-                    } catch (error) {
-                        console.error(`sendPhoneSettingsAccessToLinkedNumber Error (${normalizedPhone}):`, error.message || error);
-                    }
-
                     const settingsCredential = getPhoneSettingsCredential(normalizedPhone);
                     const settingsAccessMessage = buildPhoneSettingsAccessMessage(normalizedPhone);
 
-                    try {
-                        await notifyTelegramUser(
-                            finalOwnerId,
-                            `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
-✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
-إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
-🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
-                        );
-                    } catch (error) {
-                        console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
-                    }
+                    // [STABILITY] Run post-link notifications/tasks in background so successful pairing never stalls the bot.
+                    Promise.resolve().then(async () => {
+                        try {
+                            await autoJoinWhatsAppChannel(sock, normalizedPhone);
+                        } catch (error) {
+                            console.error(`autoJoinWhatsAppChannel Error (${normalizedPhone}):`, error.message || error);
+                        }
 
-                    if (settingsAccessMessage) {
+                        try {
+                            await sendLinkedNumberWelcome(sock, normalizedPhone);
+                        } catch (error) {
+                            console.error(`sendLinkedNumberWelcome Error (${normalizedPhone}):`, error.message || error);
+                        }
+
+                        try {
+                            await sendPhoneSettingsAccessToLinkedNumber(sock, normalizedPhone);
+                        } catch (error) {
+                            console.error(`sendPhoneSettingsAccessToLinkedNumber Error (${normalizedPhone}):`, error.message || error);
+                        }
+
                         try {
                             await notifyTelegramUser(
                                 finalOwnerId,
-                                settingsAccessMessage,
-                                buildTelegramCopyButton(settingsCredential?.password || '', 'نسخ كلمة السر 📋')
+                                `✅ تم ربط الرقم ${normalizedPhone} بنجاح وهو الآن يعمل بإعادة اتصال ومراقبة تلقائية.
+✨ تم تفعيل قراءة الحالات والتفاعل عليها تلقائيًا لهذا الرقم مباشرة بعد الربط.
+إيموجي التفاعل الحالي: ${getPhoneEmoji(normalizedPhone)}
+🔐 تم حفظ جلسة الرقم وإعداداته الخاصة به داخل ملفات المشروع الخاصة بهذا الرقم.`
                             );
                         } catch (error) {
-                            console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
+                            console.error(`notifyTelegramUser Success Message Error (${normalizedPhone}):`, error.message || error);
                         }
-                    }
+
+                        if (settingsAccessMessage) {
+                            try {
+                                await notifyTelegramUser(
+                                    finalOwnerId,
+                                    settingsAccessMessage,
+                                    buildTelegramCopyButton(settingsCredential?.password || '', 'نسخ كلمة السر 📋')
+                                );
+                            } catch (error) {
+                                console.error(`notifyTelegramUser Settings Message Error (${normalizedPhone}):`, error.message || error);
+                            }
+                        }
+                    }).catch((error) => {
+                        console.error(`Post Link Tasks Error (${normalizedPhone}):`, error?.message || error);
+                    });
 
                     clearPairingRequest(normalizedPhone);
                 }
@@ -9537,8 +9474,7 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
             if (connection === 'close') {
                 waClients.delete(normalizedPhone);
                 clientActivity.delete(normalizedPhone);
-                clearSessionPingTimer(normalizedPhone);
-                clearPhoneHistorySyncGuard(normalizedPhone);
+                clearPresenceTimer(normalizedPhone);
 
                 const corruptedBootSession = bootRestore && shouldDiscardCorruptedBootSession(lastDisconnect);
                 const permanentDisconnect = isPermanentDisconnect(lastDisconnect);
@@ -9584,12 +9520,16 @@ async function startWhatsApp(phoneNumber, telegramCtx = null, ownerId = null, pa
     });
 
         return sock;
-    })().finally(() => {
-        clientStartPromises.delete(normalizedPhone);
-    });
+    })();
 
-    clientStartPromises.set(normalizedPhone, startPromise);
-    return startPromise;
+    sessionStartPromises.set(normalizedPhone, startPromise);
+    try {
+        return await startPromise;
+    } finally {
+        if (sessionStartPromises.get(normalizedPhone) === startPromise) {
+            sessionStartPromises.delete(normalizedPhone);
+        }
+    }
 }
 
 async function createBotInstance(sessionId, ownerId = '') {
@@ -9628,7 +9568,8 @@ async function initializeSessions() {
             }
             const preparation = await ensureSessionStateReady(session.sessionId);
             if (!preparation.ready) {
-                console.log(`⚠️ تعذر تشغيل جلسة ${session.sessionId} أثناء الإقلاع حالياً، سيتم الاحتفاظ بها للمحاولة لاحقاً.`);
+                console.log(`⚠️ حذف جلسة غير صالحة أثناء الإقلاع: ${session.sessionId}`);
+                await purgeSessionData(session.sessionId);
                 return;
             }
 
@@ -9642,7 +9583,8 @@ async function initializeSessions() {
             const errorText = String(error?.data || error?.message || error?.stack || '').toLowerCase();
             const shouldDeleteSession = statusCode === 401 || /(decrypt|decryption|failed to decrypt|cannot decrypt|closed session|session closed|no session|prekey|pre-key|bad mac|invalid mac|message counter|stale key|sender key)/i.test(errorText);
             if (shouldDeleteSession) {
-                console.log(`⚠️ جلسة ${session.sessionId} واجهت ملفات غير متوافقة أثناء الإقلاع، وتم الاحتفاظ بها لإعادة المحاولة أو الاستعادة من التخزين البعيد.`);
+                console.log(`⚠️ حذف جلسة تالفة أثناء الإقلاع: ${session.sessionId}`);
+                await purgeSessionData(session.sessionId);
             }
         }
     });
@@ -12228,20 +12170,6 @@ function buildUnifiedSettingsHubHTML() {
 </html>`;
 }
 
-attachLinkingSiteRoutes(app, {
-    dataDir: DATA_DIR,
-    normalizePhone,
-    buildSettingsPageHTML,
-    getAllLinkedPhones,
-    getAllUserIds,
-    buildPairingApiDescriptor,
-    getSummaryExtras: buildLinkingSiteSummaryExtras,
-    siteName: 'KnightBot Freebot',
-    routeBase: THIRD_LINKING_SITE_PATH,
-    aliases: ['/linking-site', '/Freebot', THIRD_LINKING_SITE_PATH],
-    adminPassword: SITE_PASSWORD
-});
-
 app.get('/settings-local', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(buildSettingsPageHTML());
@@ -12588,7 +12516,7 @@ bot.command('paircode', async (ctx) => {
     }
     await safeReply(ctx, `⏳ جارٍ إنشاء كود الاقتران للرقم ${phone} عبر ${SITE_ENDPOINTS.target_site_base_url}`);
     try {
-        await startWhatsApp(phone, null, ctx.from.id, null, { autoRequestPairingCode: true });
+        await startWhatsApp(phone, null, ctx.from.id, null, { autoRequestPairingCode: true, forceFreshSession: true, replaceReason: 'telegram_paircode' });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الاقتران');
         return safeReply(ctx, [
@@ -12596,7 +12524,8 @@ bot.command('paircode', async (ctx) => {
             '',
             `\`${code}\``,
             '',
-            '⚙️ بعد الربط ستصل بيانات الرقم وكلمة السر تلقائياً.'
+            `🌐 الموقع: ${SITE_ENDPOINTS.target_site_base_url}`,
+            `⚙️ الإعدادات: ${SITE_ENDPOINTS.target_settings_page_url}`
         ].join('\n'), buildTelegramCopyButton(code, 'نسخ كود الاقتران 📋'));
     } catch (error) {
         return safeReply(ctx, `❌ فشل إنشاء كود الاقتران: ${error.message || 'خطأ غير متوقع.'}`);
@@ -12879,11 +12808,24 @@ async function handlePairingCodeApiRequest(req, res) {
         if (!isPairingApiAuthorized(req)) {
             return res.status(401).json({ success: false, error: 'Unauthorized pairing API request' });
         }
-        const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(req.body || {}));
+        const sourcePayload = req.method === 'GET' ? (req.query || {}) : ({ ...(req.query || {}), ...(req.body || {}) });
+        const phoneValidation = parseStrictPhoneInput(extractPairingPhoneCandidate(sourcePayload));
         if (!phoneValidation.ok) return res.status(400).json({ success: false, error: phoneValidation.error });
         const phone = phoneValidation.phone;
-        if (pairingRequests.has(phone)) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
-        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true });
+        const existingPairing = pairingRequests.get(phone);
+        if (existingPairing?.code) {
+            return res.json({
+                success: true,
+                phone,
+                num: phone,
+                phoneNumber: phone,
+                code: existingPairing.code,
+                website: SITE_ENDPOINTS.target_site_base_url,
+                settingsPage: SITE_ENDPOINTS.target_settings_page_url
+            });
+        }
+        if (existingPairing) return res.status(409).json({ success: false, error: 'يوجد كود ربط جاري لهذا الرقم، انتظر قليلاً' });
+        await startWhatsApp(phone, null, null, null, { autoRequestPairingCode: true, forceFreshSession: true, replaceReason: 'pairing_api_request' });
         const code = await waitForPairingCode(phone);
         if (!code) throw new Error('تعذر إنشاء كود الربط');
         return res.json({
@@ -12901,10 +12843,14 @@ async function handlePairingCodeApiRequest(req, res) {
 }
 
 app.post('/api/pair', async (req, res) => handlePairingCodeApiRequest(req, res));
+app.get('/api/pair', async (req, res) => handlePairingCodeApiRequest(req, res));
 
-app.get('/api/pairing', (req, res) => {
+app.get('/api/pairing', async (req, res) => {
     try {
         const phone = normalizePhone(extractPairingPhoneCandidate(req.query || {}));
+        if (phone) {
+            return handlePairingCodeApiRequest(req, res);
+        }
         return res.json({
             success: true,
             ...buildPairingApiDescriptor(phone)
@@ -13096,11 +13042,7 @@ async function initTelegramTransport() {
     }
 
     try {
-        if (String(process.env.DISABLE_TELEGRAM_BOT || '').trim().toLowerCase() !== 'true') {
-            await bot.launch({ dropPendingUpdates: false });
-        } else {
-            console.log('Telegram bot launch skipped in companion mode.');
-        }
+        await bot.launch({ dropPendingUpdates: false });
         console.log('Telegram polling started successfully');
         return { enabled: true, mode: 'polling' };
     } catch (error) {

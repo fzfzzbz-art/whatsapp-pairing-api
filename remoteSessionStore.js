@@ -7,11 +7,11 @@ const DEFAULT_REMOTE_SESSION_STORE_URI = DEFAULT_MONGODB_URI;
 const ENABLE_REMOTE_SESSION_STORE = ['1', 'true', 'yes', 'on'].includes(String(process.env.ENABLE_REMOTE_SESSION_STORE || 'true').trim().toLowerCase());
 const SESSION_COLLECTION_NAME = String(process.env.MONGODB_SESSIONS_COLLECTION || 'whatsapp_sessions').trim() || 'whatsapp_sessions';
 const SESSION_COMPRESSION_MIN_BYTES = Math.max(256, Number(process.env.SESSION_COMPRESSION_MIN_BYTES || 512));
-const SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.SESSION_PRUNE_ENABLED || 'true').trim().toLowerCase());
-const SESSION_STORE_MAX_BYTES = Math.max(256 * 1024, Number(process.env.SESSION_STORE_MAX_BYTES || (4 * 1024 * 1024)));
-const SESSION_MAX_PRE_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_PRE_KEYS || 250));
-const SESSION_MAX_SIGNAL_SESSIONS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SIGNAL_SESSIONS || 200));
-const SESSION_MAX_SENDER_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SENDER_KEYS || 150));
+const SESSION_PRUNE_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.SESSION_PRUNE_ENABLED || 'false').trim().toLowerCase());
+const SESSION_STORE_MAX_BYTES = Math.max(256 * 1024, Number(process.env.SESSION_STORE_MAX_BYTES || (12 * 1024 * 1024)));
+const SESSION_MAX_PRE_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_PRE_KEYS || 10000));
+const SESSION_MAX_SIGNAL_SESSIONS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SIGNAL_SESSIONS || 10000));
+const SESSION_MAX_SENDER_KEYS = Math.max(20, Number(process.env.SESSION_STORE_MAX_SENDER_KEYS || 10000));
 
 
 function normalizePhone(phone = '') {
