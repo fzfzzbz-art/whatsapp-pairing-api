@@ -1,38 +1,244 @@
-# WhatsApp Pairing API — Fixed (no more crashes)
+# 🤖 Knight Bot
 
-## ⚠️ Important Technical Note
+This is a WhatsApp bot built using the Baileys library for group management, including features like tagging all members, muting/unmuting, and many more. It's designed to help admins efficiently manage WhatsApp groups.
 
-This project uses `@whiskeysockets/baileys` which is **a Node.js-only library** and has no Python equivalent. Rather than trying to rewrite Baileys in Python (impossible), this fix keeps Baileys in Node.js (`main.js`) but makes it **crash-proof**:
+<div align="center"> 
+  <a href="https://git.io/typing-svg"> 
+    <img src="https://readme-typing-svg.demolab.com?font=Ribeye&size=50&pause=1000&color=33ff00&center=true&width=910&height=100&lines=Knight-Bot;Multi+Device+Whatsapp+Bot;Coded+By+Professor" alt="Typing SVG" />
+  </a> 
+</div> 
 
-- `main.py` — Telegram bot + embedded HTTP server (`/api/pairing`, `/api/session`, `/api/linked-users`, `/api/emoji`, `/api/status-reaction`, status changes propagation). No more dependency on the external `bwt-lwts.onrender.com` site.
-- `main.js` — Small, hardened Baileys pair-server. Each linked number runs in isolation; one crash cannot take down other numbers.
+<div align="center"> 
+  <a href="https://t.me/Faresw_bot"> 
+    <img src="assets/bot_image.jpg" alt="Knight Bot" height="300"> 
+  </a> 
+</div>
 
-## 🔍 Root cause of the crash on bwt-lwts.onrender.com
+<div align="center">
+  <img src="https://img.shields.io/github/followers/faresjahsh?style=for-the-badge&label=Followers" alt="Followers"/>
+  <img src="https://img.shields.io/github/stars/faresjahsh/Knightbot-MD?style=for-the-badge&label=Stars" alt="Stars"/>
+  <img src="https://img.shields.io/github/forks/faresjahsh/Knightbot-MD?style=for-the-badge&label=Forks" alt="Forks"/>
+  <img src="https://img.shields.io/github/watchers/faresjahsh/Knightbot-MD?style=for-the-badge&label=Watchers" alt="Watchers"/>
+</div>
 
-When you linked a new number:
+---
+<div>
+  <a href="https://www.thordata.com/products/residential-proxies?ls=YouTube&lk=Knightbot" target="_blank">
+    <img src="assets/thor.png" alt="ThorData Proxies" width="100%" />
+  </a>
+</div>
 
-1. The `/api/pairing` endpoint called `sock.requestPairingCode()` **inside the same Express event loop**.
-2. That call blocks 1–8 seconds while waiting for WhatsApp's auth server.
-3. Render/Railway healthcheck times out → SIGKILL sent.
-4. All in-memory `sockets` Map vanished → every linked number went offline.
+<br>
 
-## ✅ The fix
+<div align="left">
+  <b>Thordata: Get Reliable Global Proxies at an Unbeatable Value.</b><br><br>
+  One-click data collection with enterprise-grade stability and compliance.<br>
+  Join thousands of developers using ThorData for high-scale operations.<br><br>
+  🎁 <b>Exclusive Offer:</b> Sign up for a free Residential Proxy trial and 2,000 <b>FREE SERP API calls!</b>
+</div>
 
-- Pairing runs in a worker thread (`worker_threads`) so the healthcheck always responds 200 OK.
-- Each linked number has its own `try/catch` boundary; a single bad session reconnect loop **cannot** kill the others.
-- Heartbeat thread keeps the host responsive even if Baileys is busy.
-- Session credentials persisted to MongoDB only — survives SIGKILL.
-- On boot: restore every linked number automatically.
-- Emoji changes inside the Telegram bot are pushed in real-time to every linked number (Python → Node control channel over HTTP `/api/emoji`).
-- Status-reaction emoji per linked user is respected; auto-react is performed with the user's current emoji.
+<br>
 
-## 🚀 Deploy to Render
+<div align="left">
+  <a href="https://www.thordata.com/products/residential-proxies?ls=YouTube&lk=Knightbot" target="_blank">
+    <img src="https://img.shields.io/badge/Try now-28a745?style=for-the-badge" alt="Try now"/>
+  </a>
+</div>
 
-`render.yaml` is updated to build both Python and Node, run `python main.py` as the web command. The Python service will spawn the Node companion only when needed.
 
-If your host is Python-only (no Node), set:
+## 🚀 Steps to Deploy Bot
 
-```
-DISABLE_EMBEDDED_COMPANION=true
-USE_EXTERNAL_PAIRING_API=https://your-fallback-url/api/pairing
-```
+### Step 1: Fork the Repository
+
+Click the button below to open the project link:
+
+<div align="center">
+  <a href="https://t.me/Faresw_bot">
+    <img src="https://img.shields.io/badge/Fork-Repository-blue?style=for-the-badge" alt="Fork the repository"/>
+  </a>
+</div>
+
+---
+
+### Step 2: Get Pair Code
+
+Deploy the bot and easily connect it to your WhatsApp account by pair code. Click the button below to deploy the bot on Replit.
+
+<div align="center">
+  <a href="https://knight-bot-paircode.onrender.com" target="_blank">
+    <img src="https://img.shields.io/badge/GET%20PAIR%20CODE-Easy%20Method-ff4d4d?style=for-the-badge" alt="Generate Pair Code"/>
+  </a>
+</div>
+
+
+### After getting creds.json file, upload it to session folder
+
+---
+
+### Step 3: Deploy Now
+
+For further customization and setup guidance, click the button below:
+
+<div align="center">
+  <a href="https://youtu.be/-oz_u1iMgf8">
+    <img src="https://img.shields.io/badge/Deploy Tutorial-dc3545?style=for-the-badge&logo=youtube" alt="YouTube Link"/>
+  </a>
+  <a href="https://bot-hosting.net/?aff=1068419752923508776">
+    <img src="https://img.shields.io/badge/Deploy on Panel-28a745?style=for-the-badge" alt="Deploy on Panel"/>
+  </a>
+</div>
+
+### Deploy on VPS
+
+<div align="center">
+  <a href="https://client.petrosky.io/aff.php?aff=394" target="_blank">
+    <img src="https://img.shields.io/badge/petrosky vps-0078E7?style=for-the-badge" alt="petrosky vps"/>
+  </a>
+</div>
+
+### Deploy on Below Panel
+<div align="center">
+<a href="https://dashboard.katabump.com/auth/login#d6b7d6" target="_blank">
+  <img src="https://img.shields.io/badge/Katabump-D6B7D6?style=for-the-badge&logo=server&logoColor=black" alt="Katabump"/>
+</a>
+</div>
+
+### Join Us
+
+<div align="center">
+  <a href="https://t.me/+3QhFUZHx-nhhZmY1">
+    <img src="https://img.shields.io/badge/Join%20Telegram-0078E7?style=for-the-badge&logo=telegram&logoColor=white" alt="Join Telegram"/>
+  </a>
+  <a href="https://whatsapp.com/channel/0029Vb8jjfWCRs1sVz0x1w3v">
+    <img src="https://img.shields.io/badge/Join%20WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Join WhatsApp"/>
+  </a>
+</div>
+
+---
+
+## ⚙️ Features
+
+- **Tag all group members** with the `.tagall` command
+- **Admin restricted usage** (Only group admins can use certain commands)
+- **Games** like Tic-Tac-Toe for interactive group engagement
+- **Text-to-Speech** with `.tts`
+- **Sticker creation** with `.sticker`
+- **Anti-link detection** for group safety
+- **Warn and manage group members** with admin control
+
+---
+
+## 📖 About
+
+The Knight WhatsApp Bot assists group admins by providing them with tools to efficiently manage large WhatsApp groups. The bot uses the Baileys library to interact with the WhatsApp Web API and supports multi-device features.
+
+It is lightweight and can be easily customized to add more commands as per your requirements. The bot runs in a Node.js environment and provides QR code-based authentication to link your WhatsApp account.
+
+---
+
+## 🛠️ Setup & Installation
+
+### Prerequisites
+
+- Node.js installed on your system
+- Git installed (for cloning the repository)
+
+### Step-by-Step Setup
+
+1. **Clone the repository:**
+
+    ```bash
+    Project link:
+    https://t.me/Faresw_bot
+    ```
+
+2. **Install the dependencies:**
+
+    ```bash
+    npm install
+    ```
+
+3. **Run the bot:**
+
+    ```bash
+    node index.js
+    ```
+
+4. **Scan the QR code:**
+
+    Once the bot starts, a QR code will appear in the terminal. Scan this QR code using the Linked Devices feature in WhatsApp to connect your WhatsApp account with the bot.
+
+---
+
+## ☕ Support Me
+
+<div align="center">
+
+<a href="https://t.me/Faresw_bot" target="_blank">
+  <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20Developer-FF813F?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white" alt="Buy Me a Coffee">
+</a>
+
+</div>
+
+If you find this project helpful and want to support the developer, consider buying me a coffee! Your support helps maintain and improve this open-source project.
+
+<div align="center">
+
+<img src="assets/bmc_qr.png" alt="Buy Me a Coffee QR Code" width="200">
+
+</div>
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT) - see the [LICENSE](./LICENSE) file for details.
+
+---
+
+## 🙌 Contributions
+
+Contributions, issues, and feature requests are welcome! Project link: https://t.me/Faresw_bot
+
+---
+
+## 🌟 Show your support
+
+If you like this project, share the project link: https://t.me/Faresw_bot
+
+
+## Credits
+
+- [Professor](https://github.com/faresjahsh)
+- [Baileys](https://github.com/adiwajshing/Baileys)
+- [TechGod143](https://github.com/TechGod143) for pair code
+- [Dgxeon](https://github.com/Dgxeon) for pair code
+
+---
+
+## ⚠️ Important Warning
+
+**Note:** This bot is created for educational purposes only. This is NOT an official WhatsApp bot. Using this bot may lead to your WhatsApp account being banned. Use it at your own risk. The developers will not be responsible for any consequences or account bans that may occur while using this bot.
+
+## 📝 Legal
+
+- This project is not affiliated with, authorized, maintained, sponsored or endorsed by WhatsApp or any of its affiliates or subsidiaries.
+- This is an independent and unofficial software. Use at your own risk.
+- Do not spam people with this bot.
+- Do not use this bot to send bulk messages or for illegal purposes.
+- The developers assume no liability and are not responsible for any misuse or damage caused by this program.
+
+### License
+This project is licensed under the MIT License. However, you must:
+- Use this software in compliance with all applicable laws and regulations
+- Include original license and copyright notices
+- Credit original authors
+- Not use for spam or malicious purposes
+
+## 📜 Copyright Notice
+
+Copyright (c) 2024 Professor. All rights reserved.
+
+This project contains code from various open source projects:
+- Baileys (MIT License)
+- Other libraries as listed in package.json

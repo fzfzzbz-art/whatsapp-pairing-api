@@ -1,25 +1,32 @@
-# استخدام صورة أساسية تحتوي على نظام لينكس مدمج معه بيئة بايثون
-FROM python:3.10-slim
+FROM node:20-slim
 
-# تثبيت Node.js و npm و git والأدوات الأساسية للنظام
+# تثبيت المتطلبات الأساسية
+# libatomic1 هو الاسم الصحيح في Debian/Ubuntu (وليس libatomic)
 RUN apt-get update && apt-get install -y \
-    curl \
+    libatomic1 \
+    python3 \
+    make \
+    g++ \
     git \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    curl \
+    ffmpeg \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# تحديد مجلد العمل داخل السيرفر
 WORKDIR /app
 
-# نسخ ملفات المشروع بالكامل إلى الحاوية
+# نسخ ملفات package أولاً للاستفادة من Docker layer cache
+COPY package*.json ./
+
+# تثبيت الحزم
+RUN npm install --legacy-peer-deps
+
+# نسخ باقي الملفات
 COPY . .
 
-# تثبيت مكتبات بايثون
-RUN pip install --no-cache-dir python-telegram-bot requests
+# إنشاء مجلد الجلسات
+RUN mkdir -p sessions
 
-# تثبيت مكتبات Node.js مباشرة من المجلد الحالي (لأن الملفات كلها في الجذر)
-RUN npm install
+EXPOSE 8080
 
-# تحديد الأمر الإفتراضي عند تشغيل الحاوية (تشغيل ملف بايثون الرئيسي)
 CMD ["node", "index.js"]
