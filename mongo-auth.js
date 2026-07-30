@@ -1,336 +1,240 @@
-require('dotenv').config();
+'use strict';
 
-const { proto, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
-const {
-    isRemoteSessionStoreEnabled,
-    fetchRemoteSession,
-    upsertRemoteSession,
-    deleteRemoteSession
-} = require('./lib/remoteSessionStore');
+const fs = require('fs');
+const path = require('path');
+const { MongoClient } = require('mongodb');
+const { initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 
-const SESSION_CACHE = new Map();
-const SESSION_WRITE_QUEUES = new Map();
+// يفضَّل وضع MONGODB_URI كمتغير بيئة بدلًا من النص الثابت
+// كلمة المرور معروضة في المحادثة → غيّرها فورًا من Atlas
+const MONGODB_URI = String(
+    process.env.MONGODB_URI ||
+    process.env.MONGO_URL ||
+    ''
+).trim();
 
-function normalizeSessionId(value = '') {
-    return String(value || '').replace(/\D/g, '').trim();
-}
+const MONGODB_DB_NAME = String(process.env.MONGODB_DB_NAME || 'faresbot').trim() || 'faresbot';
+const COLLECTION_NAME = String(process.env.MONGODB_AUTH_COLLECTION || 'wa_auth_state').trim() || 'wa_auth_state';
 
-function fixFileName(file = '') {
-    return String(file || '').replace(/\//g, '__').replace(/:/g, '-');
-}
+let clientPromise = null;
+let pendingFlushResolves = [];
 
-function cloneFiles(files = {}) {
-    const output = {};
-    for (const [fileName, content] of Object.entries(files || {})) {
-        if (!fileName || typeof content !== 'string') continue;
-        output[fixFileName(fileName)] = content;
-    }
-    return output;
-}
-
-function buildSnapshot(cache) {
-    return {
-        phone: cache.phone,
-        sessionId: cache.phone,
-        ownerId: String(cache.ownerId || '').trim(),
-        registered: cache.registered === true,
-        lastConnectedAt: cache.lastConnectedAt || null,
-        files: cloneFiles(cache.files || {})
-    };
-}
-
-function getQueue(phone) {
-    return SESSION_WRITE_QUEUES.get(phone) || Promise.resolve();
-}
-
-function setQueue(phone, promise) {
-    SESSION_WRITE_QUEUES.set(phone, promise.catch(() => undefined));
-}
-
-async function queuePersist(phone, task) {
-    const next = getQueue(phone).then(task);
-    setQueue(phone, next);
-    return next;
-}
-
-async function ensureSessionCache(phone, defaults = {}) {
-    const normalizedPhone = normalizeSessionId(phone);
-    if (!normalizedPhone) {
-        throw new Error('A valid phone/session id is required');
-    }
-
-    const cached = SESSION_CACHE.get(normalizedPhone);
-    if (cached) {
-        if (String(defaults.ownerId || '').trim() && !cached.ownerId) {
-            cached.ownerId = String(defaults.ownerId || '').trim();
-        }
-        if (defaults.registered === true) {
-            cached.registered = true;
-        }
-        if (defaults.lastConnectedAt && !cached.lastConnectedAt) {
-            cached.lastConnectedAt = defaults.lastConnectedAt;
-        }
-        return cached;
-    }
-
-    let remote = null;
-    if (isRemoteSessionStoreEnabled()) {
-        try {
-            remote = await fetchRemoteSession(normalizedPhone);
-        } catch (_) {
-            remote = null;
-        }
-    }
-
-    const cache = {
-        phone: normalizedPhone,
-        ownerId: String(remote?.ownerId || defaults.ownerId || '').trim(),
-        registered: remote?.registered === true || defaults.registered === true,
-        lastConnectedAt: remote?.lastConnectedAt || defaults.lastConnectedAt || null,
-        files: cloneFiles(remote?.files || {})
-    };
-
-    SESSION_CACHE.set(normalizedPhone, cache);
-    return cache;
-}
-
-function readSerializedFile(cache, file) {
-    const safeFile = fixFileName(file);
-    const raw = cache.files?.[safeFile];
-    if (typeof raw !== 'string' || !raw.length) return null;
-    try {
-        return JSON.parse(raw, BufferJSON.reviver);
-    } catch (_) {
-        return null;
-    }
-}
-
-function writeSerializedFile(cache, file, value) {
-    const safeFile = fixFileName(file);
-    if (!value) {
-        delete cache.files[safeFile];
-        return false;
-    }
-    cache.files[safeFile] = JSON.stringify(value, BufferJSON.replacer);
-    return true;
-}
-
-async function persistSessionCache(phone, cache, metadata = {}) {
-    const normalizedPhone = normalizeSessionId(phone);
-    if (!normalizedPhone) return buildSnapshot(cache);
-
-    if (String(metadata.ownerId || '').trim()) {
-        cache.ownerId = String(metadata.ownerId || '').trim();
-    }
-    if (metadata.registered === true) {
-        cache.registered = true;
-    } else if (Object.prototype.hasOwnProperty.call(metadata, 'registered')) {
-        cache.registered = metadata.registered === true;
-    }
-    if (Object.prototype.hasOwnProperty.call(metadata, 'lastConnectedAt')) {
-        cache.lastConnectedAt = metadata.lastConnectedAt || null;
-    }
-
-    if (!isRemoteSessionStoreEnabled()) {
-        return buildSnapshot(cache);
-    }
-
-    return queuePersist(normalizedPhone, async () => {
-        const saved = await upsertRemoteSession(normalizedPhone, buildSnapshot(cache));
-        if (saved) {
-            cache.ownerId = String(saved.ownerId || cache.ownerId || '').trim();
-            cache.registered = saved.registered === true;
-            cache.lastConnectedAt = saved.lastConnectedAt || null;
-            cache.files = cloneFiles(saved.files || cache.files || {});
-            return buildSnapshot(cache);
-        }
-        return buildSnapshot(cache);
+function getCollection() {
+  if (!clientPromise) {
+    const client = new MongoClient(MONGODB_URI, {
+      appName: 'KnightBot-MD AuthState',
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
+      maxPoolSize: 20,
+      retryWrites: true,
+      retryReads: true,
     });
-}
-
-async function useMongoAuthState(id, defaults = {}) {
-    const phone = normalizeSessionId(id);
-    const cache = await ensureSessionCache(phone, defaults);
-
-    let creds = readSerializedFile(cache, 'creds.json');
-    if (!creds) {
-        creds = initAuthCreds();
-        writeSerializedFile(cache, 'creds.json', creds);
-        await persistSessionCache(phone, cache, defaults);
-    }
-
-    const state = {
-        creds,
-        keys: {
-            get: async (type, ids) => {
-                const data = {};
-                await Promise.all((ids || []).map(async (id) => {
-                    let value = readSerializedFile(cache, `${type}-${id}.json`);
-                    if (type === 'app-state-sync-key' && value) {
-                        value = proto.Message.AppStateSyncKeyData.fromObject(value);
-                    }
-                    data[id] = value;
-                }));
-                return data;
-            },
-            set: async (data) => {
-                for (const category of Object.keys(data || {})) {
-                    for (const id of Object.keys(data[category] || {})) {
-                        const value = data[category][id];
-                        const file = `${category}-${id}.json`;
-                        if (value) {
-                            writeSerializedFile(cache, file, value);
-                        } else {
-                            delete cache.files[fixFileName(file)];
-                        }
-                    }
-                }
-                return persistSessionCache(phone, cache, {
-                    ownerId: String(defaults.ownerId || cache.ownerId || '').trim(),
-                    registered: state?.creds?.registered === true,
-                    lastConnectedAt: cache.lastConnectedAt || null
-                });
-            }
+    clientPromise = client
+      .connect()
+      .then(async (c) => {
+        const db = c.db(MONGODB_DB_NAME);
+        const coll = db.collection(COLLECTION_NAME);
+        await Promise.allSettled([
+          coll.createIndex({ phone: 1 }),
+          coll.createIndex({ updatedAt: -1 }),
+        ]);
+        // استيقظ أي كتابة كانت معلّقة في انتظار الاتصال
+        if (pendingFlushResolves.length) {
+          const r = pendingFlushResolves.splice(0);
+          r.forEach((fn) => { try { fn(); } catch (_) {} });
         }
-    };
-
-    const saveCreds = async (metadata = {}) => {
-        writeSerializedFile(cache, 'creds.json', creds);
-        return persistSessionCache(phone, cache, {
-            ownerId: metadata.ownerId || defaults.ownerId || cache.ownerId || '',
-            registered: metadata.registered === true || creds?.registered === true,
-            lastConnectedAt: Object.prototype.hasOwnProperty.call(metadata, 'lastConnectedAt')
-                ? (metadata.lastConnectedAt || null)
-                : (cache.lastConnectedAt || defaults.lastConnectedAt || null)
-        });
-    };
-
-    return {
-        state,
-        saveCreds,
-        flush: (metadata = {}) => saveCreds(metadata),
-        getSnapshot: () => buildSnapshot(cache)
-    };
+        return coll;
+      })
+      .catch(() => { clientPromise = null; throw new Error('mongo-connect-failed'); });
+  }
+  return clientPromise;
 }
 
-function getMongoSessionSnapshot(phone = '') {
-    const normalizedPhone = normalizeSessionId(phone);
-    if (!normalizedPhone) return null;
-    const cache = SESSION_CACHE.get(normalizedPhone);
-    if (cache) return buildSnapshot(cache);
-    if (!isRemoteSessionStoreEnabled()) {
-        return {
-            phone: normalizedPhone,
-            sessionId: normalizedPhone,
-            ownerId: '',
-            registered: false,
-            lastConnectedAt: null,
-            files: {}
-        };
-    }
+function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
 
-    return {
-        phone: normalizedPhone,
-        sessionId: normalizedPhone,
-        ownerId: '',
-        registered: false,
-        lastConnectedAt: null,
-        files: {}
-    };
+
+const SESSION_ROOT = path.join(process.cwd(), 'sessions');
+
+function getSessionDir(phone = '') {
+  const normalized = normalizePhone(phone);
+  return path.join(SESSION_ROOT, normalized);
 }
 
 function listMongoSessionJsonFiles(phone = '') {
-    const snapshot = getMongoSessionSnapshot(phone);
-    return Object.keys(snapshot?.files || {}).sort();
-}
-
-function sessionHasMongoAuthFiles(phone = '') {
-    return listMongoSessionJsonFiles(phone).some((fileName) => fileName === 'creds.json' || fileName.startsWith('app-state-sync-') || fileName.startsWith('pre-key-') || fileName.startsWith('sender-key-') || fileName.startsWith('session-'));
-}
-
-function replaceMongoSessionSnapshot(phone = '', payload = {}) {
-    const normalizedPhone = normalizeSessionId(phone || payload.phone || payload.sessionId || '');
-    if (!normalizedPhone) return null;
-
-    const cache = SESSION_CACHE.get(normalizedPhone) || {
-        phone: normalizedPhone,
-        ownerId: '',
-        registered: false,
-        lastConnectedAt: null,
-        files: {}
-    };
-
-    cache.ownerId = String(payload.ownerId || cache.ownerId || '').trim();
-    cache.registered = payload.registered === true;
-    cache.lastConnectedAt = payload.lastConnectedAt || null;
-    cache.files = cloneFiles(payload.files || {});
-    SESSION_CACHE.set(normalizedPhone, cache);
-    void persistSessionCache(normalizedPhone, cache, payload).catch(() => undefined);
-    return buildSnapshot(cache);
+  const normalized = normalizePhone(phone);
+  if (!normalized) return [];
+  const sessionDir = getSessionDir(normalized);
+  if (!fs.existsSync(sessionDir)) return [];
+  try {
+    return fs.readdirSync(sessionDir)
+      .filter((name) => name && name.endsWith('.json'))
+      .sort();
+  } catch (_) {
+    return [];
+  }
 }
 
 function clearMongoSessionAuthFiles(phone = '', options = {}) {
-    const normalizedPhone = normalizeSessionId(phone);
-    if (!normalizedPhone) return 0;
-
-    const cache = SESSION_CACHE.get(normalizedPhone) || {
-        phone: normalizedPhone,
-        ownerId: String(options.ownerId || '').trim(),
-        registered: false,
-        lastConnectedAt: options.lastConnectedAt || null,
-        files: {}
-    };
-
-    const existingFiles = Object.keys(cache.files || {});
-    const nextFiles = {};
-    if (options.preserveSessionMeta === true && typeof cache.files['session-meta.json'] === 'string') {
-        nextFiles['session-meta.json'] = cache.files['session-meta.json'];
-    }
-    if (options.preservePhoneSettings === true) {
-        for (const fileName of ['phone-settings-profile.json', 'phone-settings-credentials.json', 'phone-settings-meta.json']) {
-            if (typeof cache.files[fileName] === 'string') {
-                nextFiles[fileName] = cache.files[fileName];
-            }
-        }
-    }
-
-    const removed = existingFiles.filter((fileName) => !Object.prototype.hasOwnProperty.call(nextFiles, fileName)).length;
-    cache.ownerId = String(options.ownerId || cache.ownerId || '').trim();
-    cache.registered = false;
-    cache.lastConnectedAt = options.lastConnectedAt || cache.lastConnectedAt || null;
-    cache.files = nextFiles;
-    SESSION_CACHE.set(normalizedPhone, cache);
-    void persistSessionCache(normalizedPhone, cache, {
-        ownerId: cache.ownerId,
-        registered: false,
-        lastConnectedAt: cache.lastConnectedAt
-    }).catch(() => undefined);
-    return removed;
-}
-
-function dropMongoSessionCache(phone = '') {
-    const normalizedPhone = normalizeSessionId(phone);
-    if (!normalizedPhone) return false;
-    SESSION_CACHE.delete(normalizedPhone);
-    SESSION_WRITE_QUEUES.delete(normalizedPhone);
-    return true;
+  const normalized = normalizePhone(phone);
+  if (!normalized) return 0;
+  const preserveSessionMeta = options.preserveSessionMeta === true;
+  const preservePhoneSettings = options.preservePhoneSettings === true;
+  let removed = 0;
+  for (const fileName of listMongoSessionJsonFiles(normalized)) {
+    const preserve =
+      (preserveSessionMeta && fileName === 'session-meta.json') ||
+      (preservePhoneSettings && (fileName === 'phone-settings-profile.json' || fileName === 'phone-settings-credentials.json' || fileName === 'phone-settings-meta.json'));
+    if (preserve) continue;
+    try {
+      fs.rmSync(path.join(getSessionDir(normalized), fileName), { force: true });
+      removed += 1;
+    } catch (_) {}
+  }
+  return removed;
 }
 
 async function deleteMongoSessionSnapshot(phone = '') {
-    const normalizedPhone = normalizeSessionId(phone);
-    if (!normalizedPhone) return false;
-    dropMongoSessionCache(normalizedPhone);
-    if (!isRemoteSessionStoreEnabled()) return true;
-    return deleteRemoteSession(normalizedPhone);
+  const normalized = normalizePhone(phone);
+  if (!normalized) return false;
+  let deleted = false;
+  try {
+    deleted = await deleteStoredAuth(normalized);
+  } catch (_) {}
+  try {
+    const remoteStore = require('./remoteSessionStore');
+    if (remoteStore && typeof remoteStore.deleteRemoteSession === 'function') {
+      deleted = (await remoteStore.deleteRemoteSession(normalized)) || deleted;
+    }
+  } catch (_) {}
+  return deleted;
+}
+
+
+async function useMongoAuthState(phone) {
+  const id = String(phone || '').trim();
+  if (!id) throw new Error('useMongoAuthState: رقم الهاتف مطلوب');
+
+  const collection = await getCollection();
+  const doc = await collection.findOne({ _id: id }).catch(() => null);
+
+  let creds = null;
+  if (doc && doc.creds) {
+    try { creds = JSON.parse(JSON.stringify(doc.creds), BufferJSON.reviver); }
+    catch (_) { creds = initAuthCreds(); }
+  }
+  if (!creds) creds = initAuthCreds();
+
+  const keysData = (doc && doc.keys && typeof doc.keys === 'object') ? doc.keys : {};
+  const dirty = { creds: false, keys: false };
+  let isFlushing = false;
+
+  const safeWrite = async () => {
+    if (isFlushing) return;
+    isFlushing = true;
+    try {
+      const credsPayload = dirty.creds ? JSON.parse(JSON.stringify(creds, BufferJSON.replacer)) : undefined;
+      const keysPayload  = dirty.keys  ? deepClone(keysData) : undefined;
+      if (!credsPayload && !keysPayload) return;
+
+      const $set = { phone: id, updatedAt: new Date().toISOString() };
+      if (credsPayload) $set.creds = credsPayload;
+      if (keysPayload)  $set.keys  = keysPayload;
+
+      await collection.updateOne(
+        { _id: id },
+        { $set, $setOnInsert: { createdAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+      dirty.creds = false;
+      dirty.keys = false;
+    } finally {
+      isFlushing = false;
+    }
+  };
+
+  // حفظ فوري مع إعادة المحاولة بحد أقصى 5 ثوانٍ
+  const flush = async (ms = 5000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      try {
+        await safeWrite();
+        return true;
+      } catch (_) {
+        try { await getCollection(); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    return false;
+  };
+
+  const state = {
+    creds,
+    keys: {
+      get: async (type, ids) => {
+        const out = {};
+        const bucket = keysData[type] || {};
+        for (const i of ids || []) {
+          const v = bucket[String(i)];
+          if (v != null) out[String(i)] = v;
+        }
+        return out;
+      },
+      set: async (data) => {
+        if (!data || typeof data !== 'object') return;
+        for (const type of Object.keys(data)) {
+          keysData[type] = keysData[type] || {};
+          for (const idKey of Object.keys(data[type] || {})) {
+            const value = data[type][idKey];
+            if (value === null || value === undefined) delete keysData[type][idKey];
+            else keysData[type][idKey] = value;
+          }
+        }
+        dirty.keys = true;
+        // حفظ عاجل (بحد أقصى 5 ثوانٍ) - ضمان عدم فقدان الجلسة
+        void flush(5000);
+      },
+    },
+  };
+
+  return {
+    state,
+    saveCreds: async () => { dirty.creds = true; return flush(5000); },
+    flushNow: () => flush(8000),
+  };
+}
+
+async function listStoredAuthPhones() {
+  try {
+    const collection = await getCollection();
+    const docs = await collection
+      .find({}, { projection: { phone: 1, updatedAt: 1, creds: 1 } })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    return docs
+      .map((d) => ({
+        phone: String(d._id || d.phone || ''),
+        updatedAt: d.updatedAt || null,
+        registered: Boolean(d && d.creds && d.creds.registered === true),
+      }))
+      .filter((x) => x.phone);
+  } catch (_) { return []; }
+}
+
+async function deleteStoredAuth(phone) {
+  try {
+    const collection = await getCollection();
+    const id = String(phone || '').trim();
+    if (!id) return false;
+    const r = await collection.deleteOne({ _id: id });
+    return r.deletedCount > 0;
+  } catch (_) { return false; }
 }
 
 module.exports = {
-    useMongoAuthState,
-    getMongoSessionSnapshot,
-    replaceMongoSessionSnapshot,
-    listMongoSessionJsonFiles,
-    sessionHasMongoAuthFiles,
-    clearMongoSessionAuthFiles,
-    dropMongoSessionCache,
-    deleteMongoSessionSnapshot
+  useMongoAuthState,
+  listStoredAuthPhones,
+  deleteStoredAuth,
+  listMongoSessionJsonFiles,
+  clearMongoSessionAuthFiles,
+  deleteMongoSessionSnapshot,
 };
