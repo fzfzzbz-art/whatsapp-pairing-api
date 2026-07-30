@@ -1,9 +1,2 @@
 [phases.setup]
-# الإصلاح: libatomic -> libatomic1 (الاسم الصحيح في nixpkgs الحديث)
-nixPkgs = ["nodejs_20", "libatomic1"]
-
-[phases.install]
-cmds = ["npm install --legacy-peer-deps"]
-
-[start]
-cmd = "node index.js"
+nixPkgs = ["...", "libatomic"]

@@ -1,25 +1,12 @@
 services:
   - type: web
-    name: telegram-bot
-    runtime: python
+    name: whatsapp-pairing-bot
+    env: node
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt && npm install --omit=dev --legacy-peer-deps
-    startCommand: python main.py
-    healthcheckPath: /healthz
+    buildCommand: npm install --legacy-peer-deps
+    startCommand: npm run start:optimized
     envVars:
-      - key: PORT
-        value: 8080
-      - key: DISABLE_EMBEDDED_COMPANION
-        value: "false"
-      - key: PYTHON_ONLY_HOSTING
-        value: "false"
+      - key: NODE_VERSION
+        value: 20.x
       - key: BOT_TOKEN
-        sync: false
-      - key: ADMIN_ID
-        sync: false
-      - key: MONGODB_URI
-        sync: false
-      - key: AUTO_REPLY_CHANNEL_URL
-        value: https://bwt-lwts.onrender.com
-      - key: DEFAULT_CONTACT_NUMBER
-        value: "967773987296"
+        sync: false # سيطلب منك إدخاله يدوياً في الموقع لزيادة الأمان
